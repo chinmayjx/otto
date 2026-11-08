@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Otto: a ring of eight steel arms around the joined T’s (OTTO read as “( TT )”). Lavender core: the dev build. -->
+<!-- Otto: a ring of eight steel arms around the joined T’s (OTTO read as “( TT )”). Red core: the dev build. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
     <path android:strokeWidth="4.34" android:strokeLineCap="round" android:fillColor="#00000000"
@@ -12,6 +12,6 @@
             </gradient>
         </aapt:attr>
     </path>
-    <path android:strokeWidth="4.34" android:strokeLineCap="round" android:fillColor="#00000000" android:strokeColor="#FFAB9CF2"
+    <path android:strokeWidth="4.34" android:strokeLineCap="round" android:fillColor="#00000000" android:strokeColor="#FFFF3B30"
         android:pathData="M42.22,45.32 L65.78,45.32 M49.04,45.32 L49.04,63.92 M58.96,45.32 L58.96,63.92" />
 </vector>

@@ -138,7 +138,7 @@ class OverlayService : Service(), Screen.Host {
         val h = FrameLayout(this)
         val pill = View(this)
         pill.background = GradientDrawable().apply {
-            setColor(STEEL) // the icon ring's steel: reads on dark, white and photos without looking like an alert
+            setColor(HANDLE)
             cornerRadius = dp(3).toFloat()
             alpha = 230
         }
@@ -290,8 +290,8 @@ class OverlayService : Service(), Screen.Host {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        // The dev build's handle is lavender, to tell it from the stable app's when both are on.
-        private val STEEL = android.graphics.Color.parseColor(if (BuildConfig.DEBUG) "#ab9cf2" else "#aeb4bc")
+        // The handle: lavender, the app's colour; the dev build's is red, to tell the two apart when both are on.
+        private val HANDLE = android.graphics.Color.parseColor(if (BuildConfig.DEBUG) "#ff3b30" else "#ab9cf2")
         const val ACTION_START = "start" // the handle, the screen closed
         const val ACTION_SHOW = "show" // the screen, where it was left
         const val ACTION_OPEN = "open" // extra "url": a link from another app (LinkActivity)
