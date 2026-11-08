@@ -24,14 +24,11 @@ Otto never sits between you and the agent. You talk to the agent through its own
 6. **Links work without the app.** Anything written into a transcript is an https URL on the tailnet that opens in any browser; the phone app only opens it more nicely.
 7. **One CLI is the interface.** Agents, people and scripts use the same `otto` command. A small MCP server exists only to return screenshots inline.
 
-## Two roles: the box and the hub
+## One machine first
 
-| Role | Runs | Uptime |
-|---|---|---|
-| **Box** | agents and their sessions; files, terminal, desktop; the phone relay; the CLI and the eyes MCP server; adapters | may sleep (idle shutdown) |
-| **Hub** | the artifact hub; starting and stopping the box; later, notifications and the scheduler's wake-up | always on, small |
+The core runs on one machine, the box: agents, the relay, files, terminal, desktop, and the artifact hub. Deployment strategies (an always-on second machine for the artifact hub and for waking the box, which suits a box that sleeps) come later, as configuration.
 
-Artifacts live on the hub because they must outlive the box: a report or a deck is opened later, often when the box is asleep. One machine may play both roles; the recommended setup is two (today: devbox as the box, deploy-box as the hub). Every component finds the other role through one config value, its Tailscale URL.
+Today's own setup is the exception, kept as it is for now: the artifact hub runs on a second, always-on machine (deploy-box), and Gotenberg, which makes its office previews, runs on the box. Components find each other through URLs in the config, so this works without the core knowing about it.
 
 ## Repositories
 
@@ -54,7 +51,7 @@ otto/
   mcp/                   the eyes MCP server                                            (TypeScript)
   hub/
     artifacts/           the artifact hub                                               (Python/FastAPI, from artifact-hub)
-    box-control/         start and stop the box                                         (from Ubun2's devbox panel)
+    box-control/         start and stop the box, for deployments with a second machine  (later)
   android/               the Otto app: second screen + device agent, one APK           (Kotlin; from second-screen + device-agent)
   web/                   shared UI: files, terminal, desktop, artifacts                  (from assets/ide)
   adapters/
@@ -86,7 +83,7 @@ Removed in the move, as Claude-specific or obsolete:
 
 ### Session identity
 
-The CLI and the eyes MCP server read the session from the environment: `OTTO_SESSION`, set by the adapter (Claude's adapter sets it from `CLAUDE_CODE_SESSION_ID`; Codex's from its thread id where available), and `OTTO_SESSION_TITLE` for the group's name. Without one, commands use a shared default group. The proof of concept showed why: under Codex every session fell back to the same literal key, `pid`, and would have shared one tab group.
+The CLI and the eyes MCP server read the session from the environment: `OTTO_SESSION`, set by the adapter (Claude's adapter sets it from `CLAUDE_CODE_SESSION_ID`; Codex's from `CODEX_THREAD_ID`, which Codex gives every command), and `OTTO_SESSION_TITLE` for the group's name. Without one, commands use a shared default group. The proof of concept showed why: under Codex every session fell back to the same literal key, `pid`, and would have shared one tab group.
 
 ### `otto` CLI (`cli/`)
 
@@ -139,6 +136,10 @@ The web UI (`web/`) stays as the UI for desktop browsers and the Kindle, and as 
 
 Done after the restructure (order of work, step 9), one section at a time, starting with the artifact viewer: the biggest latency win, and it uses the same hub change as the web viewer (serving the PDF itself).
 
+#### Dictation for the Kindle
+
+The Kindle frontend records through the phone's microphone. For now the device agent keeps doing it (the relay passes `mic_start`, `mic_read`, `mic_stop` through as device commands). It belongs to the Claude frontend app, which will get a configuration tray, pulled down from its top bar, with the switch for it.
+
 ### Box services (`box/services/`)
 
 Files API, terminal (tmux over websocket) and desktop (Xvnc, XFCE, websockify, noVNC) from devbox-hub, minus Claude session cwd lookups, Claude tab titles, the sessions API, Kindle and dictation.
@@ -171,7 +172,7 @@ What the proof of concept taught about Codex:
 
 ## Deployment
 
-Setup is by hand at first, per machine, and gets standardised later. Which machine runs what (one machine or two; the artifact hub and Gotenberg on the hub or the box) is a setup choice, not part of the design. Today's split stays as it is: the artifact hub on the hub, Gotenberg on the box. Previews are made when an artifact is published, which happens from the box, so Gotenberg is up whenever it's needed.
+Setup is by hand at first and gets standardised later. Previews are made when an artifact is published, which happens from the box, so Gotenberg is up whenever it's needed.
 
 ## Network and config
 
