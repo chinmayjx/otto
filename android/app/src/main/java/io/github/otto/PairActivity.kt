@@ -3,7 +3,6 @@ package io.github.otto
 import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
-import com.google.android.material.color.DynamicColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 /**
@@ -12,7 +11,6 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
  */
 class PairActivity : AppCompatActivity() {
     override fun onCreate(state: Bundle?) {
-        DynamicColors.applyToActivityIfAvailable(this)
         super.onCreate(state)
         val uri = intent.data
         val parsed = uri?.let { Pairing.parse(it) } ?: Result.failure(IllegalArgumentException("no link"))

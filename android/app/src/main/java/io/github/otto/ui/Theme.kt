@@ -5,8 +5,9 @@ import android.view.View
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Recomposer
@@ -18,7 +19,6 @@ import kotlinx.coroutines.launch
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -33,14 +33,46 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
-/**
- * Material 3 with the wallpaper's colors (Android 12+, as the setup screen), light or dark as the phone is. The
- * shapes are the setup screen's: rounded, cards at 16dp.
- */
+/** Dark: AMOLED black, surfaces one step up, steel greys and the icon's red (as res/values-night/themes.xml). */
+private val Dark = darkColorScheme(
+    primary = Color(0xFFFF3B30), onPrimary = Color.White,
+    primaryContainer = Color(0xFF3A0D0A), onPrimaryContainer = Color(0xFFFFDAD5),
+    secondary = Color(0xFFAEB4BC), onSecondary = Color(0xFF1A1D21),
+    secondaryContainer = Color(0xFF24272B), onSecondaryContainer = Color(0xFFE3E6EA),
+    tertiary = Color(0xFFAEB4BC), onTertiary = Color(0xFF1A1D21),
+    background = Color.Black, onBackground = Color(0xFFEDEEF0),
+    surface = Color.Black, onSurface = Color(0xFFEDEEF0),
+    surfaceVariant = Color(0xFF17171A), onSurfaceVariant = Color(0xFF8E949C),
+    surfaceContainerLowest = Color.Black, surfaceContainerLow = Color(0xFF0B0B0C), surfaceContainer = Color(0xFF0E0E10),
+    surfaceContainerHigh = Color(0xFF17171A), surfaceContainerHighest = Color(0xFF1E1E22),
+    surfaceBright = Color(0xFF1E1E22), surfaceDim = Color.Black, surfaceTint = Color.Transparent,
+    outline = Color(0xFF3A3A40), outlineVariant = Color(0xFF26262A),
+    error = Color(0xFFFF6B81), onError = Color(0xFF2B0010),
+    errorContainer = Color(0xFF3B0A18), onErrorContainer = Color(0xFFFFD9DF),
+)
+
+/** Light: white, the same steel and red (as res/values/themes.xml). */
+private val Light = lightColorScheme(
+    primary = Color(0xFFD92D20), onPrimary = Color.White,
+    primaryContainer = Color(0xFFFFDAD5), onPrimaryContainer = Color(0xFF410001),
+    secondary = Color(0xFF5E6570), onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE3E6EA), onSecondaryContainer = Color(0xFF1A1D21),
+    tertiary = Color(0xFF5E6570), onTertiary = Color.White,
+    background = Color.White, onBackground = Color(0xFF111214),
+    surface = Color.White, onSurface = Color(0xFF111214),
+    surfaceVariant = Color(0xFFECECEF), onSurfaceVariant = Color(0xFF5E6570),
+    surfaceContainerLowest = Color.White, surfaceContainerLow = Color(0xFFF7F7F8), surfaceContainer = Color(0xFFF2F2F4),
+    surfaceContainerHigh = Color(0xFFECECEF), surfaceContainerHighest = Color(0xFFE6E6EA),
+    surfaceBright = Color.White, surfaceDim = Color(0xFFE6E6EA), surfaceTint = Color.Transparent,
+    outline = Color(0xFFC5C8CE), outlineVariant = Color(0xFFE2E4E8),
+    error = Color(0xFFC2185B), onError = Color.White,
+    errorContainer = Color(0xFFFFD9E2), onErrorContainer = Color(0xFF3E0019),
+)
+
+/** Material 3 in Otto's own colours, light or dark as the phone is. Shapes: rounded, cards at 16dp. */
 @Composable
 fun OttoTheme(content: @Composable () -> Unit) {
-    val ctx = LocalContext.current
-    val scheme = if (isSystemInDarkTheme()) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+    val scheme = if (isSystemInDarkTheme()) Dark else Light
     MaterialTheme(
         colorScheme = scheme,
         shapes = Shapes(

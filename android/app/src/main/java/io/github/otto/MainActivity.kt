@@ -32,7 +32,6 @@ import androidx.core.view.WindowInsetsCompat
 import com.google.android.material.R as M
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
-import com.google.android.material.color.DynamicColors
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.materialswitch.MaterialSwitch
 import io.github.otto.device.AgentAccessibility
@@ -58,7 +57,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(saved: Bundle?) {
-        DynamicColors.applyToActivityIfAvailable(this)
         super.onCreate(saved)
         enableEdgeToEdge()
 
@@ -294,7 +292,8 @@ class MainActivity : AppCompatActivity() {
         val c = MaterialCardView(this)
         c.radius = dp(radius).toFloat()
         c.cardElevation = 0f
-        c.strokeWidth = 0
+        c.strokeWidth = maxOf(1, dp(1) / 2 + 1)
+        c.strokeColor = color(M.attr.colorOutlineVariant)
         c.setCardBackgroundColor(color(M.attr.colorSurfaceContainer))
         content.setPadding(dp(24), dp(24), dp(24), dp(24))
         c.addView(content)

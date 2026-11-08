@@ -1,5 +1,6 @@
 package io.github.otto.ui
 
+import androidx.compose.foundation.BorderStroke
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -151,7 +152,7 @@ fun ArtifactsScreen(model: ArtifactsModel) {
 private fun ArtifactCard(a: ArtifactItem, onClick: () -> Unit) {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
-    Surface(shape = MaterialTheme.shapes.medium, color = cs.surfaceContainerLow, tonalElevation = 0.dp,
+    Surface(shape = MaterialTheme.shapes.medium, color = cs.surfaceContainerLow, tonalElevation = 0.dp, border = BorderStroke(1.dp, cs.outlineVariant),
         modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium).clickable(onClick = onClick)) {
         Column {
             Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f).background(cs.surfaceContainerHighest), contentAlignment = Alignment.Center) {

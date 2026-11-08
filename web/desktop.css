@@ -1,5 +1,5 @@
 /* Desktop (desktop.js): the VNC desktop made for a phone. */
-:root { --dbar:#1f1e1d; --fg:#ecebe7; --track:#2c2b28; --accent:#d97757; }
+:root { --dbar:#000; --fg:#edeef0; --track:#17171a; --accent:#ff3b30; }
 #app.desktop { background:#000; }
 
 #view { position:relative; flex:1; min-height:0; overflow:hidden; background:#111; }
@@ -24,9 +24,9 @@
 #win { position:absolute; border:2px solid var(--accent); border-radius:3px; box-shadow:0 0 0 999px #0005; pointer-events:none; }
 #mini { overflow:hidden; }
 /* Keyboard up: a 2D scroll pad, shaped like the desktop; the thumb is the part in view. */
-#pad { position:absolute; z-index:3; right:12px; bottom:12px; border-radius:12px; background:#1f1e1d73; border:1px solid #ecebe740; touch-action:none; display:none; }
+#pad { position:absolute; z-index:3; right:12px; bottom:12px; border-radius:12px; background:#00000073; border:1px solid #edeef040; touch-action:none; display:none; }
 #app.typing #pad.scrolls { display:block; }
-#padthumb { position:absolute; border-radius:11px; /* the pad's 12px less its 1px border: flush in its corners */ background:#ecebe75c; border:1px solid #ecebe7a0; pointer-events:none; }
+#padthumb { position:absolute; border-radius:11px; /* the pad's 12px less its 1px border: flush in its corners */ background:#edeef05c; border:1px solid #edeef0a0; pointer-events:none; }
 #mode { flex:none; display:flex; align-items:center; gap:6px; height:34px; padding:0 12px 0 10px; border:0; border-radius:8px; background:var(--track); color:var(--fg); font:inherit; font-size:13px; }
 #mode svg { display:none; }
 #app:not(.desk) #mode .phone, #app.desk #mode .monitor { display:block; }

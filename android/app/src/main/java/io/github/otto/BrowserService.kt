@@ -224,7 +224,7 @@ class BrowserService : Service() {
         }
         pages.setBackgroundColor(BG)
         progress = View(ctx).apply {
-            setBackgroundColor(CLAUDE)
+            setBackgroundColor(ACCENT)
             pivotX = 0f
             visibility = View.GONE
         }
@@ -705,11 +705,13 @@ class BrowserService : Service() {
 
         const val AGENT = "agent"
         private const val TAG = "BrowserService"
-        val BG = Color.parseColor("#1f1e1d")
-        val FIELD = Color.parseColor("#2c2b28")
-        val TEXT = Color.parseColor("#ecebe7")
-        val MUTED = Color.parseColor("#9b9a95")
-        val CLAUDE = Color.parseColor("#d97757")
+        // The second screen's colours (always dark: AMOLED black, steel greys, the icon's red).
+        val BG = Color.parseColor("#000000")
+        val FIELD = Color.parseColor("#17171a")
+        val LINE = Color.parseColor("#2e2e33")
+        val TEXT = Color.parseColor("#edeef0")
+        val MUTED = Color.parseColor("#8e949c")
+        val ACCENT = Color.parseColor("#ff3b30")
         private const val HOME = "https://www.google.com"
         private const val MAX_LIVE = 5 // live WebViews, besides those of woken groups
         private const val KEEP_MS = 30L * 24 * 3600 * 1000 // a tab unused this long is dropped

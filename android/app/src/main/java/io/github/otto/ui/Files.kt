@@ -1,5 +1,6 @@
 package io.github.otto.ui
 
+import androidx.compose.foundation.BorderStroke
 import android.content.Context
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -364,7 +365,8 @@ private fun FileSheet(path: String, e: FsEntry, sheets: Sheets) {
 private fun DownCard(s: BoxStatus) {
     val ops = LocalOps.current
     val cs = MaterialTheme.colorScheme
-    Surface(Modifier.fillMaxWidth().padding(16.dp), shape = MaterialTheme.shapes.medium, color = cs.surfaceContainerHigh) {
+    Surface(Modifier.fillMaxWidth().padding(16.dp), shape = MaterialTheme.shapes.medium, color = cs.surfaceContainerHigh,
+        border = BorderStroke(1.dp, cs.outlineVariant)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(if (s.stopped) "The devbox is off" else s.label, style = MaterialTheme.typography.titleMedium)
             Text(if (s.stopped) "Start it from the Devbox section; this folder opens once it's up." else "This takes a minute or two.",

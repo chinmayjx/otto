@@ -102,7 +102,7 @@ export function devbox() {
     const x = t => Math.max(0, (t - t0) / 1800 * 300), y = v => 82 - v / 100 * 80;
     const line = (i, c) => `<polyline fill="none" stroke="var(${c})" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" points="${
       h.map(p => `${x(p[0]).toFixed(1)},${y(p[i]).toFixed(1)}`).join(' ')}"/>`;
-    const grid = [25, 50, 75].map(v => `<line x1="0" x2="300" y1="${y(v)}" y2="${y(v)}" stroke="#34332f" vector-effect="non-scaling-stroke"/>`).join('');
+    const grid = [25, 50, 75].map(v => `<line x1="0" x2="300" y1="${y(v)}" y2="${y(v)}" stroke="#222226" vector-effect="non-scaling-stroke"/>`).join('');
     return `<svg class="chart" viewBox="0 0 300 84" preserveAspectRatio="none">${grid}${line(2, '--mem')}${line(1, '--cpu')}</svg>`;
   }
 

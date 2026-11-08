@@ -137,7 +137,7 @@ class OverlayService : Service(), Screen.Host {
         val h = FrameLayout(this)
         val pill = View(this)
         pill.background = GradientDrawable().apply {
-            setColor(BrowserService.CLAUDE)
+            setColor(BrowserService.ACCENT)
             cornerRadius = dp(3).toFloat()
             alpha = 220
         }

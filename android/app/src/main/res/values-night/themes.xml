@@ -1,15 +1,28 @@
 <resources>
+    <!-- AMOLED: true black, cards one step up with an outline (shadows don't show on black), red accent. -->
     <style name="Theme.Otto" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">#80D5D4</item>
-        <item name="colorOnPrimary">#003737</item>
-        <item name="colorPrimaryContainer">#004F4F</item>
-        <item name="colorOnPrimaryContainer">#9CF1F0</item>
-        <item name="colorSecondary">#B0CCCB</item>
-        <item name="colorTertiary">#B3C8E8</item>
-        <item name="colorSurface">#0E1514</item>
-        <item name="colorOnSurface">#DDE4E3</item>
-        <item name="colorOnSurfaceVariant">#BEC9C8</item>
-        <item name="android:colorBackground">#0E1514</item>
+        <item name="colorPrimary">#FF3B30</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#3A0D0A</item>
+        <item name="colorOnPrimaryContainer">#FFDAD5</item>
+        <item name="colorSecondary">#AEB4BC</item>
+        <item name="colorOnSecondary">#1A1D21</item>
+        <item name="colorSecondaryContainer">#24272B</item>
+        <item name="colorOnSecondaryContainer">#E3E6EA</item>
+        <item name="colorTertiary">#AEB4BC</item>
+        <item name="colorSurface">#000000</item>
+        <item name="colorOnSurface">#EDEEF0</item>
+        <item name="colorOnSurfaceVariant">#8E949C</item>
+        <item name="colorSurfaceContainerLowest">#000000</item>
+        <item name="colorSurfaceContainerLow">#0B0B0C</item>
+        <item name="colorSurfaceContainer">#0E0E10</item>
+        <item name="colorSurfaceContainerHigh">#17171A</item>
+        <item name="colorSurfaceContainerHighest">#1E1E22</item>
+        <item name="colorOutline">#3A3A40</item>
+        <item name="colorOutlineVariant">#26262A</item>
+        <item name="colorError">#FF6B81</item>
+        <item name="colorOnError">#2B0010</item>
+        <item name="android:colorBackground">#000000</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
     </style>

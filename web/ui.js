@@ -266,16 +266,16 @@ async function highlight(node, e) {
 
 const DOC_CSS = `
   :root { color-scheme: dark; }
-  body { margin: 0; background: #1f1e1d; color: #ecebe7; font: 15px/1.6 system-ui, Roboto, sans-serif; }
+  body { margin: 0; background: #000; color: #edeef0; font: 15px/1.6 system-ui, Roboto, sans-serif; }
   article { padding: 4px 16px 40px; overflow-wrap: anywhere; }
-  a { color: #d97757; }
+  a { color: #ff6a5f; }
   h1, h2, h3 { line-height: 1.3; margin: 1.2em 0 .5em; }
   h1 { font-size: 1.5em; } h2 { font-size: 1.25em; } h3 { font-size: 1.1em; }
-  code { font: 13px/1.5 ui-monospace, Menlo, monospace; background: #2c2b28; padding: 1px 4px; border-radius: 3px; }
-  pre { background: #2c2b28; padding: 10px 12px; border-radius: 4px; overflow-x: auto; }
+  code { font: 13px/1.5 ui-monospace, Menlo, monospace; background: #17171a; padding: 1px 4px; border-radius: 3px; }
+  pre { background: #17171a; padding: 10px 12px; border-radius: 4px; overflow-x: auto; }
   pre code { padding: 0; background: none; }
   table { border-collapse: collapse; display: block; overflow-x: auto; }
-  th, td { border: 1px solid #3a3936; padding: 4px 8px; }
-  blockquote { margin: 0; padding-left: 12px; border-left: 3px solid #3a3936; color: #9b9a95; }
+  th, td { border: 1px solid #2e2e33; padding: 4px 8px; }
+  blockquote { margin: 0; padding-left: 12px; border-left: 3px solid #2e2e33; color: #8e949c; }
   img { max-width: 100%; }
 `;

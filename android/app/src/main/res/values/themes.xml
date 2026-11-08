@@ -1,16 +1,28 @@
 <resources>
-    <!-- Teal fallbacks; on Android 12+ the wallpaper's colors replace them (DynamicColors in MainActivity and PairActivity). -->
+    <!-- Otto's own colours (not the wallpaper's): steel greys and one red accent, the icon's. Light: white. -->
     <style name="Theme.Otto" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">#006A6A</item>
+        <item name="colorPrimary">#D92D20</item>
         <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorPrimaryContainer">#9CF1F0</item>
-        <item name="colorOnPrimaryContainer">#002020</item>
-        <item name="colorSecondary">#4A6362</item>
-        <item name="colorTertiary">#4B607C</item>
-        <item name="colorSurface">#F4FBFA</item>
-        <item name="colorOnSurface">#161D1D</item>
-        <item name="colorOnSurfaceVariant">#3F4948</item>
-        <item name="android:colorBackground">#F4FBFA</item>
+        <item name="colorPrimaryContainer">#FFDAD5</item>
+        <item name="colorOnPrimaryContainer">#410001</item>
+        <item name="colorSecondary">#5E6570</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+        <item name="colorSecondaryContainer">#E3E6EA</item>
+        <item name="colorOnSecondaryContainer">#1A1D21</item>
+        <item name="colorTertiary">#5E6570</item>
+        <item name="colorSurface">#FFFFFF</item>
+        <item name="colorOnSurface">#111214</item>
+        <item name="colorOnSurfaceVariant">#5E6570</item>
+        <item name="colorSurfaceContainerLowest">#FFFFFF</item>
+        <item name="colorSurfaceContainerLow">#F7F7F8</item>
+        <item name="colorSurfaceContainer">#F2F2F4</item>
+        <item name="colorSurfaceContainerHigh">#ECECEF</item>
+        <item name="colorSurfaceContainerHighest">#E6E6EA</item>
+        <item name="colorOutline">#C5C8CE</item>
+        <item name="colorOutlineVariant">#E2E4E8</item>
+        <item name="colorError">#C2185B</item>
+        <item name="colorOnError">#FFFFFF</item>
+        <item name="android:colorBackground">#FFFFFF</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:windowLightNavigationBar">true</item>
     </style>

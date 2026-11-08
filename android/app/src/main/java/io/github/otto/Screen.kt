@@ -221,7 +221,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabBlock.background = rounded(BrowserService.FIELD, dp(9))
         tabBlock.contentDescription = "Tabs"
         tabMark = label("✳", 13)
-        tabMark.setTextColor(BrowserService.CLAUDE)
+        tabMark.setTextColor(BrowserService.ACCENT)
         tabMark.setPadding(0, 0, dp(7), 0)
         tabBlock.addView(tabMark)
         val lines = LinearLayout(ctx)
@@ -271,7 +271,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
 
         pull = icon(R.drawable.ccm_reload, BrowserService.TEXT)
         pull.scaleType = ImageView.ScaleType.CENTER
-        pull.background = rounded(Color.parseColor("#3a3936"), dp(20)) // lighter than the bar's blocks
+        pull.background = rounded(BrowserService.LINE, dp(20)) // lighter than the bar's blocks
         pull.elevation = dp(30).toFloat()
         pull.alpha = 0f
         root.addView(pull, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
@@ -457,7 +457,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         filesUp.alpha = if (up) 1f else 0.3f
         filesHome.isEnabled = home
         filesHome.alpha = if (home) 1f else 0.3f
-        filesHidden.setColorFilter(if (hidden) BrowserService.CLAUDE else BrowserService.TEXT)
+        filesHidden.setColorFilter(if (hidden) BrowserService.ACCENT else BrowserService.TEXT)
     }
 
     /**
@@ -734,7 +734,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         pull.rotation = d / most * 270
         val ready = min(1f, d / most)
         pull.alpha = ready
-        pull.setColorFilter(if (ready >= 1) BrowserService.CLAUDE else BrowserService.TEXT)
+        pull.setColorFilter(if (ready >= 1) BrowserService.ACCENT else BrowserService.TEXT)
     }
 
     private fun hidePull(reloading: Boolean) {
@@ -995,7 +995,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 menu?.dismiss()
                 send(BrowserService.MSG_DESKTOP, "on", if (on) null else "1")
             }, null) as LinearLayout
-        val check = icon(R.drawable.ccm_check, BrowserService.CLAUDE)
+        val check = icon(R.drawable.ccm_check, BrowserService.ACCENT)
         check.visibility = if (on) View.VISIBLE else View.INVISIBLE
         desktopRow.addView(check, LinearLayout.LayoutParams(dp(20), dp(20)))
         desktopRow.isEnabled = host.isNotEmpty()
@@ -1044,7 +1044,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         address.imeOptions = EditorInfo.IME_ACTION_GO
         address.inputType = EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_URI
         address.setPadding(dp(14), 0, dp(14), 0)
-        address.background = rounded(BrowserService.BG, dp(19)).apply { setStroke(max(1, dp(1)), Color.parseColor("#3a3936")) }
+        address.background = rounded(BrowserService.BG, dp(19)).apply { setStroke(max(1, dp(1)), BrowserService.LINE) }
         val initial = address.text.toString()
         address.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
