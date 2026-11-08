@@ -201,6 +201,9 @@ private fun markdownBlocks(col: LinearLayout, markwon: Markwon, text: String, fg
         tv.setPadding(pad, if (col.childCount == 0) pad / 2 else 0, pad, 0)
         val width = tableWidth(b, tv.paint, c.resources.displayMetrics.density) + 2 * pad
         render(tv, listOf(b))
+        // A sideways scroll measures its child with no width limit and ignores the layout width: set it on the view.
+        tv.minWidth = width
+        tv.maxWidth = width
         col.addView(HorizontalScrollView(c).apply {
             isFillViewport = true // narrower than the screen: the full width, as before
             isHorizontalScrollBarEnabled = false

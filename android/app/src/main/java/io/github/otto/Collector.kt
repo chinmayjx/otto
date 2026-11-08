@@ -150,12 +150,12 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         hairline.setBackgroundColor(HAIRLINE)
         addView(hairline, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, max(1, dp(1) / 2 + 1)))
         if (!docked) {
-            // The grip: a slim full-width strip on the top edge, dragged up and down, with a small grid of dots in the
+            // The grip: a slim full-width strip on the top edge, dragged up and down, with a row of small dots in the
             // middle.
             val dots = ImageView(ctx)
             dots.setImageResource(R.drawable.ccm_grip)
             dots.setColorFilter(PLACEHOLDER)
-            grip.addView(dots, FrameLayout.LayoutParams(dp(26), dp(10), Gravity.CENTER))
+            grip.addView(dots, FrameLayout.LayoutParams(dp(35), dp(5), Gravity.CENTER))
             grip.contentDescription = "Drag to move"
             grip.setOnTouchListener(GripTouch())
             addView(grip, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)))

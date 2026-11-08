@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The lens panel's grip: a 2 × 4 grid of dots (tinted by Collector). -->
+<!-- The lens panel's grip: one row of six small dots (tinted by Collector). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="26dp" android:height="10dp" android:viewportWidth="26" android:viewportHeight="10">
-    <path android:pathData="M0.4,2a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0zM0.4,8a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0zM7.4,2a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0zM7.4,8a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0zM14.4,2a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0zM14.4,8a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0zM21.4,2a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0zM21.4,8a1.6,1.6 0,1 0,3.2,0a1.6,1.6 0,1 0,-3.2,0z" android:fillColor="#ffffff" />
+    android:width="35dp" android:height="5dp" android:viewportWidth="35" android:viewportHeight="5">
+    <path android:pathData="M1.0,2.5a1.4,1.4 0,1 0,2.8,0a1.4,1.4 0,1 0,-2.8,0zM7.0,2.5a1.4,1.4 0,1 0,2.8,0a1.4,1.4 0,1 0,-2.8,0zM13.0,2.5a1.4,1.4 0,1 0,2.8,0a1.4,1.4 0,1 0,-2.8,0zM19.0,2.5a1.4,1.4 0,1 0,2.8,0a1.4,1.4 0,1 0,-2.8,0zM25.0,2.5a1.4,1.4 0,1 0,2.8,0a1.4,1.4 0,1 0,-2.8,0zM31.0,2.5a1.4,1.4 0,1 0,2.8,0a1.4,1.4 0,1 0,-2.8,0z" android:fillColor="#ffffff" />
 </vector>
