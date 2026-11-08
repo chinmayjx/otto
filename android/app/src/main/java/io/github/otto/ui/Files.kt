@@ -41,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -262,12 +264,14 @@ fun FilesScreen(model: FilesModel) {
 @Composable
 private fun Crumbs(model: FilesModel) {
     val cs = MaterialTheme.colorScheme
-    var filtering by remember { mutableStateOf(false) }
     val l = model.listing
+    var filtering by remember(model.path) { mutableStateOf(false) } // each folder starts unfiltered
     if (filtering) {
+        val focus = remember { FocusRequester() }
+        LaunchedEffect(Unit) { focus.requestFocus() }
         Row(verticalAlignment = Alignment.CenterVertically) {
             SearchField(model.filter, "Filter this folder", { model.filter = it },
-                Modifier.weight(1f).padding(start = 12.dp, top = 6.dp, bottom = 6.dp))
+                Modifier.weight(1f).padding(start = 12.dp, top = 6.dp, bottom = 6.dp), Modifier.focusRequester(focus))
             IconButton(onClick = { filtering = false; model.filter = "" }) { Icon(Ic.close, "Close filter") }
         }
         return

@@ -179,7 +179,7 @@ private fun ArtifactCard(a: ArtifactItem, onClick: () -> Unit) {
 
 /** A rounded search field, as the setup screen's fields: search icon, the text, × to clear. */
 @Composable
-fun SearchField(value: String, hint: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+fun SearchField(value: String, hint: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, field: Modifier = Modifier) {
     val cs = MaterialTheme.colorScheme
     Surface(shape = RoundedCornerShape(28.dp), color = cs.surfaceContainerHigh, modifier = modifier.fillMaxWidth().height(48.dp)) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -189,7 +189,7 @@ fun SearchField(value: String, hint: String, onChange: (String) -> Unit, modifie
                 if (value.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = cs.onSurfaceVariant)
                 BasicTextField(value, onChange, singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = cs.onSurface),
                     cursorBrush = SolidColor(cs.primary), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    modifier = Modifier.fillMaxWidth())
+                    modifier = field.fillMaxWidth())
             }
             if (value.isNotEmpty()) IconButton(onClick = { onChange("") }) { Icon(Ic.close, "Clear", Modifier.size(20.dp)) }
             else Spacer(Modifier.width(12.dp))

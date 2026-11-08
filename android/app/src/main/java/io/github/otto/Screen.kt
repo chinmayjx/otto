@@ -366,6 +366,17 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 }
                 open()
             }
+            Links.isHub(ctx, u) && (path.startsWith("/files") || path.startsWith("/api/fs/")) -> {
+                // A folder in Files, or a file in the viewer (/files?path=…, /api/fs/raw?path=…)
+                val p = u.getQueryParameter("path")
+                if (path.startsWith("/api/fs/") && p != null) showViewer(Target.File(p), null)
+                else {
+                    closeViewer()
+                    if (p != null) filesModel.go(p)
+                    select(FILES)
+                }
+                open()
+            }
             Links.isHub(ctx, u) && path.startsWith("/desktop") -> {
                 closeViewer()
                 select(DESKTOP)
@@ -574,12 +585,12 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         when {
             v != null -> {
                 surface.clearFocus()
-                v.requestFocus()
+                if (v is WebView) v.requestFocus() // a native viewer: no focus asked (it would go to a field, and the keyboard with it)
             }
             tab == BROWSER -> surface.requestFocus()
             else -> {
                 surface.clearFocus()
-                sectionView().requestFocus()
+                (sectionView() as? WebView)?.requestFocus()
             }
         }
     }
