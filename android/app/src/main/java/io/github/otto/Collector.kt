@@ -95,7 +95,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     }
 
     var onCopy: () -> Unit = {}
-    /** The chevron at the tools row's right end: put the collector away (the draft stays). */
+    /** The close at the tools row's right end (an × in a rounded square): put the collector away (the draft stays). */
     var onClose: () -> Unit = {}
     /** A finger came down on the note (the lens's panel takes the focus then). */
     var onNoteTouch: () -> Unit = {}
@@ -180,10 +180,10 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             rightMargin = dp(12)
         })
 
-        // The tools: freeze, whole, (docked) the place, and at the right end the chevron that puts the collector away.
+        // The tools: freeze, whole, (docked) the place, and at the right end the close that puts the collector away.
         // The icons are plain round buttons, with no box; the freeze toggle, when on, gets a soft fill and the
-        // accent. The chevron's disc and the round Copy under it are the same size against the same right edge, so
-        // they share a centre line.
+        // accent. The close's touch target and the round Copy under it are the same size against the same right edge,
+        // so they share a centre line.
         val bar = LinearLayout(ctx)
         bar.gravity = Gravity.CENTER_VERTICAL
         fun icon(v: ImageView, res: Int, run: () -> Unit) {
@@ -211,11 +211,11 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         placeButton.visibility = GONE
         bar.addView(placeButton, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { marginStart = dp(2) })
         bar.addView(View(ctx), LayoutParams(0, 1, 1f))
-        close.setImageResource(R.drawable.ccm_chevron_put_away)
+        close.setImageResource(R.drawable.ccm_close_box)
         close.setColorFilter(ICON)
         close.scaleType = ImageView.ScaleType.CENTER
-        close.background = round(true) // a soft disc
-        close.contentDescription = if (docked) "Close the collector" else "Close the lens"
+        close.background = round(false) // just the ripple
+        close.contentDescription = "Close"
         close.setOnClickListener {
             hideKeyboard()
             onClose()
@@ -495,7 +495,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     companion object {
         private const val CHIP_ROW = 56
         private const val BUTTON = 40
-        private const val ROUND = 44 // the chevron's disc and Copy, one over the other on a centre line
+        private const val ROUND = 44 // the close and Copy, one over the other on a centre line
 
         // The toolbar's own greys (the theme's are in BrowserService): icons, the empty Copy, the note.
         private val ICON = Color.parseColor("#c3c8cf") // the icon buttons, light steel
