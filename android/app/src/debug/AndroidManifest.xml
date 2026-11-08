@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The dev build claims no web links: they always open in the stable app. To test a link in the dev build, start
-     its LinkActivity directly: otto phone launch io.github.otto.dev --activity .LinkActivity --url <link>. -->
+     its LinkActivity directly (otto phone launch with the package, the activity .LinkActivity and the link). -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <application>
         <activity android:name=".LinkActivity" tools:node="merge">
