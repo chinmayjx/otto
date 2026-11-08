@@ -60,7 +60,8 @@ function html(md) {
   s = esc(s)
     .replace(/`([^`\n]+)`/g, (_, c) => `<code>${c}</code>`)
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2">$1</a>')
+    // Links written out, not behind their text: Telegram asks before opening a hidden link, but opens a bare one.
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, t, u) => (t === u ? u : `${t}\n${u}`))
     .replace(/^#{1,6} +(.+)$/gm, '<b>$1</b>')
     .replace(/^(\s*)[-*] +/gm, '$1• ');
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
