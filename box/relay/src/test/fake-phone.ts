@@ -26,6 +26,10 @@ export class FakePhone {
   devicePipes = 0;
   deviceRequests: string[] = [];
   private api = http.createServer((req, res) => this.device(req, res));
+  private relayHost = '';
+  private pipePort = 0;
+  private dials = new Map<string, (pipe: string) => void>();
+  private nextDial = 1;
 
   async start(relayHost: string, controlPort: number, pipePort: number, token: string) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-fake-chrome-'));
@@ -49,6 +53,8 @@ export class FakePhone {
       if (m.id && this.cdpWaiting.has(m.id)) { this.cdpWaiting.get(m.id)!(m); this.cdpWaiting.delete(m.id); }
     });
 
+    this.relayHost = relayHost;
+    this.pipePort = pipePort;
     this.control = net.connect(controlPort, relayHost);
     await new Promise(r => this.control.once('connect', r));
     this.control.write(`hello me.test.otto ${token} 2\n`);
@@ -117,6 +123,10 @@ export class FakePhone {
       case 'show':
         this.shown.push(w[1]);
         break;
+      case 'dialed':
+        this.dials.get(w[1])?.(w[2]);
+        this.dials.delete(w[1]);
+        break;
       case 'open': {
         if (w[2] === 'device') {
           this.devicePipes++;
@@ -147,6 +157,38 @@ export class FakePhone {
         break;
       }
     }
+  }
+
+  /** A pipe of the app's own to one of the relay's services (the box API), as the app dials it. */
+  dial(service = 'box'): Promise<net.Socket> {
+    const req = `d${this.nextDial++}`;
+    this.control.write(`dial ${req} ${service}\n`);
+    return new Promise((resolve, reject) => {
+      this.dials.set(req, pipe => {
+        if (pipe === '-') return reject(new Error(`no ${service} pipe`));
+        const s = net.connect(this.pipePort, this.relayHost, () => {
+          s.write(`${pipe}\n`);
+          resolve(s);
+        });
+      });
+    });
+  }
+
+  /** An HTTP request to the box API, on a pipe of its own. */
+  async box(method: string, p: string, body?: Buffer, headers: Record<string, string> = {}): Promise<{ status: number; type: string; body: Buffer }> {
+    const s = await this.dial();
+    return new Promise((resolve, reject) => {
+      const req = http.request({ createConnection: () => s, path: p, method, headers: { ...headers, ...(body ? { 'content-length': String(body.length) } : {}) } }, res => {
+        const chunks: Buffer[] = [];
+        res.on('data', c => chunks.push(c));
+        res.on('end', () => {
+          s.destroy();
+          resolve({ status: res.statusCode ?? 0, type: String(res.headers['content-type'] ?? ''), body: Buffer.concat(chunks) });
+        });
+      });
+      req.on('error', reject);
+      req.end(body);
+    });
   }
 
   /** The device API: current, screenshot, ui, logcat, install; anything else is unknown. */

@@ -26,6 +26,7 @@ tunnel_port = ${ports.tunnel}
 pipe_port = ${ports.pipe}
 local_port = ${ports.local}
 state_file = "${dir}/state.json"
+clips_dir = "${dir}/clips"
 [phone]
 token_file = "${dir}/token"
 `);
@@ -213,4 +214,109 @@ test('the otto CLI, against this relay', async () => {
   assert.notEqual(r.code, 0);
   r = await otto('frobnicate');
   assert.match(r.err, /unknown command/);
+});
+
+/** A PNG of w × h pixels: only its header matters to the relay. */
+function png(w: number, h: number, fill = 0): Buffer {
+  const b = Buffer.alloc(64, fill);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).copy(b);
+  b.write('IHDR', 12, 'latin1');
+  b.writeUInt32BE(w, 16);
+  b.writeUInt32BE(h, 20);
+  return b;
+}
+
+function multipart(parts: { name: string; type: string; data: Buffer }[]): { type: string; body: Buffer } {
+  const boundary = 'otto' + Math.random().toString(16).slice(2);
+  const chunks: Buffer[] = [];
+  for (const p of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\ncontent-disposition: form-data; name="${p.name}"; filename="${p.name}"\r\ncontent-type: ${p.type}\r\n\r\n`), p.data, Buffer.from('\r\n'));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return { type: `multipart/form-data; boundary=${boundary}`, body: Buffer.concat(chunks) };
+}
+
+test('clips: the phone uploads one through its own pipe; the CLI lists, reads and deletes it', async () => {
+  const source = { kind: 'artifact', id: 'a1', version: 3, title: 'Plan', url: 'https://hub.example/a/a1', notes: [{ where: 'p.4', text: 'this table' }] };
+  const big = Buffer.concat([png(1080, 2340), Buffer.alloc(3 << 20, 7)]); // a few MB, like a full screenshot
+  const up = multipart([
+    { name: 'clip', type: 'application/json', data: Buffer.from(JSON.stringify({ text: 'Why is this red?', source })) },
+    { name: 'image', type: 'image/png', data: png(300, 200) },
+    { name: 'image', type: 'image/png', data: big },
+    { name: 'thumb', type: 'image/jpeg', data: Buffer.from('JPEGTHUMB') },
+  ]);
+  const r = await app.box('POST', '/clips', up.body, { 'content-type': up.type });
+  assert.equal(r.status, 201, r.body.toString());
+  const clip = JSON.parse(r.body.toString());
+  assert.match(clip.id, /^[0-9a-hjkmnp-tv-z]{6}$/);
+  assert.deepEqual(clip.images, [{ file: '1.png', width: 300, height: 200 }, { file: '2.png', width: 1080, height: 2340 }]);
+  assert.deepEqual(clip.source, source);
+  assert.equal(fs.readFileSync(path.join(dir, 'clips', clip.id, '2.png')).length, big.length);
+
+  // Not an upload: refused.
+  assert.equal((await app.box('POST', '/clips', Buffer.from('{}'), { 'content-type': 'application/json' })).status, 400);
+  // Only the phone uploads; the local API reads.
+  assert.equal((await fetch(api + '/clips', { method: 'POST', body: new Uint8Array(up.body), headers: { 'content-type': up.type } })).status, 405);
+
+  // The phone's list, image and thumbnail.
+  const list = JSON.parse((await app.box('GET', '/clips')).body.toString());
+  assert.deepEqual(list.map((c: any) => c.id), [clip.id]);
+  const img = await app.box('GET', `/clips/${clip.id}/1.png`);
+  assert.equal(img.type, 'image/png');
+  assert.deepEqual(img.body, png(300, 200));
+  assert.equal((await app.box('GET', `/clips/${clip.id}/thumb.jpg`)).body.toString(), 'JPEGTHUMB');
+  assert.equal((await app.box('GET', `/clips/${clip.id}/9.png`)).status, 404);
+
+  // The local API, and the CLI on it.
+  const local = await (await fetch(`${api}/clips/${clip.id.toUpperCase()}`)).json();
+  assert.equal(local.dir, path.join(dir, 'clips', clip.id));
+  const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../../cli/dist/main.js');
+  const otto = (...args: string[]) => new Promise<{ code: number; out: string; err: string }>(resolve => {
+    const p = spawn(process.execPath, [cli, ...args], { env: { ...process.env, OTTO_CONFIG: path.join(dir, 'config.toml') } });
+    let out = '', err = '';
+    p.stdout.on('data', d => out += d);
+    p.stderr.on('data', d => err += d);
+    p.on('close', code => resolve({ code: code ?? 1, out, err }));
+  });
+  let o = await otto('clip', clip.id);
+  assert.equal(o.code, 0, o.err);
+  assert.match(o.out, /Why is this red\?/);
+  assert.match(o.out, /Plan/);
+  assert.match(o.out, /https:\/\/hub\.example\/a\/a1/);
+  assert.match(o.out, /p\.4: this table/);
+  assert.ok(o.out.includes(path.join(dir, 'clips', clip.id, '1.png')), o.out);
+  assert.ok(o.out.includes(path.join(dir, 'clips', clip.id, '2.png')), o.out);
+  o = await otto('clip', 'list');
+  assert.match(o.out, new RegExp(clip.id));
+  o = await otto('clip', 'rm', clip.id);
+  assert.equal(o.code, 0, o.err);
+  assert.equal((await fetch(`${api}/clips/${clip.id}`)).status, 404);
+  assert.ok(!fs.existsSync(path.join(dir, 'clips', clip.id)));
+
+  // And from the phone: a second clip, deleted there.
+  const two = multipart([{ name: 'clip', type: 'application/json', data: Buffer.from(JSON.stringify({ text: 'just text' })) }]);
+  const id2 = JSON.parse((await app.box('POST', '/clips', two.body, { 'content-type': two.type })).body.toString()).id;
+  assert.equal((await app.box('DELETE', `/clips/${id2}`)).status, 200);
+  assert.equal((await app.box('GET', `/clips/${id2}`)).status, 404);
+});
+
+test('clips: a pipe for an unknown service is refused, and a bad token gets no box API', async () => {
+  await assert.rejects(app.dial('nonsense'), /no nonsense pipe/);
+  // A phone with the wrong token is cut off before it can ask for anything.
+  const net = await import('node:net');
+  const s = net.connect(ports.tunnel, '127.0.0.1');
+  await new Promise(r => s.once('connect', r));
+  let got = '';
+  s.on('data', d => got += d);
+  s.write('hello me.test.otto wrong 2\ndial x1 box\n');
+  await new Promise(r => s.once('close', r));
+  assert.equal(got, '');
+  // Nor does a made-up pipe id reach it.
+  const p = net.connect(ports.pipe, '127.0.0.1');
+  await new Promise(r => p.once('connect', r));
+  p.write('0123456789abcdef01234567\nGET /clips HTTP/1.1\r\nhost: x\r\n\r\n');
+  let reply = '';
+  p.on('data', d => reply += d);
+  await new Promise(r => p.once('close', r));
+  assert.equal(reply, '');
 });

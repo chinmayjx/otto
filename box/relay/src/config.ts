@@ -17,6 +17,8 @@ export interface Config {
   token: string;
   /** Where the relay keeps which group is whose. */
   stateFile: string;
+  /** Where clips from the phone are kept (clips.ts). */
+  clipsDir: string;
 }
 
 const home = os.homedir();
@@ -45,6 +47,7 @@ export function loadConfig(file = configPath()): Config {
     // One token for the app. Before the tunnel it had one per link; the browser link's carries on.
     token: token(phone.token_file ?? phone.browser_token_file ?? '~/.config/otto/token'),
     stateFile: expand(relay.state_file ?? '~/.local/state/otto/relay.json'),
+    clipsDir: expand(relay.clips_dir ?? '~/.local/state/otto/clips'),
   };
 }
 

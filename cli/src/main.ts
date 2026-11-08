@@ -49,6 +49,11 @@ The second screen and status:
                                            phone through its tunnel; --qr: also as a QR code)
   otto artifact ...                        publish and list artifacts (the artifact CLI)
 
+Clips (what the user collected on the phone for you: text, screenshots, notes on an artifact):
+  otto clip <id>                           the clip: its text, its source, and the paths of its images
+  otto clip list [--limit N]               the newest clips
+  otto clip rm <id>
+
 Your session comes from OTTO_SESSION (set by your agent's adapter).`;
 
 interface Args { _: string[]; [k: string]: any }
@@ -199,6 +204,19 @@ async function main(argv: string[]) {
       return;
     }
 
+    case 'clip': {
+      if (cmd === undefined) throw new OttoError('missing a clip id (see otto help)');
+      if (cmd === 'list' || cmd === 'ls') {
+        const list = await (await relay(config, 'GET', `/clips?limit=${num(a.limit) ?? 20}`)).json();
+        return out(list.map((c: any) => `${c.id}  ${when(c.created)}  ${c.images.length} image${c.images.length === 1 ? '' : 's'}  ${from(c.source)}${c.text ? `  "${firstLine(c.text)}"` : ''}`).join('\n') || 'no clips');
+      }
+      if (cmd === 'rm' || cmd === 'delete') {
+        await relay(config, 'DELETE', `/clips/${encodeURIComponent(need(a._[0], 'a clip id'))}`);
+        return out('deleted');
+      }
+      return out(clipText(await (await relay(config, 'GET', `/clips/${encodeURIComponent(cmd)}`)).json()));
+    }
+
     case 'artifact': {
       // The artifact hub's own CLI, until it moves into hub/artifacts.
       const r = spawnSync('artifact', argv.slice(1), { stdio: 'inherit' });
@@ -209,6 +227,32 @@ async function main(argv: string[]) {
   }
   throw new OttoError(`unknown command: otto ${[group, cmd].filter(Boolean).join(' ')} (see otto help)`);
 }
+
+/** A clip, as an agent reads it: the text, the artifact and its notes, the images' paths. */
+function clipText(c: any): string {
+  const lines = [`Otto clip ${c.id}, ${when(c.created)}, from ${from(c.source)}`];
+  if (c.text) lines.push('', c.text.trimEnd());
+  const s = c.source ?? {};
+  if (s.kind === 'artifact') {
+    lines.push('', `Artifact: ${s.title || s.id}${s.version ? ` (v${s.version})` : ''}`);
+    if (s.url) lines.push(`Link: ${s.url}`);
+    for (const n of s.notes ?? []) lines.push(`- ${n.where ? `${n.where}: ` : ''}${n.text}`);
+  }
+  if (c.images.length) {
+    lines.push('', `${c.images.length === 1 ? 'One image' : `${c.images.length} images`}: open ${c.images.length === 1 ? 'it' : 'each one'} with your image or file tool to see what the user means.`);
+    for (const i of c.images) lines.push(`${path.join(c.dir, i.file)}  (${i.width}x${i.height})`);
+  }
+  return lines.join('\n');
+}
+
+function from(s: any): string {
+  if (s?.kind === 'artifact') return `the artifact "${s.title || s.id}"`;
+  if (s?.kind === 'screen') return `the phone's screen${s.label || s.app ? ` (${s.label ? `${s.label}, ` : ''}${s.app ?? ''})`.replace(', )', ')') : ''}`;
+  return 'the phone';
+}
+
+const when = (iso: string) => new Date(iso).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+const firstLine = (t: string) => { const l = t.trim().split('\n')[0]; return l.length > 60 ? l.slice(0, 59) + '…' : l; };
 
 function need<T>(v: T | undefined, what: string): T {
   if (v === undefined || v === '') throw new OttoError(`missing ${what} (see otto help)`);

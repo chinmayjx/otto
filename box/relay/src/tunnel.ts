@@ -10,13 +10,18 @@
 //                  browser up | browser down             the browser (its own process) came up or went away;
 //                                                        "up" is followed by a "tab" line for each live tab
 //                  ping                                  now and then; ignored
+//                  dial <req> <service>                  the app wants a pipe of its own, to the relay's <service>:
+//                                                        box (the box API, served by the relay: clips)
 //                  ... and the browser's lines (browser.ts)
 //   relay to app:  open <pipe> <service>                 open a pipe for <service>: devtools | device
+//                  dialed <req> <pipe> | dialed <req> -  the pipe the app asked for (or none: an unknown service)
 //                  ping                                  every 30 s, so the app notices a dead path
 //                  ... and the browser's lines (browser.ts)
 //
 // Pipe (TCP, the pipe port): the app connects, sends "<pipe>\n", and from then on the connection is the service's
-// stream. A pipe id is 24 random hex digits, asked for moments before and good once, so it needs no token.
+// stream. A pipe id is 24 random hex digits, asked for moments before and good once, so it needs no token. The
+// same goes for a pipe the app dials for itself: it asks on the (authenticated) control connection, and the pipe
+// it then opens is the relay's service's stream, spoken to by the app (the box API: HTTP/1.1, the app the client).
 import net from 'node:net';
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -24,6 +29,9 @@ import { EventEmitter } from 'node:events';
 const PING_MS = 30_000;
 
 export type Service = 'devtools' | 'device';
+
+/** What the relay serves the app on a pipe the app dials. */
+export const DIALS = new Set(['box']);
 
 export interface Tab { tab: string; group: string | null }
 
@@ -44,7 +52,7 @@ interface Waiting { resolve: (s: net.Socket) => void; reject: (e: Error) => void
 
 /**
  * Events: "phone" (p) once a phone has said hello, "line" (p, words, line) for each control line after that,
- * "gone" (p) when its control connection closes.
+ * "gone" (p) when its control connection closes, "dial" (p, service, socket) for a pipe the app dialled.
  */
 export class Tunnel extends EventEmitter {
   readonly phones = new Set<Phone>();
@@ -142,6 +150,14 @@ export class Tunnel extends EventEmitter {
         p.browser = w[1] === 'up';
         p.tabs.clear(); // "up" is followed by the live tabs
         break;
+      case 'dial': {
+        if (!w[1] || !DIALS.has(w[2])) return void this.send(p, `dialed ${w[1] ?? '-'} -`);
+        const id = crypto.randomBytes(12).toString('hex'), service = w[2];
+        const timer = setTimeout(() => this.pipes.delete(id), 10_000);
+        this.pipes.set(id, { resolve: s => this.emit('dial', p, service, s), reject: () => {}, timer, phone: p });
+        this.send(p, `dialed ${w[1]} ${id}`);
+        return;
+      }
     }
     this.emit('line', p, w, line);
   }

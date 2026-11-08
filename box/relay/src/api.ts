@@ -11,16 +11,24 @@
 //   POST /phone/<cmd>                     a device command; JSON args in the body (install: the APK, ?name=)
 //                                         replies JSON {result}, or the bytes with the result in X-Otto-Result
 //                                         (device.ts forwards it to the phone's device HTTP API)
+//   GET  /clips[?limit=N], /clips/<id>, /clips/<id>/<n>.png; DELETE /clips/<id>
+//                                         clips from the phone (clips.ts)
+//
+// The box API, served to the app on the pipes it dials itself (tunnel.ts "dial ... box"), never on a port: the
+// clip routes, with POST /clips for uploads (clips.ts).
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { Browser, NO_PHONE } from './browser.js';
 import { Device, NO_DEVICE } from './device.js';
 import { Driver } from './driver.js';
 import type { Sessions } from './sessions.js';
+import type { Clips } from './clips.js';
+import type { Phone, Tunnel } from './tunnel.js';
+import type net from 'node:net';
 
 const SESSION = '[\\w.:@-]{1,200}';
 
-export function serve(port: number, browser: Browser, device: Device, sessions: Sessions, log = console.log) {
+export function serve(port: number, browser: Browser, device: Device, sessions: Sessions, clips: Clips, log = console.log) {
   const titles = new Map<string, string>(); // titles named before a session's first tab
   const driver = new Driver(id => `http://127.0.0.1:${port}/s/${encodeURIComponent(id)}`);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 30 });
@@ -74,6 +82,7 @@ export function serve(port: number, browser: Browser, device: Device, sessions: 
       }
       m = u.pathname.match(/^\/phone\/(\w+)$/);
       if (m && req.method === 'POST') return await phone(m[1], u, req, res, device);
+      if (await clips.serve(req, res, false)) return;
       send(404, 'not found');
     } catch (e: any) {
       if (!res.headersSent) send(500, e.message);
@@ -91,6 +100,27 @@ export function serve(port: number, browser: Browser, device: Device, sessions: 
   });
 
   server.listen(port, '127.0.0.1', () => log(`local API on 127.0.0.1:${port}`));
+  return server;
+}
+
+/** The box API, for the app: HTTP on each pipe it dials (kept alive, as many requests as it likes). */
+export function serveBox(tunnel: Tunnel, clips: Clips, log = console.log) {
+  const server = http.createServer(async (req, res) => {
+    try {
+      if (await clips.serve(req, res, true)) return;
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('not found\n');
+    } catch (e: any) {
+      log(`box API: ${e.message}`);
+      if (!res.headersSent) res.writeHead(500, { 'content-type': 'text/plain' });
+      res.end(e.message + '\n');
+    }
+  });
+  tunnel.on('dial', (_p: Phone, service: string, s: net.Socket) => {
+    if (service !== 'box') return void s.destroy();
+    server.emit('connection', s);
+    s.resume();
+  });
   return server;
 }
 
