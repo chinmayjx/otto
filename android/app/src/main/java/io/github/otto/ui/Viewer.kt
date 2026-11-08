@@ -44,6 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -194,7 +195,7 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
                 if (!clipping) clip?.save()
             },
         )
-        Box(Modifier.weight(1f).onGloballyPositioned { c ->
+        Box(Modifier.weight(1f).clipToBounds().onGloballyPositioned { c ->
             val b = c.boundsInWindow()
             area = android.graphics.Rect(b.left.roundToInt(), b.top.roundToInt(), b.right.roundToInt(), b.bottom.roundToInt())
         }) {
@@ -445,7 +446,7 @@ private fun ClipImageViewer(t: Target.Clip) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize()) {
         ViewerBar("Clip ${t.id}", null, null, onLabel = {}, onDownload = null, onMore = null)
-        Box(Modifier.weight(1f)) { ZoomableImage(Clips.image(t.id, t.file), "Clip ${t.id}", Clips.images(ctx)) }
+        Box(Modifier.weight(1f).clipToBounds()) { ZoomableImage(Clips.image(t.id, t.file), "Clip ${t.id}", Clips.images(ctx)) }
     }
 }
 
@@ -595,7 +596,7 @@ private fun FileViewer(target: Target.File, sheets: Sheets) {
                     }
                 }
             })
-        Box(Modifier.weight(1f)) {
+        Box(Modifier.weight(1f).clipToBounds()) {
             when {
                 error != null -> Centered(error!!)
                 f == null -> {}

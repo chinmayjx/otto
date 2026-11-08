@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -86,7 +87,9 @@ fun MediaPlayer(url: String, audio: Boolean, modifier: Modifier = Modifier) {
                 }
             }
         },
-        modifier = modifier.fillMaxSize().background(Color.Black),
+        // Clipped to its slot: Compose doesn't clip the views it hosts, so a view's content could draw over the
+        // screen's bar above it.
+        modifier = modifier.fillMaxSize().clipToBounds().background(Color.Black),
     )
 }
 
@@ -160,7 +163,9 @@ fun MarkdownText(text: String, onLink: (String) -> Unit, modifier: Modifier = Mo
                 if (place != null) tv.post { place.label = heading(tv, v.scrollY + slack) }
             }
         },
-        modifier = modifier.fillMaxSize(),
+        // Clipped to its slot: Compose doesn't clip the views it hosts, and the ScrollView's text, scrolled up,
+        // drew over the viewer's bar.
+        modifier = modifier.fillMaxSize().clipToBounds(),
     )
 }
 
