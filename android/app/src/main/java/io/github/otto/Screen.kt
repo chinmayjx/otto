@@ -139,7 +139,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private var tabList: LinearLayout? = null // the open tab menu's list, refreshed as the tabs change
     private var typed: String? = null // what's typed in the tab menu's address bar, while it's a query (then the list suggests)
     private var suggestSeq = 0
-    private var tab = BROWSER
+    private var tab = ARTIFACTS
     private val replies = Messenger(Handler(Looper.getMainLooper(), ::onReply))
     private var service: Messenger? = null
     private var attached = false
@@ -268,7 +268,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         bar.addView(filesButtons, LinearLayout.LayoutParams(0, dp(40), 1f))
         body.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(BAR_DP)))
         showTabs()
-        select(BROWSER)
+        select(ARTIFACTS)
 
         // The window lies under the system bars and the keyboard; the screen keeps its content clear of them.
         root.setOnApplyWindowInsetsListener { _, insets ->
@@ -1082,7 +1082,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private fun sectionMenu() {
         val list = menuBox()
         val all = tabState.optJSONArray("tabs")
-        for (i in intArrayOf(BROWSER, ARTIFACTS, FILES, CLIPBOARD, DESKTOP, TERMINAL, DEVBOX)) {
+        for (i in intArrayOf(ARTIFACTS, BROWSER, FILES, CLIPBOARD, DESKTOP, TERMINAL, DEVBOX)) {
             val sub = if (i == BROWSER && all != null) "${all.length()} " + (if (all.length() == 1) "tab" else "tabs") else null
             list.addView(menuItem(ICONS[i], NAMES[i], sub, i == tab, {
                 menu?.dismiss()
