@@ -19,7 +19,7 @@ import type net from 'node:net';
 import type { Phone, Tunnel } from './tunnel.js';
 
 /** Commands that touch the screen. */
-const SCREEN = new Set(['screenshot', 'ui', 'tap', 'longpress', 'swipe', 'text', 'key', 'launch', 'forcestop', 'install', 'uninstall', 'logcat']);
+const SCREEN = new Set(['screenshot', 'ui', 'tap', 'longpress', 'swipe', 'text', 'paste', 'clear', 'key', 'launch', 'forcestop', 'install', 'uninstall', 'logcat']);
 /** Commands that only read: GET with the args in the query. */
 const READ = new Set(['info', 'current', 'screenshot', 'ui', 'wait', 'packages', 'appinfo', 'logcat']);
 const SPARE = 2;

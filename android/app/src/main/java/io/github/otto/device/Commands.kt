@@ -65,6 +65,8 @@ class Commands(private val ctx: Context) {
         "longpress" -> Reply(settled(tap(a, true)))
         "swipe" -> Reply(settled(swipe(a)))
         "text" -> Reply(settled(text(a)))
+        "paste" -> Reply(settled(paste(a)))
+        "clear" -> Reply(settled(clear()))
         "key" -> Reply(settled(key(a.getString("key"))))
         "wait" -> Reply(waitFor(a))
         "current" -> Reply(current())
@@ -221,6 +223,46 @@ class Commands(private val ctx: Context) {
         sel.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, value.length)
         n.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, sel)
         return "typed into " + UiTree.describe(n)
+    }
+
+    /**
+     * The text pasted at the cursor, through the clipboard: unlike [text], it never reads what the field holds, which
+     * some apps report wrongly (Telegram's empty message box says its text is its placeholder, "Message"). It takes
+     * the clipboard; what was on it is put back when Android lets the app read it, which it mostly doesn't.
+     */
+    private fun paste(a: JSONObject): String {
+        val s = AgentAccessibility.require()
+        val n = UiTree.focusedInput(s) ?: throw Exception("no text field has focus; tap one first")
+        val add = a.getString("text")
+        val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
+        val before = onMain { runCatching { cm.primaryClip }.getOrNull() }
+        onMain { cm.setPrimaryClip(android.content.ClipData.newPlainText("otto", add)) }
+        try {
+            if (!n.performAction(AccessibilityNodeInfo.ACTION_PASTE)) throw Exception("the field refused the paste")
+        } finally {
+            if (before != null) {
+                Thread.sleep(150) // the paste reads the clipboard in the field's app
+                onMain { cm.setPrimaryClip(before) }
+            }
+        }
+        return "pasted into " + UiTree.describe(n) + if (before == null) " (the clipboard now holds the text)" else ""
+    }
+
+    /** The focused field emptied, whatever it holds or claims to hold. */
+    private fun clear(): String {
+        val s = AgentAccessibility.require()
+        val n = UiTree.focusedInput(s) ?: throw Exception("no text field has focus; tap one first")
+        val b = Bundle()
+        b.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
+        if (!n.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, b)) throw Exception("the field refused to clear")
+        return "cleared " + UiTree.describe(n)
+    }
+
+    /** [f] on the main thread (the clipboard wants a looper), waited for. */
+    private fun <T> onMain(f: () -> T): T {
+        val done = java.util.concurrent.CompletableFuture<T>()
+        android.os.Handler(android.os.Looper.getMainLooper()).post { try { done.complete(f()) } catch (e: Throwable) { done.completeExceptionally(e) } }
+        return done.get(5, java.util.concurrent.TimeUnit.SECONDS)
     }
 
     private fun key(key: String): String {

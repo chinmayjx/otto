@@ -26,6 +26,8 @@ Phone:
   otto phone longpress <x> <y> | --text T ... [--ms N]
   otto phone swipe up|down|left|right | <x1> <y1> <x2> <y2> [--ms N]
   otto phone type <text> [--replace]       into the focused field
+  otto phone paste <text>                  pasted at the cursor via the clipboard (for fields that misreport their text)
+  otto phone clear                         empty the focused field
   otto phone key back|home|recents|enter|notifications|quicksettings|dismiss|power|lock|splitscreen
   otto phone wait --text T | --id I | --desc D [--gone] [--timeout MS]
   otto phone launch <package> [--activity A] [--url U] | --url U   (package + activity + url: that screen, with the link)
@@ -136,6 +138,8 @@ async function main(argv: string[]) {
           return text('swipe', /^\d/.test(d ?? '') ? { x1: num(d), y1: num(xy[0]), x2: num(xy[1]), y2: num(xy[2]), ms: num(a.ms) } : { direction: need(d, 'a direction or coordinates'), ms: num(a.ms) });
         }
         case 'type': return text('text', { text: need(a._.join(' ') || undefined, 'the text'), replace: a.replace });
+        case 'paste': return text('paste', { text: need(a._.join(' ') || undefined, 'the text') });
+        case 'clear': return text('clear');
         case 'key': return text('key', { key: need(a._[0], 'a key') });
         case 'wait': return text('wait', { ...selector(a), gone: a.gone, timeout: num(a.timeout) ?? 10_000 });
         case 'launch': return text('launch', { package: a._[0], activity: a.activity, url: a.url });
