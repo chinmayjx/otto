@@ -159,7 +159,8 @@ class OverlayService : Service(), Screen.Host {
 
     /**
      * The one handle, on the right edge, over the screen too: a tap or a swipe across it fades the screen in, the
-     * next fades it out. A drag up or down moves it along the edge. A long press opens the lens (Lens).
+     * next fades it out. A drag up or down moves it along the edge. A long press opens the lens (Lens); with the
+     * lens open, a tap closes it.
      */
     @SuppressLint("ClickableViewAccessibility")
     private fun addRightHandle() {
@@ -177,6 +178,7 @@ class OverlayService : Service(), Screen.Host {
             var moving = false // a drag up or down, not a tap
             var swiped = false // a swipe across, which toggles the screen as a tap does
             var pressed = false // held still long enough: the lens, and nothing else for this touch
+            var closing = false // a touch while the lens is open: it closes the lens, and does nothing else
             val longPress = Runnable {
                 pressed = true
                 pill.animate().scaleX(1f).scaleY(1f).setDuration(90)
@@ -189,6 +191,8 @@ class OverlayService : Service(), Screen.Host {
                 val screen = screen ?: return false
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
+                        closing = Lens.current != null
+                        if (closing) return true
                         downX = e.rawX
                         downY = e.rawY
                         swiped = false
@@ -203,7 +207,7 @@ class OverlayService : Service(), Screen.Host {
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        if (pressed) return true
+                        if (pressed || closing) return true
                         val dx = e.rawX - downX
                         val dy = e.rawY - downY
                         if (!moving && !swiped && max(abs(dx), abs(dy)) > slop) {
@@ -218,6 +222,10 @@ class OverlayService : Service(), Screen.Host {
                         return true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (closing) {
+                            if (e.actionMasked == MotionEvent.ACTION_UP) Lens.current?.dismiss()
+                            return true
+                        }
                         handle.removeCallbacks(longPress)
                         if (pressed) return true
                         pill.animate().scaleX(1f).scaleY(1f).setDuration(140)
@@ -235,15 +243,13 @@ class OverlayService : Service(), Screen.Host {
     }
 
     /**
-     * The lens: the handle and the second screen out of the picture first (the screen at once, no fade), back when
-     * the lens is gone.
+     * The lens: the second screen out of the picture first (at once, no fade); the lens hides the handle while it
+     * takes the screen.
      */
     private fun lens() {
-        val handle = right ?: return
-        handle.visibility = View.INVISIBLE
         val screen = screen
         if (screen != null && !screen.isClosed) screen.closeNow() else ScreenActivity.current?.leave()
-        Lens.open(this) { right?.visibility = View.VISIBLE }
+        Lens.open(this, { shown -> right?.visibility = if (shown) View.VISIBLE else View.INVISIBLE }) {}
     }
 
     private fun toggle() {

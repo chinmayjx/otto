@@ -34,12 +34,13 @@ import kotlin.math.roundToInt
  * The collector: what goes into a clip (Clips), gathered in one full-width bar. A row of image chips (each with an
  * ×), a text field that grows from one line to four, and one button, Copy. The same component in two places:
  *
- * - floating over the lens's frozen screen (Lens), with a grip on its top edge to drag it up and down;
+ * - floating over the live screen (Lens), with a grip on its top edge to drag it up and down, and a freeze button
+ *   that freezes the screen to take parts of it (and, frozen, becomes Done);
  * - docked under the artifact viewer (ui/Viewer, in an AndroidView), with a capture button that freezes the
  *   viewer to take a part of it, and a place button that starts a note tagged with where the reader is ("p.4").
  *
  * It holds no clip logic of its own: its host says what the chips are (Piece), and what Copy, ×, capture and the
- * place button do.
+ * action button (the place, or the lens's "Whole screen") do.
  */
 @SuppressLint("ViewConstructor")
 class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
@@ -62,8 +63,10 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     var onRemove: (Int) -> Unit = {}
     var onTapPiece: (Int) -> Unit = {}
     var onTextChanged: (String) -> Unit = {}
-    /** Docked: freeze the viewer to take a part of it. */
+    /** The freeze toggle: freeze (the viewer, or the screen) to select parts of it, or back to live. */
     var onCapture: () -> Unit = {}
+    /** Take all of it (the screen, or the viewer) as one image. */
+    var onWhole: () -> Unit = {}
     /** The grip's drag (lens): by how much the finger moved down, then null when it's let go. */
     var onDrag: (Float?) -> Unit = {}
 
@@ -74,7 +77,17 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     var place: String? = null
         set(v) {
             field = v
-            placeButton.text = "+ " + (v ?: "Note")
+            action("+ " + (v ?: "Note")) { addNote() }
+        }
+
+    /** The freeze toggle is on: what's under the collector is frozen. */
+    var frozen = false
+        set(v) {
+            field = v
+            capture.setColorFilter(if (v) BrowserService.TEXT else BrowserService.MUTED)
+            capture.background = rounded(if (v) BrowserService.LINE else BrowserService.FIELD, if (v) BrowserService.TEXT else BrowserService.LINE)
+            capture.contentDescription = if (v) "Unfreeze" else if (docked) "Freeze the page to select parts of it" else "Freeze the screen to select parts of it"
+            changed()
         }
 
     var text: String
@@ -86,12 +99,12 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     val grip = FrameLayout(ctx)
     private val chips = LinearLayout(ctx)
     private val chipScroll = HorizontalScrollView(ctx)
-    private val hint = TextView(ctx)
     private val status = TextView(ctx)
     private val note = EditText(ctx)
     private val copy: TextView
     private val placeButton: TextView
     private val capture = ImageView(ctx)
+    private val whole = ImageView(ctx)
     private var busy = false
 
     init {
@@ -101,59 +114,70 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         isFocusable = false // nor does it take the focus (and its grey highlight) when the text lets go of it
         defaultFocusHighlightEnabled = false
 
+        val hairline = View(ctx)
+        hairline.setBackgroundColor(BrowserService.LINE)
+        addView(hairline, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, max(1, dp(1) / 2 + 1)))
         if (!docked) {
-            // The grip: a full-width strip on the top edge, with a short bar in the middle, dragged up and down.
+            // The grip: a slim full-width strip on the top edge, with a short bar in the middle, dragged up and down.
             val bar = View(ctx)
             bar.background = GradientDrawable().apply {
                 setColor(BrowserService.MUTED)
                 cornerRadius = dp(2).toFloat()
             }
-            grip.addView(bar, FrameLayout.LayoutParams(dp(36), dp(4), Gravity.CENTER))
+            grip.addView(bar, FrameLayout.LayoutParams(dp(32), dp(4), Gravity.CENTER))
             grip.contentDescription = "Drag to move"
             grip.setOnTouchListener(GripTouch())
-            addView(grip, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(20)))
+            addView(grip, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(16)))
         }
-        val hairline = View(ctx)
-        hairline.setBackgroundColor(BrowserService.LINE)
-        addView(hairline, 0, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, max(1, dp(1) / 2 + 1)))
 
-        // The chips (or a hint), then, docked, the place and capture buttons at the right end.
-        val top = LinearLayout(ctx)
-        top.gravity = Gravity.CENTER_VERTICAL
-        val strip = FrameLayout(ctx)
-        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-        hint.setTextColor(BrowserService.MUTED)
-        hint.gravity = Gravity.CENTER_VERTICAL
-        hint.maxLines = 2
-        hint.ellipsize = TextUtils.TruncateAt.END
-        strip.addView(hint, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        // The chips, only when there are some.
         chips.orientation = HORIZONTAL
         chips.gravity = Gravity.CENTER_VERTICAL
         chipScroll.isHorizontalScrollBarEnabled = false
         chipScroll.addView(chips, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        strip.addView(chipScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        top.addView(strip, LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
-        placeButton = button("+ Note", BrowserService.TEXT, field(BrowserService.FIELD, BrowserService.LINE))
+        addView(chipScroll, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CHIP_ROW)).apply {
+            leftMargin = dp(12)
+            rightMargin = dp(12)
+        })
+
+        // The toolbar: freeze, whole, (docked) the place, and Copy at the right end.
+        val bar = LinearLayout(ctx)
+        bar.gravity = Gravity.CENTER_VERTICAL
+        fun icon(v: ImageView, res: Int, run: () -> Unit) {
+            v.setImageResource(res)
+            v.setColorFilter(BrowserService.TEXT)
+            v.scaleType = ImageView.ScaleType.CENTER
+            v.background = rounded(BrowserService.FIELD, BrowserService.LINE)
+            v.setOnClickListener {
+                // Taken as it is on screen: after the keyboard has gone and the layout has settled.
+                val ime = rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
+                hideKeyboard()
+                if (ime) postDelayed({ run() }, 450) else run()
+            }
+            bar.addView(v, LayoutParams(dp(BUTTON), dp(BUTTON)).apply { marginEnd = dp(6) })
+        }
+        icon(capture, R.drawable.ccm_capture) { onCapture() }
+        icon(whole, R.drawable.ccm_whole) { onWhole() }
+        whole.contentDescription = if (docked) "Take the whole page in view" else "Take the whole screen"
+        placeButton = button("+ Note", BrowserService.TEXT, rounded(BrowserService.FIELD, BrowserService.LINE))
         placeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         placeButton.minWidth = 0
         placeButton.setPadding(dp(10), 0, dp(10), 0)
-        placeButton.contentDescription = "Add a note here"
-        placeButton.setOnClickListener { addNote() }
-        capture.setImageResource(R.drawable.ccm_capture)
-        capture.setColorFilter(BrowserService.TEXT)
-        capture.scaleType = ImageView.ScaleType.CENTER
-        capture.background = field(BrowserService.FIELD, BrowserService.LINE)
-        capture.contentDescription = "Take a part of the page"
-        capture.setOnClickListener {
+        placeButton.visibility = GONE
+        bar.addView(placeButton, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(BUTTON)))
+        bar.addView(View(ctx), LayoutParams(0, 1, 1f))
+        copy = button("Copy", BrowserService.ON_ACCENT, rounded(BrowserService.ACCENT, BrowserService.ACCENT))
+        copy.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+        copy.minWidth = dp(64)
+        copy.contentDescription = "Copy: send to the box, and a reference to the clipboard"
+        copy.setOnClickListener {
+            if (busy || !ready()) return@setOnClickListener
             hideKeyboard()
-            onCapture()
+            onCopy()
         }
-        if (docked) {
-            top.addView(placeButton, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)).apply { marginStart = dp(8) })
-            top.addView(capture, LayoutParams(dp(40), dp(36)).apply { marginStart = dp(6) })
-        }
-        addView(top, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CHIP_ROW)).apply {
-            topMargin = dp(if (docked) 6 else 0)
+        bar.addView(copy, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(BUTTON)))
+        addView(bar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(if (docked) 8 else 2)
             leftMargin = dp(12)
             rightMargin = dp(12)
         })
@@ -168,10 +192,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             rightMargin = dp(14)
         })
 
-        // The text, then Copy.
-        val row = LinearLayout(ctx)
-        row.gravity = Gravity.BOTTOM
-        note.hint = if (docked) "Notes for your agent" else "What should your agent see here?"
+        // The note: one full-width strip that grows to four lines.
         note.setHintTextColor(BrowserService.MUTED)
         note.setTextColor(BrowserService.TEXT)
         note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
@@ -183,33 +204,40 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         note.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN
         note.minHeight = dp(44)
         note.setPadding(dp(12), dp(9), dp(12), dp(9))
-        note.background = field(BrowserService.FIELD, BrowserService.LINE)
+        note.background = rounded(BrowserService.FIELD, BrowserService.LINE)
         note.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) = onTextChanged(s?.toString() ?: "")
+            override fun afterTextChanged(e: Editable?) {
+                changed()
+                onTextChanged(e?.toString() ?: "")
+            }
         })
-        row.addView(note, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        copy = button("Copy", BrowserService.ON_ACCENT, field(BrowserService.ACCENT, BrowserService.ACCENT))
-        copy.contentDescription = "Copy: send to the box, and a reference to the clipboard"
-        copy.setOnClickListener {
-            if (busy) return@setOnClickListener
-            hideKeyboard()
-            onCopy()
-        }
-        row.addView(copy, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginStart = dp(8) })
-        addView(row, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(6)
+        addView(note, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8)
             leftMargin = dp(12)
             rightMargin = dp(12)
             bottomMargin = dp(10)
         })
-        hint.text = if (docked) "Notes, and parts of the page: + takes one." else "Drag to select. Nothing selected sends the whole screen."
+        frozen = false
         piecesChanged(emptyList())
     }
 
-    fun setHint(text: String) {
-        hint.text = text
+    /** Something to send: text, or an image. */
+    private fun ready() = note.text.isNotBlank() || pieces.isNotEmpty()
+
+    /** The note's placeholder and Copy's state, after the text, the chips or the freeze changed. */
+    private fun changed() {
+        note.hint = if (frozen && pieces.isEmpty()) "Drag to select" else "Add a note"
+        copy.alpha = if (ready() || busy) 1f else 0.4f
+    }
+
+    /** The text button left of capture: [text] runs [run]; null hides it. */
+    fun action(text: String?, run: () -> Unit = {}) {
+        placeButton.visibility = if (text == null) GONE else VISIBLE
+        placeButton.text = text ?: ""
+        placeButton.contentDescription = text
+        placeButton.setOnClickListener { run() }
     }
 
     /** New chips (and, if one is given, that one scrolled into view). */
@@ -217,8 +245,8 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         pieces = list
         chips.removeAllViews()
         for (i in list.indices) chips.addView(chip(i))
-        hint.visibility = if (list.isEmpty()) VISIBLE else GONE
         chipScroll.visibility = if (list.isEmpty()) GONE else VISIBLE
+        changed()
         if (show >= 0) chipScroll.post {
             chips.getChildAt(show)?.let { chipScroll.requestChildRectangleOnScreen(chips, Rect(it.left, 0, it.right, it.height), false) }
         }
@@ -243,6 +271,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     /** Copy failed: the draft stays, and the reason shows. */
     fun failed(why: String) {
         busy = false
+        changed()
         copy.text = "Copy"
         status.text = "Not sent: $why"
         status.visibility = VISIBLE
@@ -251,8 +280,13 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     /** Ready for another clip (docked, after one was sent). */
     fun reset() {
         busy = false
+        changed()
         copy.text = "Copy"
         status.visibility = GONE
+    }
+
+    fun showKeyboard() {
+        if (note.hasFocus()) context.getSystemService(InputMethodManager::class.java).showSoftInput(note, 0)
     }
 
     fun hideKeyboard() {
@@ -351,7 +385,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         isFocusable = false // a tap leaves the text's focus (and the keyboard) where it is until the button acts
     }
 
-    private fun field(color: Int, stroke: Int) = GradientDrawable().apply {
+    private fun rounded(color: Int, stroke: Int) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = dp(10).toFloat()
         setStroke(max(1, dp(1)), stroke)
@@ -360,7 +394,8 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     private fun dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
 
     companion object {
-        private const val CHIP_ROW = 58
+        private const val CHIP_ROW = 56
+        private const val BUTTON = 38
 
         /** The notes in a docked collector's text: lines starting with a place in brackets, "[p.4] …". */
         private val NOTE = Regex("^\\[([^\\]]+)]\\s*(.*)$")

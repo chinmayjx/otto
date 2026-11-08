@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Whole screen: a screen's outline, taken whole into the collector. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp" android:height="20dp" android:viewportWidth="20" android:viewportHeight="20">
+    <path android:pathData="M6.5,2.5 H13.5 A1.5,1.5 0 0,1 15,4 V16 A1.5,1.5 0 0,1 13.5,17.5 H6.5 A1.5,1.5 0 0,1 5,16 V4 A1.5,1.5 0 0,1 6.5,2.5 Z"
+        android:strokeColor="#ffffff" android:strokeWidth="1.6" android:strokeLineJoin="round" android:fillColor="#00000000" />
+    <path android:pathData="M8,6 H12 V14 H8 Z" android:fillColor="#ffffff" android:fillAlpha="0.55" />
+</vector>

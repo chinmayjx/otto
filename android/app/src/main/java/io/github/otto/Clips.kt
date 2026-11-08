@@ -53,7 +53,13 @@ data class ClipItem(
             return ClipItem(
                 id = o.getString("id"),
                 created = runCatching { Instant.parse(o.optString("created")).toEpochMilli() }.getOrDefault(0L),
-                text = o.optString("text"),
+                // A clip of notes only (on an artifact) shows its notes.
+                text = o.optString("text").ifBlank {
+                    val n = src?.optJSONArray("notes") ?: JSONArray()
+                    (0 until n.length()).joinToString("\n") { i ->
+                        n.getJSONObject(i).let { (it.optString("where").ifEmpty { null }?.let { w -> "$w: " } ?: "") + it.optString("text") }
+                    }
+                },
                 images = (0 until imgs.length()).map { imgs.getJSONObject(it).optString("file") },
                 thumb = o.optString("thumb").takeIf { it.isNotEmpty() },
                 kind = kind,
@@ -107,8 +113,11 @@ object Clips {
     /** What goes on the phone's clipboard for a chat with an agent. */
     fun reference(id: String) = "Look at my Otto clip $id: run `otto clip $id`"
 
-    fun copyReference(ctx: Context, id: String) {
-        ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Otto clip", reference(id)))
+    fun copyReference(ctx: Context, id: String) = copyText(ctx, reference(id))
+
+    /** A clip with no images isn't sent: its text goes on the clipboard as it is. */
+    fun copyText(ctx: Context, text: String) {
+        ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Otto clip", text))
     }
 
     /** Sends a clip to the box (blocking: off the main thread); its id. */

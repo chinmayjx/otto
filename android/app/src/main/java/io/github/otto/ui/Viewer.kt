@@ -11,8 +11,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -218,20 +218,25 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
             // Docked: part of the layout, so the artifact above shrinks rather than going under it.
             AndroidView(
                 factory = { c -> Collector(c, docked = true).also { clip.attach(it) } },
-                update = { it.place = place.label },
+                update = {
+                    it.place = place.label
+                    it.frozen = frozen != null
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
             LaunchedEffect(clip) {
-                clip.onCapture = {
+                // The body's pixels as they are on screen.
+                fun take(then: (Bitmap) -> Unit) {
                     val w = ScreenActivity.current?.window
                     val r = area
-                    if (w != null && r != null && r.width() > 0 && r.height() > 0) {
-                        val bm = Bitmap.createBitmap(r.width(), r.height(), Bitmap.Config.ARGB_8888)
-                        PixelCopy.request(w, r, bm, { res ->
-                            if (res == PixelCopy.SUCCESS) frozen = bm else toast(ctx, "Couldn't take the page")
-                        }, Handler(Looper.getMainLooper()))
-                    }
+                    if (w == null || r == null || r.width() <= 0 || r.height() <= 0) return
+                    val bm = Bitmap.createBitmap(r.width(), r.height(), Bitmap.Config.ARGB_8888)
+                    PixelCopy.request(w, r, bm, { res ->
+                        if (res == PixelCopy.SUCCESS) then(bm) else toast(ctx, "Couldn't take the page")
+                    }, Handler(Looper.getMainLooper()))
                 }
+                clip.onCapture = { if (frozen != null) frozen = null else take { frozen = it } }
+                clip.onWhole = { if (frozen != null) frozen?.let { clip.add(it) } else take { clip.add(it) } }
                 clip.onSent = { clipping = false }
                 clip.source = {
                     JSONObject().put("kind", "artifact").put("id", cur.artifactId).put("version", cur.version).put("title", cur.title)
@@ -264,8 +269,10 @@ private class ArtifactClip(private val ctx: Context, id: String) {
     private var loaded = false
     private var view: Collector? = null
     var onCapture: () -> Unit = {}
+    var onWhole: () -> Unit = {}
     var onSent: () -> Unit = {}
     var source: () -> JSONObject = { JSONObject() }
+    private val saveSoon = Runnable { save() }
 
     suspend fun load() {
         val d = withContext(Dispatchers.IO) { Drafts.load(ctx, key) }
@@ -279,13 +286,18 @@ private class ArtifactClip(private val ctx: Context, id: String) {
 
     fun attach(c: Collector) {
         view = c
-        c.onTextChanged = { text = it }
+        c.onTextChanged = {
+            text = it
+            main.removeCallbacks(saveSoon)
+            main.postDelayed(saveSoon, 1000)
+        }
         c.onRemove = { i ->
             images.removeAt(i)
             show(c)
             save()
         }
         c.onCapture = { onCapture() }
+        c.onWhole = { onWhole() }
         c.onCopy = { copy(c) }
         show(c)
     }
@@ -313,6 +325,19 @@ private class ArtifactClip(private val ctx: Context, id: String) {
         val (rest, notes) = Collector.notes(text)
         val src = source().put("notes", JSONArray(notes.map { (where, t) -> JSONObject().put("where", where).put("text", t) }))
         val list = images.toList()
+        if (list.isEmpty()) { // no images: the same in plain text on the clipboard, and nothing to the box
+            Clips.copyText(ctx, plain(rest, notes, src))
+            draftIo.execute { Drafts.clear(ctx, key) }
+            c.sent()
+            toast(ctx, "Copied")
+            text = ""
+            main.postDelayed({
+                show(c)
+                c.reset()
+                onSent()
+            }, 550)
+            return
+        }
         draftIo.execute {
             try {
                 val id = Clips.upload(rest, list, src)
@@ -336,6 +361,15 @@ private class ArtifactClip(private val ctx: Context, id: String) {
     }
 }
 
+/** A clip of the artifact without images, as text: "Feedback on <title> v<n> (<link>):", the text, the notes. */
+private fun plain(rest: String, notes: List<Pair<String, String>>, src: JSONObject): String {
+    val head = "Feedback on ${src.optString("title")} v${src.optInt("version")} (${src.optString("url")}):"
+    val lines = mutableListOf(head)
+    if (rest.isNotBlank()) lines += rest.trim()
+    for ((where, t) in notes) lines += "- $where: $t"
+    return lines.joinToString("\n")
+}
+
 /**
  * The viewer's body frozen (a copy of its pixels), to take a part of it: drag over it, and the part goes to the
  * collector as soon as the finger lifts; a tap leaves without one.
@@ -350,25 +384,34 @@ private fun Freeze(shot: Bitmap, done: (Bitmap?) -> Unit) {
     Box(Modifier.fillMaxSize()) {
         Image(image, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
         Canvas(Modifier.fillMaxSize()
-            .pointerInput(shot) { detectTapGestures { done(null) } }
             .pointerInput(shot) {
-                detectDragGestures(
-                    onDragStart = { from = it; to = it },
-                    onDrag = { c, _ -> to = Offset(c.position.x.coerceIn(0f, size.width.toFloat()), c.position.y.coerceIn(0f, size.height.toFloat())) },
-                    onDragEnd = {
-                        val f = from
-                        from = null
-                        if (f != null && abs(to.x - f.x) >= least && abs(to.y - f.y) >= least) {
-                            // The canvas is the bitmap's size, pixel for pixel.
-                            val x = min(f.x, to.x).roundToInt().coerceIn(0, shot.width - 1)
-                            val y = min(f.y, to.y).roundToInt().coerceIn(0, shot.height - 1)
-                            val w = abs(to.x - f.x).roundToInt().coerceIn(1, shot.width - x)
-                            val h = abs(to.y - f.y).roundToInt().coerceIn(1, shot.height - y)
-                            done(Bitmap.createBitmap(shot, x, y, w, h))
-                        }
-                    },
-                    onDragCancel = { from = null },
-                )
+                // From where the finger went down (not where a drag is first recognised); a tap leaves.
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    from = down.position
+                    to = down.position
+                    var moved = false
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                        to = Offset(c.position.x.coerceIn(0f, size.width.toFloat()), c.position.y.coerceIn(0f, size.height.toFloat()))
+                        if ((to - down.position).getDistance() > viewConfiguration.touchSlop) moved = true
+                        c.consume()
+                        if (!c.pressed) break
+                    }
+                    val f = from ?: return@awaitEachGesture
+                    from = null
+                    if (!moved) return@awaitEachGesture done(null)
+                    if (abs(to.x - f.x) < least || abs(to.y - f.y) < least) return@awaitEachGesture
+                    // The canvas is the bitmap's size, unless the layout has moved since: then by scale.
+                    val kx = shot.width / size.width.toFloat()
+                    val ky = shot.height / size.height.toFloat()
+                    val x = (min(f.x, to.x) * kx).roundToInt().coerceIn(0, shot.width - 1)
+                    val y = (min(f.y, to.y) * ky).roundToInt().coerceIn(0, shot.height - 1)
+                    val w = (abs(to.x - f.x) * kx).roundToInt().coerceIn(1, shot.width - x)
+                    val h = (abs(to.y - f.y) * ky).roundToInt().coerceIn(1, shot.height - y)
+                    done(Bitmap.createBitmap(shot, x, y, w, h))
+                }
             }) {
             val f = from
             val sel = if (f == null) null else Rect(min(f.x, to.x), min(f.y, to.y), max(f.x, to.x), max(f.y, to.y))
@@ -382,7 +425,7 @@ private fun Freeze(shot: Bitmap, done: (Bitmap?) -> Unit) {
         }
         Surface(Modifier.align(Alignment.TopCenter).padding(10.dp), shape = RoundedCornerShape(12.dp),
             color = cs.inverseSurface.copy(alpha = 0.9f)) {
-            Text("Drag over a part to add it. Tap to go back.", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            Text("Drag over a part to add it.", Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 style = MaterialTheme.typography.labelMedium, color = cs.inverseOnSurface)
         }
     }

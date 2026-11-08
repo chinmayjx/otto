@@ -24,6 +24,7 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.FrameLayout
 import android.widget.Toast
 import io.github.otto.device.AgentAccessibility
@@ -36,47 +37,58 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * The lens: a long press on the handle freezes the screen (a screenshot through the accessibility service) in an
- * overlay of its own, where parts of it are selected with a finger and sent to the box as a clip (Clips), with a
- * note, for an agent to read with `otto clip <id>`.
+ * The lens: a long press on the handle opens the collector (Collector) as a panel floating over the live screen,
+ * to gather a clip (Clips) for an agent to read with `otto clip <id>`: a note, typed or dictated, and parts of the
+ * screen.
  *
- * Drag on the image for a selection; drag its corners or edges to adjust it, inside it to move it. Each one is a chip
- * in the collector (Collector), floating over the image, whose grip drags it up and down so what's under it can be
- * selected too. Copy sends the selections (or the whole screen when there are none) and the text, then puts a
- * reference to the clip on the clipboard. Until a Copy goes through, what was collected is a draft (Drafts, "lens"):
- * closing the lens with Back or Home keeps it, and the next lens starts with its text and images.
+ * Live, the panel is a window of its own at the bottom, full width, dragged up and down by its grip; everything
+ * outside it stays the app's (FLAG_NOT_TOUCH_MODAL), so the user can scroll, switch apps, and use other apps'
+ * overlays, such as a dictation bubble, while the note has the focus. It takes the focus when touched and gives it
+ * back when the app is (FLAG_WATCH_OUTSIDE_TOUCH), so Back and the keyboard go where the user last was.
  *
- * An overlay window rather than an app screen, so it's up the moment the screenshot is: a focusable one, so the text
- * takes the keyboard and Back comes here. It lays itself out under the system bars and keeps the collector clear of
- * them and of the keyboard (the image never moves).
+ * It opens frozen, as the long press found the screen; its freeze button (Done while frozen) goes back to the
+ * live screen and freezes it again. Freezing takes a screenshot (through the accessibility service, with the panel and handle out of it)
+ * and the window grows over the whole screen to show it: drag on it for a selection; drag its corners or edges to
+ * adjust it, inside it to move it. Each selection is a chip. Done (the same button), Back or Home unfreeze: the
+ * selections are cut out and kept as images, and the live screen is back. Whole screen takes all of it, frozen or
+ * live. This can be repeated across apps to gather many parts into one clip.
+ *
+ * Copy sends the text and the images taken to the box and puts a reference to the clip on the clipboard; with no
+ * images it puts the text itself on the clipboard and sends nothing (never an image the user didn't take). Until a Copy goes through, what was collected is a draft (Drafts, "lens"): closing the collector
+ * (Back, or a tap on the handle) keeps it, and the next one starts with it.
  */
-class Lens private constructor(base: Context, private val shot: Bitmap, private val app: String?, private val done: () -> Unit) {
+class Lens private constructor(base: Context, private val handle: (Boolean) -> Unit, private val done: () -> Unit) {
     private val ctx = ContextThemeWrapper(base, android.R.style.Theme_DeviceDefault)
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private val main = Handler(Looper.getMainLooper())
-    private val sels = mutableListOf<RectF>() // in the screenshot's pixels, which are the screen's
+    private var still: Bitmap? = null // the frozen screen, while frozen
+    private val shot: Bitmap get() = still!!
+    private val sels = mutableListOf<RectF>() // on the frozen screen, in its pixels, which are the screen's
     private var active = -1
-    private var stills = mutableListOf<Bitmap>() // the draft's images, from an earlier lens
+    private var stills = mutableListOf<Bitmap>() // the parts taken so far (and the draft's)
+    private var app: String? = null // the app last frozen
     private val root = Root(ctx)
     private val image = Frozen(ctx)
     private val collector = Collector(ctx, docked = false)
-    private var lift = 0f // how far the collector's bottom is dragged up from the screen's
+    private val lp = WindowManager.LayoutParams()
+    private var lift = 0f // how far the collector is dragged up from its place at the bottom
     private var liftAtDown = 0f
     private var topInset = 0
-    private var bottomInset = 0 // the navigation bar's, or the keyboard's when it's up
+    private var bottomInset = 0 // frozen: the navigation bar's, or the keyboard's when it's up
+    private var busy = false
     private var sent = false
     private var gone = false
 
-    /** Home or Recents: the lens goes, as an app would. */
+    /** Home or Recents while frozen: back to the live screen, where the user is going. */
     private val systemDialogs = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             val why = i.getStringExtra("reason")
-            if (why == "homekey" || why == "recentapps") dismiss()
+            if ((why == "homekey" || why == "recentapps") && still != null) unfreeze()
         }
     }
 
     init {
-        root.setBackgroundColor(Color.BLACK)
+        image.visibility = View.GONE
         root.addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         collector.onCopy = { copy() }
         collector.onRemove = { i -> remove(i) }
@@ -86,18 +98,20 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
                 chipsChanged()
             }
         }
+        collector.onCapture = { if (still == null) freeze() else unfreeze() }
+        collector.onWhole = { whole() }
         collector.onDrag = { dy ->
-            if (dy == null) liftAtDown = max(lift, bottomInset.toFloat())
+            if (dy == null) liftAtDown = lift
             else {
                 lift = (liftAtDown - dy).coerceIn(0f, maxLift())
                 place()
             }
         }
         root.addView(collector, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
-        // Dragged up, it stays where it was put as it grows, but never past the top.
         collector.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> place() }
 
-        // Laid out under the system bars and the keyboard: the image stays put, the collector keeps clear of them.
+        // Frozen, the window lies under the system bars and the keyboard: the image stays put, the collector keeps
+        // clear of them. Live, the window is laid out clear of them already (fitInsetsTypes).
         root.setOnApplyWindowInsetsListener { _, insets ->
             val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
             val ime = insets.getInsets(WindowInsets.Type.ime())
@@ -110,39 +124,91 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         chipsChanged()
     }
 
-    private fun maxLift() = max(0f, (root.height - topInset - collector.height).toFloat())
+    /** Live, the system's bars (and the keyboard's) around the window, for how far up it may go. */
+    private fun screenInsets() = wm.currentWindowMetrics.windowInsets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.ime())
 
-    /** Where it was dragged to, but always above the navigation bar and the keyboard. */
-    private fun place() {
-        lift = min(lift, maxLift())
-        collector.translationY = -max(lift, bottomInset.toFloat())
+    private fun maxLift(): Float {
+        val h = collector.height
+        if (still != null) return max(0f, (root.height - topInset - bottomInset - h).toFloat())
+        val i = screenInsets()
+        return max(0f, (wm.currentWindowMetrics.bounds.height() - i.top - i.bottom - h).toFloat())
     }
 
-    /** The draft from the last lens that wasn't sent: its text and images. */
+    /** Where it was dragged to: frozen, by moving it in the window; live, by moving the window. */
+    private fun place() {
+        lift = min(lift, maxLift())
+        if (still != null) {
+            collector.translationY = -(bottomInset + lift)
+        } else {
+            collector.translationY = 0f
+            val y = lift.roundToInt()
+            if (lp.y != y && root.isAttachedToWindow) {
+                lp.y = y
+                wm.updateViewLayout(root, lp)
+            }
+        }
+    }
+
+    /** The draft from the last collector that wasn't sent: its text and images. */
     private fun restore(d: Drafts.Draft) {
         stills = d.images.toMutableList()
         collector.text = d.text
         chipsChanged()
     }
 
-    private fun show() {
-        val lp = WindowManager.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-            PixelFormat.OPAQUE).apply {
-            gravity = Gravity.TOP or Gravity.START
-            title = "Otto lens"
-            fitInsetsTypes = 0
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN
-        }
+    // --- The window ------------------------------------------------------------------------------------------------
+
+    private fun liveLayout() {
+        lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+        lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        lp.type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        // Outside touches go to the app beneath; a touch outside is reported, to hand it the focus back.
+        lp.flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+        lp.format = PixelFormat.TRANSLUCENT
+        lp.gravity = Gravity.BOTTOM or Gravity.START
+        lp.x = 0
+        lp.y = lift.roundToInt()
+        lp.title = "Otto collector"
+        // Laid out clear of the system bars and of the keyboard, which so never covers it.
+        lp.fitInsetsTypes = WindowInsets.Type.systemBars() or WindowInsets.Type.ime() or WindowInsets.Type.displayCutout()
+        lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING or WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
+        root.setBackgroundColor(Color.TRANSPARENT)
+    }
+
+    private fun frozenLayout() {
+        lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+        lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+        lp.flags = WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.y = 0
+        lp.fitInsetsTypes = 0
+        lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        root.setBackgroundColor(Color.BLACK)
+    }
+
+    /** In, frozen on [bm]. */
+    private fun show(bm: Bitmap) {
+        liveLayout()
+        enterFrozen(bm)
         wm.addView(root, lp)
         ctx.registerReceiver(systemDialogs, IntentFilter(@Suppress("DEPRECATION") Intent.ACTION_CLOSE_SYSTEM_DIALOGS), Context.RECEIVER_EXPORTED)
         current = this
     }
 
-    /** Out (Back, Home, or after a Copy); what wasn't sent stays as the draft. */
+    /** Live: the panel takes the focus (for the keyboard, and Back) or hands it back to the app. */
+    private fun focusable(on: Boolean) {
+        if (still != null || !root.isAttachedToWindow) return
+        val was = lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE == 0
+        if (was == on) return
+        if (!on) collector.hideKeyboard()
+        lp.flags = if (on) lp.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv() else lp.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        wm.updateViewLayout(root, lp)
+    }
+
+    /** Out (Back, a tap on the handle, or after a Copy); what wasn't sent stays as the draft. */
     fun dismiss() {
         if (gone) return
         gone = true
@@ -154,40 +220,165 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         collector.hideKeyboard()
         if (!sent) {
             val text = collector.text
-            val images = stills + regions(whole = false).map { crop(it) }
+            val images = stills + if (still != null) regions().map { crop(it) } else emptyList()
             val app = ctx.applicationContext
             io.execute { Drafts.save(app, DRAFT, text, images) }
         }
         if (root.isAttachedToWindow) wm.removeViewImmediate(root)
+        handle(true)
         done()
+    }
+
+    // --- Freezing --------------------------------------------------------------------------------------------------
+
+    /**
+     * The live screen as it is without the panel and the handle: they go out of the picture first, and the shot
+     * waits a few frames for that to reach the display. Then [then] (on the main thread) with it, or null.
+     */
+    private fun shoot(then: (Bitmap?) -> Unit) {
+        val agent = AgentAccessibility.instance
+        if (agent == null) {
+            Toast.makeText(ctx, "Taking the screen needs Otto's accessibility service turned on", Toast.LENGTH_LONG).show()
+            return then(null)
+        }
+        collector.hideKeyboard()
+        root.visibility = View.INVISIBLE
+        handle(false)
+        var frames = 0
+        Choreographer.getInstance().postFrameCallback(object : Choreographer.FrameCallback {
+            override fun doFrame(t: Long) {
+                if (++frames < 3) return Choreographer.getInstance().postFrameCallback(this)
+                app = foreground(agent) ?: app
+                thread(name = "lens-shot") {
+                    val r = try {
+                        agent.screenshot(io)
+                    } catch (e: Exception) {
+                        e
+                    }
+                    main.post {
+                        if (gone) return@post
+                        root.visibility = View.VISIBLE
+                        handle(true)
+                        if (r is Bitmap) then(r)
+                        else {
+                            Toast.makeText(ctx, "Couldn't take the screen: ${(r as Exception).message ?: r}", Toast.LENGTH_LONG).show()
+                            then(null)
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    /** The app on screen (not Otto): the topmost application window's. */
+    private fun foreground(agent: AgentAccessibility): String? = try {
+        agent.windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }
+            .firstNotNullOfOrNull { w -> w.root?.packageName?.toString()?.takeIf { it != ctx.packageName } }
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun freeze() {
+        if (busy || still != null) return
+        busy = true
+        shoot { bm ->
+            busy = false
+            if (bm == null) return@shoot
+            enterFrozen(bm)
+            wm.updateViewLayout(root, lp)
+        }
+    }
+
+    /** The frozen screen in, over the whole screen, to select on. */
+    private fun enterFrozen(bm: Bitmap) {
+        still = bm
+        sels.clear()
+        active = -1
+        frozenLayout()
+        image.visibility = View.VISIBLE
+        collector.frozen = true
+        chipsChanged()
+    }
+
+    /** Back to the live screen; the selections are kept as images. */
+    private fun unfreeze() {
+        if (still == null) return
+        stills.addAll(regions().map { crop(it) })
+        leaveFrozen()
+    }
+
+    /** The whole screen as one image: the frozen one, or (live) the screen as it is now. */
+    private fun whole() {
+        if (busy) return
+        val bm = still
+        if (bm != null) {
+            stills.add(bm)
+            chipsChanged()
+            return
+        }
+        busy = true
+        shoot { shot ->
+            busy = false
+            if (shot != null) {
+                stills.add(shot)
+                chipsChanged()
+            }
+        }
+    }
+
+    private fun leaveFrozen() {
+        collector.hideKeyboard()
+        sels.clear()
+        active = -1
+        still = null
+        image.visibility = View.GONE
+        liveLayout()
+        if (root.isAttachedToWindow) wm.updateViewLayout(root, lp)
+        collector.frozen = false
+        chipsChanged()
+        place()
     }
 
     // --- Copy ------------------------------------------------------------------------------------------------------
 
-    /** The selections' pixels; with none (and no images from the draft), the whole screen if [whole]. */
-    private fun regions(whole: Boolean): List<Rect> {
-        val all = Rect(0, 0, shot.width, shot.height)
-        val r = sels.map { s ->
+    /** The selections' pixels on the frozen screen. */
+    private fun regions(): List<Rect> {
+        val bm = still ?: return emptyList()
+        val all = Rect(0, 0, bm.width, bm.height)
+        return sels.map { s ->
             Rect(s.left.roundToInt(), s.top.roundToInt(), s.right.roundToInt(), s.bottom.roundToInt()).apply { intersect(all) }
         }.filter { it.width() > 0 && it.height() > 0 }
-        return if (whole && r.isEmpty() && stills.isEmpty()) listOf(all) else r
     }
 
+    /** What was taken (the selections on a frozen screen too) and the text; never an image nobody asked for. */
     private fun copy() {
+        if (busy) return
         collector.sending()
-        val parts = regions(whole = true)
+        unfreeze()
+        if (stills.isEmpty()) { // no images: the text itself goes on the clipboard, and nothing to the box
+            Clips.copyText(ctx, collector.text.trim())
+            io.execute { Drafts.clear(ctx, DRAFT) }
+            sent = true
+            collector.sent()
+            Toast.makeText(ctx, "Copied", Toast.LENGTH_SHORT).show()
+            main.postDelayed({ dismiss() }, 550)
+        } else send(stills.toList())
+    }
+
+    private fun send(images: List<Bitmap>) {
         val text = collector.text.trim()
         val source = JSONObject().put("kind", "screen")
-        if (app != null) {
-            source.put("app", app)
-            label(app)?.let { source.put("label", it) }
+        app?.let { a ->
+            source.put("app", a)
+            label(a)?.let { source.put("label", it) }
         }
-        val before = stills.toList()
+        busy = true
         io.execute {
             try {
-                val id = Clips.upload(text, before + parts.map { crop(it) }, source)
+                val id = Clips.upload(text, images, source)
                 Drafts.clear(ctx, DRAFT)
                 main.post {
+                    busy = false
                     sent = true
                     Clips.copyReference(ctx, id)
                     collector.sent()
@@ -196,7 +387,10 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
                 }
             } catch (e: Exception) {
                 android.util.Log.w("Lens", "copy: $e")
-                main.post { collector.failed(e.message ?: e.toString()) }
+                main.post {
+                    busy = false
+                    collector.failed(e.message ?: e.toString())
+                }
             }
         }
     }
@@ -214,7 +408,7 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
 
     // --- Selections ----------------------------------------------------------------------------------------------
 
-    /** Selections came or went, or another became the active one: the chips again (the draft's first). */
+    /** Selections came or went, or another became the active one: the chips again (the parts taken first). */
     private fun chipsChanged() {
         val pieces = stills.map { Collector.Still(it) } + sels.indices.map { Live(it) }
         collector.piecesChanged(pieces, if (active >= 0) stills.size + active else -1)
@@ -231,20 +425,22 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         chipsChanged()
     }
 
-    /** A selection's chip, drawn live from the screenshot. */
+    /** A selection's chip, drawn live from the frozen screen. */
     private inner class Live(private val i: Int) : Collector.Piece {
         private val src = Rect()
         private fun rect(): Rect? {
+            val bm = still ?: return null
             val s = sels.getOrNull(i) ?: return null
             s.round(src)
-            return if (src.intersect(0, 0, shot.width, shot.height)) src else null
+            return if (src.intersect(0, 0, bm.width, bm.height)) src else null
         }
 
         override val width get() = rect()?.width() ?: 0
         override val height get() = rect()?.height() ?: 0
         override val active get() = i == this@Lens.active
         override fun draw(c: Canvas, dst: RectF, paint: Paint) {
-            rect()?.let { c.drawBitmap(shot, it, dst, paint) }
+            val bm = still ?: return
+            rect()?.let { c.drawBitmap(bm, it, dst, paint) }
         }
     }
 
@@ -274,6 +470,7 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         }
 
         override fun onDraw(c: Canvas) {
+            if (still == null) return
             c.save()
             c.translate(-loc[0].toFloat(), -loc[1].toFloat()) // the screenshot's pixels are the screen's
             c.drawBitmap(shot, 0f, 0f, paint)
@@ -302,6 +499,7 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
 
         @SuppressLint("ClickableViewAccessibility")
         override fun onTouchEvent(e: MotionEvent): Boolean {
+            if (still == null) return false
             val x = e.rawX
             val y = e.rawY
             when (e.actionMasked) {
@@ -403,13 +601,33 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         }
     }
 
-    /** The window's view: takes Back. */
+    /** The window's view: takes Back, and (live) gives the focus to the panel or back to the app. */
     private inner class Root(c: Context) : FrameLayout(c) {
+        override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_OUTSIDE -> {
+                    focusable(false)
+                    return false
+                }
+                MotionEvent.ACTION_DOWN -> focusable(true)
+            }
+            return super.dispatchTouchEvent(e)
+        }
+
+        // The panel took the focus on the touch that focused the note: the keyboard can come only now.
+        override fun onWindowFocusChanged(has: Boolean) {
+            super.onWindowFocusChanged(has)
+            if (has && collector.typing) post { collector.showKeyboard() }
+        }
+
         override fun dispatchKeyEvent(e: KeyEvent): Boolean {
             if (e.keyCode == KeyEvent.KEYCODE_BACK) {
                 if (e.action != KeyEvent.ACTION_UP || e.isCanceled) return true
-                if (rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true) collector.hideKeyboard() // the keyboard goes first
-                else dismiss()
+                when {
+                    rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true -> collector.hideKeyboard() // the keyboard goes first
+                    still != null -> unfreeze()
+                    else -> dismiss()
+                }
                 return true
             }
             return super.dispatchKeyEvent(e)
@@ -438,14 +656,16 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
 
         var current: Lens? = null
             private set
+
         private var starting = false
 
         /**
-         * Freezes the screen and opens the lens over it, with the last unsent draft. Whatever shouldn't be in the
-         * picture (the handle, the second screen) has been asked to go already: the screenshot waits a few frames
-         * for that to reach the display. [done] runs when the lens is gone, or failed to open.
+         * Freezes the screen and opens the collector over it, with the last unsent draft. Whatever shouldn't be in
+         * the picture (the second screen) has been asked to go already, and [handle] hides the handle: the shot waits
+         * a few frames for that to reach the display. [handle] shows it again after; [done] runs when the collector
+         * is gone, or failed to open.
          */
-        fun open(ctx: Context, done: () -> Unit) {
+        fun open(ctx: Context, handle: (Boolean) -> Unit, done: () -> Unit) {
             if (current != null || starting) return
             val agent = AgentAccessibility.instance
             if (agent == null) {
@@ -454,19 +674,12 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
                 return
             }
             starting = true
-            val app = try {
-                agent.rootInActiveWindow?.packageName?.toString()
-            } catch (_: Exception) {
-                null
-            }
+            handle(false)
             val main = Handler(Looper.getMainLooper())
             var frames = 0
-            val shoot = object : Choreographer.FrameCallback {
+            Choreographer.getInstance().postFrameCallback(object : Choreographer.FrameCallback {
                 override fun doFrame(t: Long) {
-                    if (++frames < 3) {
-                        Choreographer.getInstance().postFrameCallback(this)
-                        return
-                    }
+                    if (++frames < 3) return Choreographer.getInstance().postFrameCallback(this)
                     thread(name = "lens-shot") {
                         val r = try {
                             agent.screenshot(io)
@@ -476,17 +689,19 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
                         val draft = if (r is Bitmap) Drafts.load(ctx, DRAFT) else null
                         main.post {
                             starting = false
-                            if (r is Bitmap) Lens(ctx, r, app?.takeIf { it != ctx.packageName }, done).apply { draft?.let { restore(it) } }.show()
-                            else {
-                                val why = (r as Exception).message ?: r.toString()
-                                Toast.makeText(ctx, "The lens couldn't take the screen: $why", Toast.LENGTH_LONG).show()
+                            handle(true)
+                            if (r is Bitmap) Lens(ctx, handle, done).apply {
+                                app = foreground(agent)
+                                draft?.let { restore(it) }
+                                show(r)
+                            } else {
+                                Toast.makeText(ctx, "The lens couldn't take the screen: ${(r as Exception).message ?: r}", Toast.LENGTH_LONG).show()
                                 done()
                             }
                         }
                     }
                 }
-            }
-            Choreographer.getInstance().postFrameCallback(shoot)
+            })
         }
     }
 }
