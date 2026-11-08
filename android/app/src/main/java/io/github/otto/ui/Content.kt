@@ -5,6 +5,8 @@ import android.text.method.LinkMovementMethod
 import android.util.TypedValue
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.OptIn
@@ -58,6 +60,11 @@ import io.noties.markwon.html.HtmlPlugin
 import io.noties.markwon.image.ImagesPlugin
 import io.noties.markwon.image.network.OkHttpNetworkSchemeHandler
 import io.noties.markwon.linkify.LinkifyPlugin
+import org.commonmark.ext.gfm.tables.TableBlock
+import org.commonmark.ext.gfm.tables.TableRow
+import org.commonmark.node.Code
+import org.commonmark.node.Document
+import org.commonmark.node.Node
 
 // --- Audio and video: Media3 ------------------------------------------------------------------------------------
 
@@ -140,28 +147,103 @@ fun MarkdownText(text: String, onLink: (String) -> Unit, modifier: Modifier = Mo
         factory = { c ->
             ScrollView(c).apply {
                 isFillViewport = true
-                val pad = with(density) { 18.dp.roundToPx() }
-                addView(TextView(c).apply {
-                    setPadding(pad, pad / 2, pad, pad * 3)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
-                    setLineSpacing(0f, 1.25f)
-                    setTextIsSelectable(true)
-                    movementMethod = LinkMovementMethod.getInstance()
-                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                addView(LinearLayout(c).apply { orientation = LinearLayout.VERTICAL },
+                    FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
         },
         update = { v ->
-            val tv = v.getChildAt(0) as TextView
-            tv.setTextColor(fg)
-            if (tv.tag != text) {
-                tv.tag = text
-                markwon.setMarkdown(tv, text)
+            val col = v.getChildAt(0) as LinearLayout
+            if (col.tag != text) {
+                col.tag = text
+                col.removeAllViews()
+                markdownBlocks(col, markwon, text, fg, with(density) { 18.dp.roundToPx() })
             }
         },
         // Clipped to its slot: Compose doesn't clip the views it hosts, and the ScrollView's text, scrolled up,
         // drew over the viewer's bar.
         modifier = modifier.fillMaxSize().clipToBounds(),
     )
+}
+
+/**
+ * The document as a column of text views, one per run of blocks, with each table on its own in a sideways scroll:
+ * Markwon draws a table's columns in equal shares of its text view's width, so a wide table gets a wider view
+ * (its widest cell sets the column width, up to a cap) instead of being crammed into the screen.
+ */
+private fun markdownBlocks(col: LinearLayout, markwon: Markwon, text: String, fg: Int, pad: Int) {
+    val c = col.context
+    fun textView() = TextView(c).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+        setLineSpacing(0f, 1.25f)
+        setTextColor(fg)
+        setTextIsSelectable(true)
+        movementMethod = LinkMovementMethod.getInstance()
+    }
+    fun render(tv: TextView, nodes: List<Node>) {
+        val doc = Document()
+        nodes.forEach { it.unlink(); doc.appendChild(it) }
+        markwon.setParsedMarkdown(tv, markwon.render(doc))
+    }
+    val blocks = generateSequence(markwon.parse(text).firstChild) { it.next }.toList()
+    val run = mutableListOf<Node>()
+    fun flush(last: Boolean) {
+        if (run.isEmpty() && !last) return
+        val tv = textView()
+        tv.setPadding(pad, if (col.childCount == 0) pad / 2 else 0, pad, if (last) pad * 3 else 0)
+        render(tv, run.toList())
+        run.clear()
+        col.addView(tv, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+    for (b in blocks) {
+        if (b !is TableBlock) { run += b; continue }
+        flush(false)
+        val tv = textView()
+        tv.setPadding(pad, if (col.childCount == 0) pad / 2 else 0, pad, 0)
+        val width = tableWidth(b, tv.paint, c.resources.displayMetrics.density) + 2 * pad
+        render(tv, listOf(b))
+        col.addView(HorizontalScrollView(c).apply {
+            isFillViewport = true // narrower than the screen: the full width, as before
+            isHorizontalScrollBarEnabled = false
+            addView(tv, FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+    flush(true)
+}
+
+/** A table's natural width: its widest cell (on one line, up to 240dp, plus the cell padding) times its columns. */
+private fun tableWidth(t: TableBlock, paint: android.text.TextPaint, density: Float): Int {
+    fun literal(n: Node): String = buildString {
+        var k = n.firstChild
+        while (k != null) {
+            when (k) {
+                is org.commonmark.node.Text -> append(k.literal)
+                is Code -> append(k.literal)
+                else -> append(literal(k))
+            }
+            k = k.next
+        }
+    }
+    var cols = 1
+    var widest = 0f
+    fun rows(n: Node) {
+        var r = n.firstChild
+        while (r != null) {
+            if (r is TableRow) {
+                var count = 0
+                var cell = r.firstChild
+                while (cell != null) {
+                    count++
+                    widest = maxOf(widest, paint.measureText(literal(cell)))
+                    cell = cell.next
+                }
+                cols = maxOf(cols, count)
+            } else rows(r)
+            r = r.next
+        }
+    }
+    rows(t)
+    val cell = minOf(widest, 240 * density) + 2 * 6 * density + 2 * density // text, cell padding, borders
+    return (cols * cell).toInt()
 }
 
 // --- Text and code ----------------------------------------------------------------------------------------------
