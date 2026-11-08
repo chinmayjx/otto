@@ -145,7 +145,7 @@ fun MarkdownText(text: String, onLink: (String) -> Unit, modifier: Modifier = Mo
     val fg = cs.onSurface.toArgb()
     AndroidView(
         factory = { c ->
-            ScrollView(c).apply {
+            Page(c).apply {
                 isFillViewport = true
                 addView(LinearLayout(c).apply { orientation = LinearLayout.VERTICAL },
                     FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -204,7 +204,7 @@ private fun markdownBlocks(col: LinearLayout, markwon: Markwon, text: String, fg
         // A sideways scroll measures its child with no width limit and ignores the layout width: set it on the view.
         tv.minWidth = width
         tv.maxWidth = width
-        col.addView(SidewaysScroll(c).apply {
+        col.addView(HorizontalScrollView(c).apply {
             isFillViewport = true // narrower than the screen: the full width, as before
             isHorizontalScrollBarEnabled = false
             addView(tv, FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -218,42 +218,28 @@ private fun markdownBlocks(col: LinearLayout, markwon: Markwon, text: String, fg
 }
 
 /**
- * A sideways scroll inside the page's vertical one. A finger always drifts a little, and the page took the drag the
- * moment it drifted past the slop vertically, before the sideways movement got there; this one holds the gesture
- * from the first touch and lets the page have it only once the finger is clearly going up or down.
+ * The page's vertical scroll, which decides a drag's direction for the tables in it: it takes a drag only when it
+ * goes more up or down than sideways. A plain ScrollView takes any drag that has moved past the slop vertically,
+ * so a sideways swipe on a table with a little drift scrolled the page instead.
  */
-private class SidewaysScroll(c: android.content.Context) : HorizontalScrollView(c) {
+private class Page(c: android.content.Context) : ScrollView(c) {
     private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
     private var x0 = 0f
     private var y0 = 0f
-    private var vertical = false // this drag is the page's: the text inside mustn't take it back
 
-    override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
+    override fun onInterceptTouchEvent(e: android.view.MotionEvent): Boolean {
         when (e.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
                 x0 = e.x
                 y0 = e.y
-                vertical = false
-                // Nothing to scroll (the table fits): leave the page alone.
-                if (getChildAt(0)?.let { it.width > width } == true) parent.requestDisallowInterceptTouchEvent(true)
             }
-            android.view.MotionEvent.ACTION_MOVE -> if (!vertical) {
+            android.view.MotionEvent.ACTION_MOVE -> {
                 val dx = kotlin.math.abs(e.x - x0)
                 val dy = kotlin.math.abs(e.y - y0)
-                if (dy > slop && dy > dx) {
-                    vertical = true
-                    parent.requestDisallowInterceptTouchEvent(false)
-                }
+                if (dx > dy && dx > slop) return false // sideways: the table's
             }
         }
-        // The page's drag: the scroll mustn't see it either (it takes the gesture back itself once it has moved
-        // sideways past the slop); the page cancels it on its next move.
-        if (vertical && e.actionMasked == android.view.MotionEvent.ACTION_MOVE) return true
-        return super.dispatchTouchEvent(e)
-    }
-
-    override fun requestDisallowInterceptTouchEvent(disallow: Boolean) {
-        super.requestDisallowInterceptTouchEvent(disallow && !vertical)
+        return super.onInterceptTouchEvent(e)
     }
 }
 
