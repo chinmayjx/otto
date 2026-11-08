@@ -1,6 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="open" path="open/" />
-    <!-- The lens's images, copied or shared (Lens) -->
-    <cache-path name="lens" path="lens/" />
 </paths>

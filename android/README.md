@@ -4,8 +4,9 @@ The second screen and the device agent in one Android app, in Kotlin (package `i
 
 - a handle on the screen's right edge: a tap or a swipe across it fades the second screen in and out over any app
   (Back and Home put it away too; nothing on the screen itself swipes it out); a drag up or down moves it;
-- the lens: a long press on the handle freezes the screen, to select parts of it and copy them (one image, with an
-  optional note) or share them (`Lens`; it takes the screenshot through the accessibility service);
+- the lens: a long press on the handle freezes the screen under the collector, to select parts of it, with a note;
+  unfrozen, the collector floats over the live app, which stays usable; Copy sends them to the box as a clip for an
+  agent (`otto clip <id>`) (`Lens`, `Collector`, `Clips`; screenshots through the accessibility service);
 - the second screen: the browser agents drive (embedded Chromium, in its own process), files, artifacts, the box's
   desktop and terminal, its status;
 - links to the paired box's hub and to the artifact hub, tapped in any app, open there;
@@ -79,8 +80,15 @@ Open Otto. It's a setup screen: the handle's switch at the top, then each thing 
 - `OverlayService`, a foreground service while the handle is on, keeps the handle (an overlay window), the second
   screen (`Screen`, shown in the transparent `ScreenActivity` while it's in, so other overlays, Back, the keyboard
   and Home work as in any app) and the tunnel (`Tunnel`). A long press on the handle opens the lens (`Lens`): an
-  overlay window of its own, focusable so its note takes the keyboard, over a screenshot; its images reach other
-  apps through the FileProvider, from `cache/lens/` (cleared after a day).
+  overlay window of its own, over a screenshot, holding the collector (`Collector`: chips, a toolbar, the note).
+  Unfrozen, the window shrinks to the collector, laid out clear of the bars and the keyboard, and touches outside it
+  go to the app (`FLAG_NOT_TOUCH_MODAL`); it takes the focus when touched and gives it back when the app is. Back
+  closes the keyboard, then unfreezes, then closes; a tap on the handle closes it. What isn't sent is a draft
+  (`Drafts`, in `files/drafts/`). The artifact viewer docks the same collector under the artifact.
+- `Clips` sends clips to the relay's box API over pipes the app dials itself (`Tunnel.dial`/`ask`: `dial <req> box`
+  on the control connection), with OkHttp on a socket factory whose sockets are those pipes; Coil loads the
+  Clipboard section's images the same way. Plain HTTP is allowed for that one name, `otto-relay`
+  (`res/xml/network_security.xml`), which only ever travels a pipe.
 - `Tunnel` (main process) keeps the one control connection to the box's relay and opens a pipe per stream the relay
   asks for: `device` pipes it serves itself (`device/DeviceApi`: HTTP/1.1, kept alive, one route per command);
   `devtools` pipes it hands to the browser's process, which opens them to its own DevTools socket. It binds

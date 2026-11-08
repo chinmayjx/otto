@@ -47,15 +47,16 @@ import kotlin.math.roundToInt
  * back when the app is (FLAG_WATCH_OUTSIDE_TOUCH), so Back and the keyboard go where the user last was.
  *
  * It opens frozen, as the long press found the screen; its freeze button (Done while frozen) goes back to the
- * live screen and freezes it again. Freezing takes a screenshot (through the accessibility service, with the panel and handle out of it)
- * and the window grows over the whole screen to show it: drag on it for a selection; drag its corners or edges to
+ * live screen and freezes it again. Freezing takes a screenshot (through the accessibility service, with the panel
+ * and handle out of it) and the window grows over the whole screen to show it: drag on it for a selection; drag its corners or edges to
  * adjust it, inside it to move it. Each selection is a chip. Done (the same button), Back or Home unfreeze: the
  * selections are cut out and kept as images, and the live screen is back. Whole screen takes all of it, frozen or
  * live. This can be repeated across apps to gather many parts into one clip.
  *
  * Copy sends the text and the images taken to the box and puts a reference to the clip on the clipboard; with no
- * images it puts the text itself on the clipboard and sends nothing (never an image the user didn't take). Until a Copy goes through, what was collected is a draft (Drafts, "lens"): closing the collector
- * (Back, or a tap on the handle) keeps it, and the next one starts with it.
+ * images it puts the text itself on the clipboard and sends nothing (never an image the user didn't take). Until a
+ * Copy goes through, what was collected is a draft (Drafts, "lens"): closing the collector (Back, or a tap on the
+ * handle) keeps it, and the next one starts with it.
  */
 class Lens private constructor(base: Context, private val handle: (Boolean) -> Unit, private val done: () -> Unit) {
     private val ctx = ContextThemeWrapper(base, android.R.style.Theme_DeviceDefault)
@@ -674,6 +675,7 @@ class Lens private constructor(base: Context, private val handle: (Boolean) -> U
                 return
             }
             starting = true
+            io.execute { java.io.File(ctx.cacheDir, "lens").deleteRecursively() } // the images of the lens before clips
             handle(false)
             val main = Handler(Looper.getMainLooper())
             var frames = 0

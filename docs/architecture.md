@@ -88,16 +88,32 @@ Two TCP ports on the box's tailnet address: the control port (9401, `relay.tunne
 | | `active` | the user is looking at this app: new agent tabs go to it |
 | | `tab <target> <tab> <group\|->`, `gone <target>` | a live tab and its DevTools target; a tab closed or gone dormant |
 | | `made <req> <target> <group>`, `woke <req> <n>`, `fail <req>` | answers to `newtab` and `wake` |
+| | `dial <req> box` | the app wants a pipe of its own, to the relay's box API |
 | | `ping` | now and then; ignored |
 | relay → app | `open <pipe> <service>` | open a pipe for `devtools` or `device` |
 | | `newtab <req> <group\|-> <title>`, `wake <req> <group>`, `idle <group>` | a session's tabs: open one, bring its group to life, let it rest |
 | | `close <target>`, `closegroup <group>`, `focus <target>`, `show <url>` | close a tab or a group; show a tab or a page in the second screen |
+| | `dialed <req> <pipe>`, `dialed <req> -` | the pipe the app asked for (or none, for a service the relay doesn't have) |
 | | `ping` | every 30 s; the app takes 90 s of silence as a dead path and reconnects |
 
 **Pipes**: for each `open`, the app connects to the pipe port and sends `<pipe>\n` (24 hex digits, asked for moments before and good once), then the connection is the service's own stream:
 
 - `devtools`: the browser process's DevTools socket, spoken to in CDP (WebSocket over HTTP). One pipe per agent session's connection. The browser's process opens these pipes itself; its other lines go through the main process's control connection.
 - `device`: the device HTTP API, HTTP/1.1 served by the app in-process from the pipe. Pipes are kept alive between requests; the relay keeps a couple of spares open ahead of need, so a command costs one round trip. Commands that touch the screen still run one at a time.
+
+**Pipes the app dials**: the other way round, for what the phone sends to the box. The app asks on the control connection (`dial <req> box`), which is what authenticates it; the relay answers with a fresh pipe id (`dialed <req> <pipe>`), and the app connects to the pipe port with it as for any pipe. The stream is then the relay's **box API**, HTTP/1.1 with the app as the client (kept alive; the app's OkHttp reaches it through a socket factory whose sockets are such pipes, under the name `otto-relay`, which is never looked up). Nothing new listens anywhere, and the local API stays on localhost.
+
+Box API (`box/relay/src/clips.ts`; the same routes, read-only, are on the local API for the CLI):
+
+| Route | Does |
+|---|---|
+| `POST /clips` | a new clip: `multipart/form-data` with a `clip` part (JSON: `text`, `source`), `image` parts (PNGs, in order) and an optional `thumb` (a JPEG for the app's list); replies the clip, `201` |
+| `GET /clips[?limit=N]` | the clips, newest first |
+| `GET /clips/<id>` | one clip (with `dir`, its folder on the box) |
+| `GET /clips/<id>/<n>.png`, `/clips/<id>/thumb.jpg` | its images, its thumbnail |
+| `DELETE /clips/<id>` | |
+
+**Clips** are what the user collects on the phone for an agent (the lens, or the artifact viewer's collector): kept in `~/.local/state/otto/clips/<id>/` (`relay.clips_dir`) as `clip.json` (`id`, `created`, `text`, `images` with their sizes, and a `source`: `{kind: "screen", app, label}` or `{kind: "artifact", id, version, title, url, notes: [{where, text}]}`) and `1.png`, `2.png`, …. An id is 6 characters of Crockford base32 in lowercase (no i, l, o or u). The newest 200 are kept, and none older than 30 days. On the phone, Copy puts "Look at my Otto clip <id>: run `otto clip <id>`" on the clipboard; a clip without images isn't sent at all, its text goes on the clipboard as it is.
 
 **Device API** (one route per command; `GET` for those that only read, args in the query, lists comma-separated; `POST` with JSON args for the rest):
 
@@ -145,6 +161,7 @@ A thin client: each command is one HTTP call to the relay or the hub. State live
 | `otto show <url>` | open a page in the second screen |
 | `otto artifact publish \| list \| share` | the hub's artifact API |
 | `otto notify <text>` | a notification on the phone |
+| `otto clip <id> \| list \| rm` | a clip from the phone: its text, its source, its images' paths |
 | `otto status` | box, hub, phone, relay at a glance |
 | `otto setup` | install, pair, run adapters |
 
@@ -159,7 +176,7 @@ Three tools: `desktop_screenshot`, `browser_screenshot`, `phone_screenshot`. Eac
 The second screen and the device agent in one APK.
 
 - The handle, the overlay, `ScreenActivity`, link capture and boot restore, from second-screen.
-- The lens: a long press on the handle freezes the screen (an accessibility screenshot) in an overlay, to select parts of it and copy them as one image or share them, with a note.
+- The lens: a long press on the handle freezes the screen (an accessibility screenshot) under the collector, to select parts of it, with a note; unfrozen, the collector floats over the live, usable app (to dictate, or to gather parts from several screens). Copy sends a clip to the box (`otto clip <id>`). The artifact viewer has the same collector docked under the artifact, with notes tagged with the page.
 - The browser runs in its own process (`:browser`), drawn into the second screen with `SurfaceControlViewHost`. Android's switch for WebView debugging (the DevTools socket agents drive) is per process: in one process, agents could also reach the app's other WebViews, such as the terminal (and type into your shell) or HTML artifacts. Its own process also gives the browser its own cookies and lets a crash or a memory kill take only the browser down.
 - The accessibility service, screenshots, input, installs and logs, from device-agent, now served as a device HTTP API through the tunnel. Handled in-process from tunnel pipes, never on a localhost port (every app on the phone can reach localhost).
 - Link capture: `*.ts.net` with path prefixes, keeping only the configured box and hub hosts at runtime and handing every other link to the browser. Android does let the user approve the wildcard host under Open by default (checked on Android 17). Hosts outside the tailnet (an artifact hub's public domain) go into the build: `otto.extraLinkHosts`.

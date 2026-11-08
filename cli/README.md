@@ -9,6 +9,7 @@ otto desktop screenshot
 otto show <url>
 otto artifact publish|list|share
 otto notify <text>
+otto clip <id> | list | rm
 otto status
 otto setup
 ```

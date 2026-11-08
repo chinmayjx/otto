@@ -8,5 +8,6 @@ This box is wired to the user's Android phone with Otto. Use the `otto` command 
 - **Artifacts**: when you make a file for the user to look at or keep (a report, a deck, a PDF, a page, an image), publish it with `otto artifact publish <file> --title "<title>"` and put the link it prints in your reply, on its own line. Links to artifacts open in the second screen on the phone.
 - **Screenshots**: `otto … screenshot` saves the image and prints its path; open it with your file or image tool. If you have the `otto-eyes` MCP tools (`phone_screenshot`, `browser_screenshot`, `desktop_screenshot`), they return the image directly.
 - **The box's desktop** (a VNC display the user can see on the phone): `otto desktop screenshot`.
+- **Clips**: if the user pastes an Otto clip reference (e.g. `otto clip k7f3q2`, or just a clip id), run `otto clip <id>` and look at its images: it's what they collected on the phone for you (parts of the screen or of an artifact, with their notes).
 
 If `otto` says the phone isn't connected, ask the user to turn on the Otto app's handle on the phone.
