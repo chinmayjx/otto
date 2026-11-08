@@ -238,6 +238,11 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
                 clip.onCapture = { if (frozen != null) frozen = null else take { frozen = it } }
                 clip.onWhole = { if (frozen != null) frozen?.let { clip.add(it) } else take { clip.add(it) } }
                 clip.onSent = { clipping = false }
+                clip.onClose = {
+                    frozen = null
+                    clipping = false
+                    clip.save()
+                }
                 clip.source = {
                     JSONObject().put("kind", "artifact").put("id", cur.artifactId).put("version", cur.version).put("title", cur.title)
                         .put("url", "${artifactsBase(ctx)}/a/${cur.artifactId}/v${cur.version}")
@@ -271,6 +276,7 @@ private class ArtifactClip(private val ctx: Context, id: String) {
     var onCapture: () -> Unit = {}
     var onWhole: () -> Unit = {}
     var onSent: () -> Unit = {}
+    var onClose: () -> Unit = {}
     var source: () -> JSONObject = { JSONObject() }
     private val saveSoon = Runnable { save() }
 
@@ -298,6 +304,7 @@ private class ArtifactClip(private val ctx: Context, id: String) {
         }
         c.onCapture = { onCapture() }
         c.onWhole = { onWhole() }
+        c.onClose = { onClose() }
         c.onCopy = { copy(c) }
         show(c)
     }

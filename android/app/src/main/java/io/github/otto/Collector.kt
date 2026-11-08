@@ -60,6 +60,10 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     }
 
     var onCopy: () -> Unit = {}
+    /** × at the toolbar's left end: close the collector (the draft stays). */
+    var onClose: () -> Unit = {}
+    /** A finger came down on the note (the lens's panel takes the focus then). */
+    var onNoteTouch: () -> Unit = {}
     var onRemove: (Int) -> Unit = {}
     var onTapPiece: (Int) -> Unit = {}
     var onTextChanged: (String) -> Unit = {}
@@ -105,6 +109,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     private val placeButton: TextView
     private val capture = ImageView(ctx)
     private val whole = ImageView(ctx)
+    private val close = ImageView(ctx)
     private var busy = false
 
     init {
@@ -140,7 +145,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             rightMargin = dp(12)
         })
 
-        // The toolbar: freeze, whole, (docked) the place, and Copy at the right end.
+        // The toolbar: ×, freeze, whole, (docked) the place, and Copy at the right end.
         val bar = LinearLayout(ctx)
         bar.gravity = Gravity.CENTER_VERTICAL
         fun icon(v: ImageView, res: Int, run: () -> Unit) {
@@ -155,6 +160,14 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
                 if (ime) postDelayed({ run() }, 450) else run()
             }
             bar.addView(v, LayoutParams(dp(BUTTON), dp(BUTTON)).apply { marginEnd = dp(6) })
+        }
+        icon(close, R.drawable.ccm_close) { onClose() }
+        close.background = null // compact: just the ×
+        close.setColorFilter(BrowserService.MUTED)
+        close.contentDescription = if (docked) "Close the collector" else "Close the lens"
+        (close.layoutParams as LayoutParams).apply {
+            width = dp(30)
+            marginEnd = dp(4)
         }
         icon(capture, R.drawable.ccm_capture) { onCapture() }
         icon(whole, R.drawable.ccm_whole) { onWhole() }
@@ -205,6 +218,10 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         note.minHeight = dp(44)
         note.setPadding(dp(12), dp(9), dp(12), dp(9))
         note.background = rounded(BrowserService.FIELD, BrowserService.LINE)
+        note.setOnTouchListener { _, e ->
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) onNoteTouch()
+            false
+        }
         note.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}

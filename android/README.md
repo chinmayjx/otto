@@ -80,10 +80,13 @@ Open Otto. It's a setup screen: the handle's switch at the top, then each thing 
 - `OverlayService`, a foreground service while the handle is on, keeps the handle (an overlay window), the second
   screen (`Screen`, shown in the transparent `ScreenActivity` while it's in, so other overlays, Back, the keyboard
   and Home work as in any app) and the tunnel (`Tunnel`). A long press on the handle opens the lens (`Lens`): an
-  overlay window of its own, over a screenshot, holding the collector (`Collector`: chips, a toolbar, the note).
-  Unfrozen, the window shrinks to the collector, laid out clear of the bars and the keyboard, and touches outside it
-  go to the app (`FLAG_NOT_TOUCH_MODAL`); it takes the focus when touched and gives it back when the app is. Back
-  closes the keyboard, then unfreezes, then closes; a tap on the handle closes it. What isn't sent is a draft
+  overlay window for the screenshot, and above it one for the collector (`Collector`: chips, a toolbar, the note),
+  laid out clear of the bars and the keyboard, whose touches outside go to what's beneath (`FLAG_NOT_TOUCH_MODAL`).
+  The panel's window never changes but for its height, its place and its focus, so it doesn't move as the lens
+  freezes and goes live: live, the screenshot's window stays, see-through and untouchable. To freeze, the panel fades
+  out, the screen is taken as soon as that frame is committed, and it fades back in over the frozen screen. The panel
+  takes the focus when its note is touched and gives it back when the app is. Back closes the keyboard, then
+  unfreezes, then closes; × and a tap on the handle close it. What isn't sent is a draft
   (`Drafts`, in `files/drafts/`). The artifact viewer docks the same collector under the artifact.
 - `Clips` sends clips to the relay's box API over pipes the app dials itself (`Tunnel.dial`/`ask`: `dial <req> box`
   on the control connection), with OkHttp on a socket factory whose sockets are those pipes; Coil loads the
