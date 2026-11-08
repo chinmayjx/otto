@@ -95,7 +95,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     }
 
     var onCopy: () -> Unit = {}
-    /** × at the toolbar's left end: close the collector (the draft stays). */
+    /** The chevron at the tools row's right end: put the collector away (the draft stays). */
     var onClose: () -> Unit = {}
     /** A finger came down on the note (the lens's panel takes the focus then). */
     var onNoteTouch: () -> Unit = {}
@@ -140,7 +140,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     private val chipScroll = HorizontalScrollView(ctx)
     private val status = TextView(ctx)
     private val note = EditText(ctx)
-    private val copy: TextView
+    private val copy = ImageView(ctx)
     private val placeButton: TextView
     private val capture = ImageView(ctx)
     private val whole = ImageView(ctx)
@@ -180,8 +180,10 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             rightMargin = dp(12)
         })
 
-        // The toolbar: ×, freeze, whole, (docked) the place, and Copy at the right end. The icons are plain round
-        // buttons, with no box; the freeze toggle, when on, gets a soft fill and the accent.
+        // The tools: freeze, whole, (docked) the place, and at the right end the chevron that puts the collector away.
+        // The icons are plain round buttons, with no box; the freeze toggle, when on, gets a soft fill and the
+        // accent. The chevron's disc and the round Copy under it are the same size against the same right edge, so
+        // they share a centre line.
         val bar = LinearLayout(ctx)
         bar.gravity = Gravity.CENTER_VERTICAL
         fun icon(v: ImageView, res: Int, run: () -> Unit) {
@@ -197,8 +199,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             }
             bar.addView(v, LayoutParams(dp(BUTTON), dp(BUTTON)).apply { marginEnd = dp(4) })
         }
-        icon(close, R.drawable.ccm_x) { onClose() }
-        close.contentDescription = if (docked) "Close the collector" else "Close the lens"
         icon(capture, R.drawable.ccm_freeze) { onCapture() }
         icon(whole, R.drawable.ccm_whole) { onWhole() }
         whole.contentDescription = if (docked) "Take the whole page in view" else "Take the whole screen"
@@ -211,20 +211,16 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         placeButton.visibility = GONE
         bar.addView(placeButton, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { marginStart = dp(2) })
         bar.addView(View(ctx), LayoutParams(0, 1, 1f))
-        // Copy: a pill with a small copy icon; grey (not a dimmed accent) while there's nothing to send.
-        copy = button("Copy", BrowserService.ON_ACCENT, pill(BrowserService.ACCENT, BrowserService.ACCENT, dp(19)))
-        copy.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        copy.minWidth = 0
-        copy.setPadding(dp(16), 0, dp(18), 0)
-        copy.compoundDrawablePadding = dp(6)
-        copy.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ccm_copy, 0, 0, 0)
-        copy.contentDescription = "Copy: send to the box, and a reference to the clipboard"
-        copy.setOnClickListener {
-            if (busy || !ready()) return@setOnClickListener
+        close.setImageResource(R.drawable.ccm_chevron_put_away)
+        close.setColorFilter(ICON)
+        close.scaleType = ImageView.ScaleType.CENTER
+        close.background = round(true) // a soft disc
+        close.contentDescription = if (docked) "Close the collector" else "Close the lens"
+        close.setOnClickListener {
             hideKeyboard()
-            onCopy()
+            onClose()
         }
-        bar.addView(copy, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)))
+        bar.addView(close, LayoutParams(dp(ROUND), dp(ROUND)))
         addView(bar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(if (docked) 8 else 2)
             leftMargin = dp(12)
@@ -251,9 +247,9 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         note.maxLines = 4
         note.gravity = Gravity.CENTER_VERTICAL or Gravity.START
         note.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN
-        note.minHeight = dp(46)
-        note.setPadding(dp(16), dp(11), dp(16), dp(11))
-        note.background = pill(NOTE_FILL, NOTE_LINE, dp(23))
+        note.minHeight = dp(ROUND)
+        note.setPadding(dp(16), dp(10), dp(16), dp(10))
+        note.background = pill(NOTE_FILL, NOTE_LINE, dp(ROUND / 2))
         note.textCursorDrawable = GradientDrawable().apply {
             setColor(BrowserService.ACCENT)
             setSize(dp(2), 1)
@@ -267,7 +263,21 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
                 onTextChanged(e?.toString() ?: "")
             }
         })
-        addView(note, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        // The note row: the note, and Copy at its right, round, icon only; grey (not a dimmed accent) while there's
+        // nothing to send.
+        val row = LinearLayout(ctx)
+        row.gravity = Gravity.BOTTOM // with the note's last line as it grows
+        row.addView(note, LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        copy.setImageResource(R.drawable.ccm_copy)
+        copy.scaleType = ImageView.ScaleType.CENTER
+        copy.contentDescription = "Copy"
+        copy.setOnClickListener {
+            if (busy || !ready()) return@setOnClickListener
+            hideKeyboard()
+            onCopy()
+        }
+        row.addView(copy, LayoutParams(dp(ROUND), dp(ROUND)).apply { marginStart = dp(8) })
+        addView(row, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(8)
             leftMargin = dp(12)
             rightMargin = dp(12)
@@ -284,10 +294,11 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     private fun changed() {
         note.hint = if (frozen && pieces.isEmpty()) "Drag to select" else "Add a note"
         val on = ready() || busy
-        copy.background = if (on) pill(BrowserService.ACCENT, BrowserService.ACCENT, dp(19)) else pill(OFF_FILL, OFF_FILL, dp(19))
-        val fg = if (on) BrowserService.ON_ACCENT else OFF_TEXT
-        copy.setTextColor(fg)
-        copy.compoundDrawablesRelative[0]?.setTint(fg)
+        copy.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (on) BrowserService.ACCENT else OFF_FILL)
+        }
+        copy.setColorFilter(if (on) BrowserService.ON_ACCENT else OFF_TEXT)
     }
 
     /** The text button left of capture: [text] runs [run]; null hides it. */
@@ -319,18 +330,20 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     fun sending() {
         busy = true
         status.visibility = GONE
-        copy.text = "…"
+        copy.alpha = 0.6f
     }
 
+    /** Sent: Copy shows a check until the collector goes (or resets). */
     fun sent() {
-        copy.text = "Copied"
+        copy.alpha = 1f
+        copy.setImageResource(R.drawable.ccm_check)
     }
 
     /** Copy failed: the draft stays, and the reason shows. */
     fun failed(why: String) {
         busy = false
         changed()
-        copy.text = "Copy"
+        copy.alpha = 1f
         status.text = "Not sent: $why"
         status.visibility = VISIBLE
     }
@@ -339,7 +352,8 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     fun reset() {
         busy = false
         changed()
-        copy.text = "Copy"
+        copy.alpha = 1f
+        copy.setImageResource(R.drawable.ccm_copy)
         status.visibility = GONE
     }
 
@@ -481,6 +495,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     companion object {
         private const val CHIP_ROW = 56
         private const val BUTTON = 40
+        private const val ROUND = 44 // the chevron's disc and Copy, one over the other on a centre line
 
         // The toolbar's own greys (the theme's are in BrowserService): icons, the empty Copy, the note.
         private val ICON = Color.parseColor("#c3c8cf") // the icon buttons, light steel

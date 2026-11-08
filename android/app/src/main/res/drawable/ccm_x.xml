@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Close: a ×, drawn smaller than its box and with the other icons' stroke, so it has their size and weight. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="22dp" android:height="22dp" android:viewportWidth="24" android:viewportHeight="24">
-    <path android:pathData="M7,7L17,17M17,7L7,17" android:strokeColor="#ffffff" android:strokeWidth="1.8"
-        android:strokeLineCap="round" android:fillColor="#00000000" />
-</vector>
