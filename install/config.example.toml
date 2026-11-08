@@ -6,15 +6,13 @@ url = "https://my-box.tailnet-name.ts.net"   # the box's Tailscale name; its hos
 
 [relay]
 # tailnet_host = "100.x.y.z"   # where the phone's links listen (default: this machine's Tailscale address)
-browser_port = 9401            # the browser link: the app's control connection
-pipe_port = 9402               # ... and its DevTools pipes
-device_port = 9411             # the device link
+tunnel_port = 9401             # the phone's tunnel: the app's control connection (was browser_port)
+pipe_port = 9402               # ... and its pipes (DevTools, device API)
 local_port = 9334              # the CLI and the eyes MCP server talk to the relay here, on 127.0.0.1
 # state_file = "~/.local/state/otto/relay.json"   # which agent session's tabs are which group
 
 [phone]
-browser_token_file = "~/.config/otto/browser-token"   # the tokens the app presents on each link (given at pairing)
-device_token_file = "~/.config/otto/device-token"
+token_file = "~/.config/otto/token"   # what the app presents on the tunnel (given at pairing; falls back to browser_token_file)
 # What the app's second screen opens, given to it at pairing (otto pair):
 hub_url = "https://my-box.tailnet-name.ts.net:8446"         # the box's hub: files, desktop, terminal
 artifacts_url = "https://my-hub.tailnet-name.ts.net:8444"   # the artifact hub, over the tailnet

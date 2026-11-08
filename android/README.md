@@ -8,11 +8,11 @@ The second screen and the device agent in one Android app, in Kotlin (package `i
   desktop and terminal, its status;
 - links to the paired box's hub and to the artifact hub, tapped in any app, open there;
 - the device agent: an accessibility service for the UI tree, screenshots, taps, swipes and typing, plus installs and
-  logs, run by the box over the device link.
+  logs, served to the box as a device HTTP API through the app's tunnel.
 
-Moved in from the second-screen and device-agent apps (Java), rewritten in Kotlin; the wire protocols to the box's
-relay are unchanged (`box/relay/src/browser.ts`, `box/relay/src/device.ts`). The reverse tunnel and the device HTTP
-API come later (see `docs/architecture.md`).
+Moved in from the second-screen and device-agent apps (Java), rewritten in Kotlin. The app reaches the box through
+one reverse tunnel (`Tunnel`; the relay's side is `box/relay/src/tunnel.ts`, and the protocol is in
+`docs/architecture.md`): nothing listens on the phone.
 
 ## Build
 
@@ -48,14 +48,16 @@ On the box, with `[phone] hub_url` and `artifacts_url` set in `~/.config/otto/co
 (see `install/config.example.toml`):
 
 ```sh
-otto pair            # prints the pairing link: otto://pair?box=…&browser_port=…&…
+otto pair            # prints the pairing link: otto://pair?box=…&port=…&pipe_port=…&token=…&…
 otto pair --qr       # and as a QR code to scan (needs qrencode)
-otto pair --send     # opens it on the phone through the device link
+otto pair --send     # opens it on the phone through its tunnel
 ```
 
-The link carries the box's tailnet name, the relay's ports (browser, pipe, device), both links' tokens, the hub's URL
-and the artifact hub's (and optionally its public address and the box's control panel). The app shows what it's
-about to save and asks before saving it. The setup screen shows the pairing and both links' states, and can unpair.
+The link carries the box's tailnet name, the tunnel's ports (control and pipes), the token, the hub's URL and the
+artifact hub's (and optionally its public address and the box's control panel). Links from before the tunnel
+(`browser_port`, `browser_token`, `device_port`, `device_token`) still pair: the browser link's port and token are
+the tunnel's. The app shows what it's about to save and asks before saving it. The setup screen shows the pairing,
+the tunnel's state and the browser's, and can unpair.
 
 ## Setup on the phone
 
@@ -74,23 +76,32 @@ Open Otto. It's a setup screen: the handle's switch at the top, then each thing 
 
 - `OverlayService`, a foreground service while the handle is on, keeps the handle (an overlay window), the second
   screen (`Screen`, shown in the transparent `ScreenActivity` while it's in, so other overlays, Back, the keyboard
-  and Home work as in any app) and the device link (`device/DeviceLink`).
+  and Home work as in any app) and the tunnel (`Tunnel`).
+- `Tunnel` (main process) keeps the one control connection to the box's relay and opens a pipe per stream the relay
+  asks for: `device` pipes it serves itself (`device/DeviceApi`: HTTP/1.1, kept alive, one route per command);
+  `devtools` pipes it hands to the browser's process, which opens them to its own DevTools socket. It binds
+  `BrowserService` (a Messenger) and carries `BrowserLink`'s lines both ways; when the browser's process dies it
+  tells the relay so (`browser down`). It reconnects with a growing pause (1 s to 30 s), at once when the network
+  changes or the pairing does, and takes 90 s of silence (the relay pings every 30 s) as a dead path.
 - `BrowserService` runs the browser in its own process (`:browser`): Android's WebView debugging switch is per
   process, so the DevTools socket `BrowserLink` hands to the box holds the browser's tabs and nothing else. Its pages
   are drawn into the screen through `SurfaceControlViewHost`; until the screen first embeds them they're laid out in
   a window that isn't shown, so agents can drive and screenshot them with the screen never opened.
 - **Keeping the browser up.** While the handle is on, `BrowserService` is a foreground service of its own, started by
   `OverlayService`; both post the same notification (same id and channel), so there's one. A foreground service's
-  process is neither frozen nor killed in the background, so the browser link stays up with the screen closed or
-  the phone locked. `BrowserLink` reconnects with a growing pause (1 s to 30 s), at once when the network changes or
-  the pairing does, and writes a line now and then to notice a dead connection. `Screen` rebinds if its binding dies.
-  Turning the handle off stops both.
+  process is neither frozen nor killed in the background, so the browser stays reachable with the screen closed or
+  the phone locked. `Screen` rebinds if its binding dies. Turning the handle off stops both, and the tunnel.
 - `LinkActivity` takes the links: the manifest claims `https://*.ts.net` on the hub's routes (`/`, `/desktop`,
   `/terminal`, `/files`, `/api/fs/`) and the artifact hub's (`/a/`, `/p/`, `/v/`); at runtime the app keeps only links
   to the paired hub and artifact hub (`Links`) and hands every other one to the default browser.
 - `Pairing` keeps what pairing gave in a small JSON file both processes read; `AppWeb` answers the web UI's
   `config.js` with the hub's and artifact hub's URLs from it.
-- `device/`: `AgentAccessibility` (UI tree, gestures, global actions, screenshots), `Commands` (screenshot, ui, tap,
-  longpress, swipe, text, key, wait, current, launch, forcestop, packages, appinfo, install, uninstall, logcat, info),
-  `UiTree`, `Installer`, `LogReader` (READ_LOGS), `Frames` (the device link's wire format).
-- `BootReceiver` brings the handle back after a restart or an update, if it was on.
+- `device/`: `DeviceApi` (the HTTP server on device pipes), `AgentAccessibility` (UI tree, gestures, global actions,
+  screenshots), `Commands` (screenshot, ui, tap, longpress, swipe, text, key, wait, current, launch, forcestop,
+  packages, appinfo, install, uninstall, logcat, info, events), `UiTree`, `Installer`, `LogReader` (READ_LOGS).
+- **Coming back after an update or a restart.** `BootReceiver` (BOOT_COMPLETED, MY_PACKAGE_REPLACED) starts the
+  handle again if it was on; the accessibility service, which Android binds again after an update, starts the tunnel
+  itself and tries the handle too, so the box keeps its reach even if the foreground service can't start. Otto
+  installs its own updates (it's its own installer of record, so `PackageInstaller` with
+  `USER_ACTION_NOT_REQUIRED` needs no prompt): the HTTP reply goes out first, then the session is committed. `Events`
+  keeps a short log of all this in a file (`GET /events`; from the box, `curl -XPOST 127.0.0.1:9334/phone/events`).

@@ -68,11 +68,59 @@ TypeScript for the relay, CLI and MCP server: Playwright, which the browser comm
 
 One daemon on the box, replacing cc-mobile's `phone-browser-relay.js` and device-agent's `server.js`.
 
-- **Tunnel**: the phone keeps one control connection open (TCP over Tailscale, token in the first message) and opens a pipe per request when the relay asks, as `BrowserLink` does today. Behind the tunnel the phone serves two things: the WebView's DevTools socket, and the device HTTP API.
+- **Tunnel**: the phone keeps one control connection open (TCP over Tailscale, token in the first message) and opens a pipe per stream when the relay asks. Behind the tunnel the phone serves two things: the WebView's DevTools socket, and the device HTTP API. The protocol is below.
 - **Browser**: a persistent Playwright connection over the tunnelled DevTools socket. Each agent session gets its own tab group; `Target.getTargets` is filtered to the session's own tabs, as now.
-- **Device API**: proxied to localhost for the CLI.
+- **Device API**: served to the CLI on localhost as before (`POST /phone/<cmd>`, JSON args), each command forwarded as an HTTP request to the phone through a `device` pipe.
 - **Page push**: `show` opens a URL in the second screen.
 - **State**: session → group map, with old sessions dropped after 30 days of disuse.
+
+#### The phone's tunnel
+
+Two TCP ports on the box's tailnet address: the control port (9401, `relay.tunnel_port`) and the pipe port (9402, `relay.pipe_port`). The phone dials both; nothing listens on the phone. Tailscale encrypts; the token (`phone.token_file`, given to the app at pairing) authenticates the control connection. Code: `box/relay/src/tunnel.ts` and `android/…/Tunnel.kt`.
+
+**Control connection**: lines of UTF-8 text, each ending in `\n`.
+
+| Direction | Line | Means |
+|---|---|---|
+| app → relay | `hello <package> <token> 2` | first line; `2` is the protocol version (an app that sends none is an old browser link: no device API) |
+| | `info <json>` | the phone: `{"device","android","app","versionCode"}` |
+| | `browser up` / `browser down` | the browser's process came up (its `tab` lines follow) or went away |
+| | `active` | the user is looking at this app: new agent tabs go to it |
+| | `tab <target> <tab> <group\|->`, `gone <target>` | a live tab and its DevTools target; a tab closed or gone dormant |
+| | `made <req> <target> <group>`, `woke <req> <n>`, `fail <req>` | answers to `newtab` and `wake` |
+| | `ping` | now and then; ignored |
+| relay → app | `open <pipe> <service>` | open a pipe for `devtools` or `device` |
+| | `newtab <req> <group\|-> <title>`, `wake <req> <group>`, `idle <group>` | a session's tabs: open one, bring its group to life, let it rest |
+| | `close <target>`, `closegroup <group>`, `focus <target>`, `show <url>` | close a tab or a group; show a tab or a page in the second screen |
+| | `ping` | every 30 s; the app takes 90 s of silence as a dead path and reconnects |
+
+**Pipes**: for each `open`, the app connects to the pipe port and sends `<pipe>\n` (24 hex digits, asked for moments before and good once), then the connection is the service's own stream:
+
+- `devtools`: the browser process's DevTools socket, spoken to in CDP (WebSocket over HTTP). One pipe per agent session's connection. The browser's process opens these pipes itself; its other lines go through the main process's control connection.
+- `device`: the device HTTP API, HTTP/1.1 served by the app in-process from the pipe. Pipes are kept alive between requests; the relay keeps a couple of spares open ahead of need, so a command costs one round trip. Commands that touch the screen still run one at a time.
+
+**Device API** (one route per command; `GET` for those that only read, args in the query, lists comma-separated; `POST` with JSON args for the rest):
+
+| Route | Args | Reply |
+|---|---|---|
+| `GET /info` | | JSON: model, Android, screen, battery, network, permissions, the app in front |
+| `GET /current` | | JSON: the app in front (`package`, `activity`) |
+| `GET /screenshot` | `scale`, `format` (`png`, `jpg`), `quality` | the image; `X-Otto-Result: {"width","height","format"}` |
+| `GET /ui` | `all`, `xml` | text: one line per element, with bounds (or XML) |
+| `GET /wait` | `text` \| `id` \| `desc`, `index`, `gone`, `timeout` | text |
+| `GET /packages` | `thirdParty`, `filter`, `labels` | JSON list |
+| `GET /appinfo` | `package` | JSON |
+| `GET /logcat` | `package`, `level`, `grep`, `lines`, `since`, `tags` | the lines as text; `X-Otto-Result: {"fullAccess"}` |
+| `GET /events` | | text: what brought the app up and down (updates, boot, the tunnel) |
+| `POST /tap`, `/longpress` | `x`, `y` \| `text`, `id`, `desc`, `index`; `ms` | text |
+| `POST /swipe` | `direction` \| `x1`, `y1`, `x2`, `y2`; `ms` | text |
+| `POST /text` | `text`, `replace` | text |
+| `POST /key` | `key` | text |
+| `POST /launch` | `package`, `activity` \| `url` | text |
+| `POST /forcestop`, `/uninstall` | `package` | text |
+| `POST /install?name=…` | the APK as the body | text; for Otto itself the reply comes first, then the update |
+
+Replies are `200` with `application/json` (the result), `text/plain` (a string result) or bytes of their own type with the result as JSON in `X-Otto-Result`; `404` for an unknown command; `500` with the reason as text when a command fails. The relay turns these into the local API's replies (`{result}`, or the bytes with `X-Otto-Result`).
 
 Removed in the move, as Claude-specific or obsolete:
 - finding a Claude chat from the MCP server's parent process and `~/.claude/sessions` (`chatOf`, `claudeOf`);
@@ -114,7 +162,8 @@ The second screen and the device agent in one APK.
 - The browser runs in its own process (`:browser`), drawn into the second screen with `SurfaceControlViewHost`. Android's switch for WebView debugging (the DevTools socket agents drive) is per process: in one process, agents could also reach the app's other WebViews, such as the terminal (and type into your shell) or HTML artifacts. Its own process also gives the browser its own cookies and lets a crash or a memory kill take only the browser down.
 - The accessibility service, screenshots, input, installs and logs, from device-agent, now served as a device HTTP API through the tunnel. Handled in-process from tunnel pipes, never on a localhost port (every app on the phone can reach localhost).
 - Link capture: `*.ts.net` with path prefixes, keeping only the configured box and hub hosts at runtime and handing every other link to the browser. Android does let the user approve the wildcard host under Open by default (checked on Android 17). Hosts outside the tailnet (an artifact hub's public domain) go into the build: `otto.extraLinkHosts`.
-- Pairing replaces the two tokens baked into today's APKs: `otto pair` builds an `otto://pair?…` link (printed, as a QR code, or opened on the phone with `--send`); the app shows it, asks, and stores the box, the relay's ports, the tokens and the hub's and artifact hub's URLs.
+- Pairing replaces the two tokens baked into today's APKs: `otto pair` builds an `otto://pair?…` link (printed, as a QR code, or opened on the phone with `--send`); the app shows it, asks, and stores the box, the tunnel's ports, its one token and the hub's and artifact hub's URLs.
+- After an update or a restart, the app comes back on its own: `BootReceiver` (boot, `MY_PACKAGE_REPLACED`) restarts the handle, and the accessibility service, which Android binds again, restarts the tunnel too. Otto installs its own updates through the device API (`otto phone install otto.apk`), unattended: it is its own installer of record, and it answers before it commits the update.
 - The browser's process is a foreground service of its own while the handle is on (one shared notification), so the browser link stays up with the screen closed.
 - One-time adb grants for logs (`READ_LOGS`) during setup.
 
@@ -177,7 +226,7 @@ Setup is by hand at first and gets standardised later. Previews are made when an
 
 ## Network and config
 
-- One config file on the box, `~/.config/otto/config.toml`: the box's and hub's Tailscale URLs, ports, the pairing token. The phone gets what it needs at pairing.
+- One config file on the box, `~/.config/otto/config.toml`: the box's and hub's Tailscale URLs, ports, the phone's token (`phone.token_file`). The phone gets what it needs at pairing.
 - `tailscale serve` publishes each service on the box's and hub's `*.ts.net` names with real certificates.
 - Short, memorable links (a redirect page per service on your own domain) are documented as an optional extra.
 
