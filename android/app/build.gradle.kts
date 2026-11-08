@@ -4,6 +4,7 @@ import javax.inject.Inject
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 // Nothing personal is built in: the box, its ports, tokens and hosts come from pairing (otto pair). The one
@@ -29,7 +30,10 @@ android {
         versionName = (findProperty("versionName") ?: "0.1").toString()
         buildConfigField("String", "EXTRA_LINK_HOSTS", "\"${extraLinkHosts.joinToString(",")}\"")
     }
-    buildFeatures { buildConfig = true }
+    buildFeatures {
+        buildConfig = true
+        compose = true
+    }
     // Release signing from the environment (OTTO_KEYSTORE and friends); otherwise the debug key.
     signingConfigs {
         create("release") {
@@ -115,6 +119,30 @@ androidComponents {
 
 dependencies {
     implementation("androidx.webkit:webkit:1.12.1")
+    // The native sections (Artifacts, Files, Devbox) and the viewer: Compose, Material 3.
+    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.savedstate:savedstate-ktx:1.2.1")
+    implementation("androidx.core:core-ktx:1.15.0")
+    // Images (and thumbnails): Coil, with SVG; zoomable, subsampled images: Telephoto.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("io.coil-kt:coil-svg:2.7.0")
+    implementation("me.saket.telephoto:zoomable-image-coil:0.14.0")
+    // Audio and video.
+    implementation("androidx.media3:media3-exoplayer:1.5.1")
+    implementation("androidx.media3:media3-ui:1.5.1")
+    // Markdown.
+    implementation("io.noties.markwon:core:4.6.2")
+    implementation("io.noties.markwon:ext-tables:4.6.2")
+    implementation("io.noties.markwon:ext-strikethrough:4.6.2")
+    implementation("io.noties.markwon:ext-tasklist:4.6.2")
+    implementation("io.noties.markwon:linkify:4.6.2")
+    implementation("io.noties.markwon:html:4.6.2")
+    implementation("io.noties.markwon:image:4.6.2")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
 }

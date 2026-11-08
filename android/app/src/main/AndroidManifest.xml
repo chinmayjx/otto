@@ -129,6 +129,15 @@
                 android:resource="@xml/accessibility" />
         </service>
 
+        <!-- Files and artifacts handed to other apps (Open with…), from the cache. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/shared_files" />
+        </provider>
+
         <receiver android:name=".device.Installer$StatusReceiver" android:exported="false" />
 
         <receiver android:name=".BootReceiver" android:exported="true">

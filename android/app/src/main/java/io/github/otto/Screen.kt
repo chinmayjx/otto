@@ -49,6 +49,19 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.compose.ui.platform.ComposeView
+import io.github.otto.ui.ArtifactItem
+import io.github.otto.ui.ArtifactsModel
+import io.github.otto.ui.ArtifactsScreen
+import io.github.otto.ui.ComposeHost
+import io.github.otto.ui.DevboxModel
+import io.github.otto.ui.DevboxScreen
+import io.github.otto.ui.FilesModel
+import io.github.otto.ui.FilesScreen
+import io.github.otto.ui.NativeBack
+import io.github.otto.ui.ScreenOps
+import io.github.otto.ui.Target
+import io.github.otto.ui.Viewer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -66,9 +79,11 @@ import kotlin.math.roundToInt
  * screen out as it goes, a pull down on it reloads; Back walks back (the viewer, the section's history) and then
  * closes.
  *
- * Sections: Files, Artifacts, Desktop, Terminal and Devbox, the app's own web UI (AppWeb, one WebView each, under
- * the bar), and Browser, BrowserService's views drawn here from the ":browser" process through a SurfaceView
- * (SurfaceControlViewHost), the browser agents on the box drive through BrowserLink.
+ * Sections: Files, Artifacts and Devbox, native (Compose, io.github.otto.ui); Desktop and Terminal, the app's own
+ * web UI (AppWeb, a WebView each, under the bar); and Browser, BrowserService's views drawn here from the
+ * ":browser" process through a SurfaceView (SurfaceControlViewHost), the browser agents on the box drive through
+ * BrowserLink. An artifact or a file opens in the viewer, native too (ui/Viewer), over the whole screen; HTML in
+ * the web viewer (AppWeb).
  */
 class Screen(private val ctx: Context, private val host: Host) : ServiceConnection {
     interface Host {
@@ -96,13 +111,20 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private val tabMark: TextView
     private val tabCount: TextView
     private val surface = SurfaceView(ctx)
-    private val files: WebView
-    private val artifacts: WebView
+    private val compose = ComposeHost() // the native sections' lifecycle: the screen's
+    private val ops = Ops()
+    private val filesModel = FilesModel(ctx) { up, home, hidden -> filesBar(up, home, hidden) }
+    private val artifactsModel = ArtifactsModel(ctx)
+    private val devboxModel = DevboxModel(ctx)
+    private val files: ComposeView
+    private val artifacts: ComposeView
     private val desktop: WebView
     private val terminal: WebView
-    private val devbox: WebView
+    private val devbox: ComposeView
     private val body = FrameLayout(ctx)
-    private var viewer: WebView? = null // an artifact or file opened from Files or Artifacts, over the whole second screen
+    private var viewer: View? = null // an artifact or file opened from Files or Artifacts, over the whole second screen
+    private var viewerTarget: Target? = null
+    private var viewerHint: ArtifactItem? = null
     private var tabState = JSONObject() // BrowserService's TABS
     private var menu: Dialog? = null // a dialog, not a PopupWindow: a popup can't show text selection's toolbar
     private var tabList: LinearLayout? = null // the open tab menu's list, refreshed as the tabs change
@@ -146,16 +168,13 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         // Section contents, one shown at a time; the web sections run under the top bar.
         panel.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        // Files and Artifacts: the app's own web UI (AppWeb), below the bar; a file or an artifact opens in the viewer.
+        compose.install(root)
+        // Files and Artifacts: native, below the bar; a file or an artifact opens in the viewer.
         fun underBar() = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { topMargin = dp(BAR_DP) }
-        files = AppWeb.create(ctx, object : AppWeb.Ops {
-            override fun filesBar(up: Boolean, home: Boolean, hidden: Boolean) = this@Screen.filesBar(up, home, hidden)
-        })
+        files = compose.view(ctx, ops) { FilesScreen(filesModel) }
         body.addView(files, underBar())
-        files.loadUrl(AppWeb.URL + "#files")
-        artifacts = AppWeb.create(ctx, object : AppWeb.Ops {})
+        artifacts = compose.view(ctx, ops) { ArtifactsScreen(artifactsModel) }
         body.addView(artifacts, underBar())
-        artifacts.loadUrl(AppWeb.URL + "#artifacts")
         // Desktop: the app's own VNC view (web/desktop.js); connected when first opened.
         desktop = AppWeb.create(ctx, object : AppWeb.Ops {})
         body.addView(desktop, underBar())
@@ -167,8 +186,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             }
         })
         body.addView(terminal, underBar())
-        // Devbox: the box's status, metrics, start and stop (web/devbox.js, on the box's control panel).
-        devbox = AppWeb.create(ctx, object : AppWeb.Ops {})
+        // Devbox: the box's status, metrics, start and stop (native, from the box's control panel).
+        devbox = compose.view(ctx, ops) { DevboxScreen(devboxModel) }
         body.addView(devbox, underBar())
 
         // Browser: BrowserService's views from the ":browser" process.
@@ -307,7 +326,12 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             bound = false
             ctx.unbindService(this)
         }
-        for (w in listOf(files, artifacts, desktop, terminal, devbox, viewer)) w?.destroy()
+        (viewer as? WebView)?.destroy()
+        for (w in listOf(desktop, terminal)) w.destroy()
+        filesModel.destroy()
+        artifactsModel.destroy()
+        devboxModel.destroy()
+        compose.destroy()
     }
 
     val isOpen: Boolean get() = position > 0.5f
@@ -367,10 +391,10 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 return
             }
         }
-        val web = if (tab == FILES) files else if (tab == ARTIFACTS) artifacts else null // Desktop and Terminal: no history to walk
         when {
+            NativeBack.handle() -> {} // a sheet in a native screen
             viewer != null -> closeViewer()
-            web != null && web.canGoBack() -> web.goBack()
+            tab == FILES && filesModel.back() -> {} // Desktop and Terminal: no history to walk
             tab == BROWSER && tabState.optBoolean("canGoBack") -> send(BrowserService.MSG_BACK)
             else -> animateTo(0f)
         }
@@ -405,7 +429,13 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         b.scaleType = ImageView.ScaleType.CENTER
         b.background = pressable(dp(20))
         b.contentDescription = label
-        onTap(b) { if (b.isEnabled) files.evaluateJavascript("window.ccmFiles && ccmFiles('$action')", null) }
+        onTap(b) {
+            if (b.isEnabled) when (action) {
+                "up" -> filesModel.up()
+                "home" -> filesModel.home()
+                else -> filesModel.toggleHidden()
+            }
+        }
         filesButtons.addView(b, LinearLayout.LayoutParams(dp(40), dp(40)))
         return b
     }
@@ -419,40 +449,92 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         filesHidden.setColorFilter(if (hidden) BrowserService.CLAUDE else BrowserService.TEXT)
     }
 
-    /** The viewer (web/, #artifact/<id>, #view/<id> or #file?path=) over the second screen, bar included. */
+    /**
+     * The viewer over the second screen, bar included, at the web viewer's route (#artifact/<id>[/v<n>], #view/<id>
+     * or #file?path=): native (ui/Viewer), which hands HTML on to the web viewer.
+     */
     fun showViewer(hash: String): Boolean {
         if (!Links.isViewer(hash)) return false
-        closeViewer()
+        val t = Target.parse(hash) ?: return showWebViewer(hash)
+        showViewer(t, null)
+        return true
+    }
+
+    private fun showViewer(t: Target, hint: ArtifactItem?) {
+        // HTML artifacts are web pages: straight to the web viewer when the list already says so.
+        if (hint?.kind == "html") {
+            showWebViewer(t.hash)
+            return
+        }
+        closeViewer(refresh = false)
+        viewerTarget = t
+        viewerHint = hint
+        val v = compose.view(ctx, ops) { Viewer(t, hint) }
+        putViewer(v)
+    }
+
+    /** The web viewer (web/, in AppWeb): HTML artifacts and pages, and anything the native viewer hands on. */
+    private fun showWebViewer(hash: String): Boolean {
+        closeViewer(refresh = false)
+        viewerTarget = Target.parse(hash)
+        viewerHint = null
         val v = AppWeb.create(ctx, object : AppWeb.Ops {
             override fun close() = closeViewer()
             override fun open(hash: String) = showViewer(hash)
         })
-        viewer = v
-        body.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         v.loadUrl(AppWeb.URL + "#" + hash)
-        placeSurface()
-        if (isOpen) focusTab()
+        putViewer(v)
         return true
     }
 
-    private fun closeViewer() {
+    private fun putViewer(v: View) {
+        viewer = v
+        body.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        placeSurface()
+        if (isOpen) focusTab()
+    }
+
+    private fun closeViewer(refresh: Boolean = true) {
         val v = viewer ?: return
         body.removeView(v)
-        v.destroy()
+        if (v is WebView) v.destroy() else (v as? ComposeView)?.disposeComposition()
         viewer = null
-        refreshArtifacts() // e.g. after a delete
+        viewerTarget = null
+        if (refresh) refreshArtifacts() // e.g. after a delete
         placeSurface()
         if (isOpen) focusTab()
     }
 
     /** The Artifacts list fetches the list again: what was published (or deleted) since. */
-    fun refreshArtifacts() {
-        artifacts.evaluateJavascript("window.ccmRefresh && ccmRefresh()", null)
+    fun refreshArtifacts() = artifactsModel.refresh()
+
+    /** What the native screens ask of the second screen. */
+    private inner class Ops : ScreenOps {
+        override fun openViewer(target: Target, hint: ArtifactItem?) = showViewer(target, hint)
+        override fun closeViewer() = this@Screen.closeViewer()
+        override fun webViewer(target: Target) {
+            showWebViewer(target.hash)
+        }
+        override fun openInBrowser(url: String) = open(url)
+        override fun download(url: String, name: String) = AppWeb.download(ctx, url, name)
+        override fun share(text: String, title: String) {
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text).putExtra(Intent.EXTRA_SUBJECT, title)
+            ctx.startActivity(Intent.createChooser(send, title).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            hide() // the share sheet opens under the second screen
+        }
+        override fun hide() = this@Screen.hide()
+        override fun artifactsChanged() = refreshArtifacts()
+        override fun showDevbox() {
+            closeViewer(refresh = false)
+            select(DEVBOX)
+        }
     }
 
     private fun select(which: Int) {
         if (which == ARTIFACTS && tab != ARTIFACTS) refreshArtifacts()
+        if (which == FILES && tab != FILES) filesModel.refresh()
         tab = which
+        devboxModel.shown(which == DEVBOX && position > 0f)
         titleText.text = NAMES[which]
         tabBlock.visibility = if (which == BROWSER || which == TERMINAL) View.VISIBLE else View.GONE
         if (which == TERMINAL) showTerminals() else if (which == BROWSER) showTabs()
@@ -465,7 +547,6 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         terminal.visibility = if (which == TERMINAL) View.VISIBLE else View.GONE
         if (which == TERMINAL && terminal.url == null) terminal.loadUrl(AppWeb.URL + "#terminal")
         devbox.visibility = if (which == DEVBOX) View.VISIBLE else View.GONE
-        if (which == DEVBOX && devbox.url == null) devbox.loadUrl(AppWeb.URL + "#devbox")
         placeSurface()
         if (isOpen) focusTab()
     }
@@ -479,7 +560,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         surface.translationX = if (tab == BROWSER && viewer == null) 0f else 4f * max(surface.width, dp(400))
     }
 
-    private fun sectionWeb(): WebView = when (tab) {
+    private fun sectionView(): View = when (tab) {
         FILES -> files
         ARTIFACTS -> artifacts
         DEVBOX -> devbox
@@ -498,7 +579,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             tab == BROWSER -> surface.requestFocus()
             else -> {
                 surface.clearFocus()
-                sectionWeb().requestFocus()
+                sectionView().requestFocus()
             }
         }
     }
@@ -653,9 +734,13 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private fun reload() {
         val v = viewer
         when {
-            v != null -> v.reload()
+            v is WebView -> v.reload()
+            v != null -> viewerTarget?.let { showViewer(it, viewerHint) }
             tab == BROWSER -> send(BrowserService.MSG_RELOAD)
-            else -> sectionWeb().reload()
+            tab == FILES -> filesModel.refresh(pull = true)
+            tab == ARTIFACTS -> artifactsModel.refresh(pull = true)
+            tab == DEVBOX -> devboxModel.shown(true)
+            else -> (sectionView() as? WebView)?.reload()
         }
     }
 
@@ -722,6 +807,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 surface.clearFocus()
                 menu?.dismiss()
             }
+            devboxModel.shown(open && tab == DEVBOX) // its metrics poll only while it's in view
         }
     }
 

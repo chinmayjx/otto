@@ -148,7 +148,7 @@ object AppWeb {
      * scoped storage (and says nothing), so the app fetches the file and writes it through MediaStore, which needs
      * no permission and renames duplicates itself.
      */
-    private fun download(ctx: Context, url: String, name: String?) {
+    fun download(ctx: Context, url: String, name: String?) {
         val u = Uri.parse(url)
         if (!Links.isArtifactHost(ctx, u) && !Links.isHub(ctx, u)) return
         val file = name?.takeIf { it.isNotEmpty() } ?: u.lastPathSegment ?: "download"
