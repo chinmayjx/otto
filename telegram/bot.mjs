@@ -2,8 +2,8 @@
 // Otto on Telegram (proof of concept): a Telegram bot that is one long-running Claude Code conversation on the box.
 //
 // Each message goes to `claude -p --resume <session>` in the working folder; while Claude works, one status message
-// shows the tools it's running, and its answer replaces it. Only the owner can use it: the first person to send
-// `/start <code>` (the code is printed when the bot starts unowned) becomes the owner.
+// shows the tools it's running; the answer comes as a new message (so the phone notifies) and the status goes. Only
+// the owner can use it: the first person to send `/start <code>` (printed when the bot starts unowned) is the owner.
 //
 // Config and state: ~/.config/otto/telegram.json  { token, owner?, session?, cwd? }
 // Commands: /new (a fresh conversation), /stop (stop the running turn), /status.
@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { html } from './format.mjs';
 
 // The box has no IPv6 route, and Node's happy-eyeballs gives the IPv4 attempt only 250ms before moving on to IPv6,
 // which Telegram's API sometimes needs more than: IPv4 only.
@@ -27,7 +28,10 @@ const CLAUDE = process.env.CLAUDE_BIN || path.join(os.homedir(), '.local/bin/cla
 const LIMIT = 4000; // Telegram's message limit is 4096 characters
 const SYSTEM = [
   'You are talking with the user through a Telegram bot on their phone.',
-  'Keep replies short and easy to read on a phone: plain sentences, short lists, little formatting.',
+  'Keep replies short and easy to read on a phone: plain sentences, short lists.',
+  'Your Markdown is shown with Telegram formatting: **bold**, *italic*, __underline__, ~~strike~~, ||spoiler||,',
+  '`code`, ```lang code blocks```, > quotes (first line `> [!expand]` makes one fold up; `> [!NOTE]`, `[!TIP]`,',
+  '`[!WARNING]` give it a title), bullets, `- [ ]` tasks, and small tables (shown monospace). Headings show as bold lines.',
   'For anything long or visual (a report, a table, a plan, a page), publish an artifact with `otto artifact publish`',
   'and reply with a short summary and its link.',
 ].join(' ');
@@ -50,23 +54,6 @@ async function call(method, body) {
   return j.result;
 }
 
-// --- Markdown to Telegram's HTML (the small part of it Claude uses) ------------------------------------------------
-
-const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-function html(md) {
-  const blocks = [];
-  let s = md.replace(/```[^\n]*\n([\s\S]*?)```/g, (_, code) => `\u0000${blocks.push(`<pre>${esc(code.trimEnd())}</pre>`) - 1}\u0000`);
-  s = esc(s)
-    .replace(/`([^`\n]+)`/g, (_, c) => `<code>${c}</code>`)
-    .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
-    // Links written out, not behind their text: Telegram asks before opening a hidden link, but opens a bare one.
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, t, u) => (t === u ? u : `${t}\n${u}`))
-    .replace(/^#{1,6} +(.+)$/gm, '<b>$1</b>')
-    .replace(/^(\s*)[-*] +/gm, '$1• ');
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
-}
-
 // Long text in parts, split at paragraph breaks where possible.
 function parts(text) {
   const out = [];
@@ -82,20 +69,17 @@ function parts(text) {
   return out;
 }
 
-async function send(chat, text, edit) {
-  const all = parts(text || '(no reply)');
-  for (let i = 0; i < all.length; i++) {
-    const body = { chat_id: chat, text: html(all[i]), parse_mode: 'HTML', link_preview_options: { is_disabled: true } };
-    const plain = { chat_id: chat, text: all[i], link_preview_options: { is_disabled: true } };
-    const target = i === 0 && edit ? { ...body, message_id: edit } : body;
-    try {
-      await call(i === 0 && edit ? 'editMessageText' : 'sendMessage', target);
-    } catch {
+// The answer goes out as new messages, not as an edit of the status message: Telegram notifies about a new message
+// but not an edit, so the phone pings when the turn is done. The status message is deleted after.
+async function send(chat, text, status) {
+  for (const part of parts(text || '(no reply)')) {
+    const opts = { chat_id: chat, link_preview_options: { is_disabled: true } };
+    await call('sendMessage', { ...opts, text: html(part), parse_mode: 'HTML' })
       // Telegram rejects HTML it can't parse: send that part as plain text.
-      await call(i === 0 && edit ? 'editMessageText' : 'sendMessage', i === 0 && edit ? { ...plain, message_id: edit } : plain)
-        .catch(e => console.error(e.message));
-    }
+      .catch(e => { console.error('html', e.message); return call('sendMessage', { ...opts, text: part }); })
+      .catch(e => console.error(e.message));
   }
+  if (status) await call('deleteMessage', { chat_id: chat, message_id: status }).catch(() => {});
 }
 
 // --- One turn of Claude ----------------------------------------------------------------------------------------------
