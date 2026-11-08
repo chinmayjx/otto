@@ -51,6 +51,9 @@ Your session comes from OTTO_SESSION (set by your agent's adapter).`;
 
 interface Args { _: string[]; [k: string]: any }
 
+/** What agents used to Playwright's tools tend to type. */
+const ALIASES: Record<string, string> = { navigate: 'open', goto: 'open', go: 'open', fill: 'type', key: 'press', press_key: 'press', shot: 'screenshot', take_screenshot: 'screenshot', evaluate: 'eval', tab: 'tabs', navigate_back: 'back' };
+
 const BOOLEAN = new Set(['new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json']);
 
 function parseArgs(argv: string[]): Args {
@@ -72,7 +75,7 @@ const selector = (a: Args) => ({ text: a.text, id: a.id, desc: a.desc, index: nu
 
 async function main(argv: string[]) {
   const config = loadConfig();
-  const [group, cmd, ...rest] = argv;
+  let [group, cmd, ...rest] = argv;
   const a = parseArgs(rest);
   const out = (s: string) => process.stdout.write(s.endsWith('\n') ? s : s + '\n');
 
@@ -82,6 +85,7 @@ async function main(argv: string[]) {
 
     case 'browser': {
       const s = session(config);
+      cmd = ALIASES[cmd] ?? cmd;
       const run = (c: string, args: Record<string, unknown> = {}) => browser(config, s, c, args);
       switch (cmd) {
         case 'open': return out(await (await run('open', { url: need(a._[0], 'a URL'), new: a.new })).text());
