@@ -77,7 +77,7 @@ data class Pairing(
 
         /** A pairing link, or why it isn't one. */
         fun parse(uri: Uri): Result<Pairing> = runCatching {
-            require(uri.scheme == "otto" && uri.host == "pair") { "not a pairing link" }
+            require(uri.scheme == BuildConfig.PAIR_SCHEME && uri.host == "pair") { "not a pairing link" }
             fun opt(k: String) = uri.getQueryParameter(k)?.trim()?.takeIf { it.isNotEmpty() }
             fun need(vararg k: String) = k.firstNotNullOfOrNull { opt(it) }
                 ?: throw IllegalArgumentException("the link has no ${k[0]}")

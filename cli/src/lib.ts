@@ -47,6 +47,8 @@ export interface Pairing {
   artifacts: string;
   publicArtifacts?: string;
   panel?: string;
+  /** otto, or otto-dev for the dev app ([box] pair_scheme). */
+  scheme?: string;
 }
 
 export function pairing(box?: string): Pairing {
@@ -75,6 +77,7 @@ export function pairing(box?: string): Pairing {
     artifacts: need(phone.artifacts_url, '[phone] artifacts_url'),
     publicArtifacts: phone.public_artifacts_url || undefined,
     panel: phone.panel_url || undefined,
+    scheme: t.box?.pair_scheme || 'otto',
   };
 }
 
@@ -90,7 +93,7 @@ export function pairingLink(p: Pairing): string {
   });
   if (p.publicArtifacts) q.set('public_artifacts', p.publicArtifacts);
   if (p.panel) q.set('panel', p.panel);
-  return `otto://pair?${q}`;
+  return `${p.scheme ?? 'otto'}://pair?${q}`;
 }
 
 /** This machine's Tailscale IPv4 address (100.64.0.0/10), if it has one. */

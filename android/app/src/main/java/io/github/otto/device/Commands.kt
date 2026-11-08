@@ -269,7 +269,12 @@ class Commands(private val ctx: Context) {
     private fun launch(a: JSONObject): String {
         val pkg = if (a.has("package") && !a.isNull("package")) a.getString("package") else null
         val i: Intent = when {
-            a.has("url") -> Intent(Intent.ACTION_VIEW, Uri.parse(a.getString("url"))).also { if (pkg != null) it.setPackage(pkg) }
+            // With an activity too, straight to that screen: a link into an app that doesn't claim it (the dev build).
+            a.has("url") -> Intent(Intent.ACTION_VIEW, Uri.parse(a.getString("url"))).also {
+                val act = a.optString("activity").takeIf { s -> s.isNotEmpty() }
+                if (pkg != null && act != null) it.setComponent(ComponentName(pkg, if (act.startsWith(".")) pkg + act else act))
+                else if (pkg != null) it.setPackage(pkg)
+            }
             a.has("activity") -> {
                 val act = a.getString("activity")
                 Intent(Intent.ACTION_MAIN).setComponent(ComponentName(pkg!!, if (act.startsWith(".")) pkg + act else act))

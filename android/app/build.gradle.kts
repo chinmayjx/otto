@@ -30,6 +30,8 @@ android {
         versionName = (findProperty("versionName") ?: "0.1").toString()
         buildConfigField("String", "EXTRA_LINK_HOSTS", "\"${extraLinkHosts.joinToString(",")}\"")
         manifestPlaceholders["appLabel"] = "Otto"
+        manifestPlaceholders["pairScheme"] = "otto"
+        buildConfigField("String", "PAIR_SCHEME", "\"otto\"")
     }
     buildFeatures {
         buildConfig = true
@@ -53,6 +55,9 @@ android {
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
             manifestPlaceholders["appLabel"] = "Otto Dev"
+            // Its own links, so the stable app keeps "always open with": otto-dev://pair, and https links under /dev/.
+            manifestPlaceholders["pairScheme"] = "otto-dev"
+            buildConfigField("String", "PAIR_SCHEME", "\"otto-dev\"")
         }
         release {
             signingConfig = signingConfigs.getByName(if (System.getenv("OTTO_KEYSTORE") != null) "release" else "debug")

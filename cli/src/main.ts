@@ -28,7 +28,7 @@ Phone:
   otto phone type <text> [--replace]       into the focused field
   otto phone key back|home|recents|enter|notifications|quicksettings|dismiss|power|lock|splitscreen
   otto phone wait --text T | --id I | --desc D [--gone] [--timeout MS]
-  otto phone launch <package> [--activity A] | --url U
+  otto phone launch <package> [--activity A] [--url U] | --url U   (package + activity + url: that screen, with the link)
   otto phone current                       the app in front
   otto phone info                          model, Android, screen, battery, permissions
   otto phone packages [--filter F] [--third-party] [--labels]
