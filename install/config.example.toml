@@ -1,0 +1,15 @@
+# ~/.config/otto/config.toml on the box. Everything Otto needs to find its parts.
+# The box and the hub may be the same machine; give the same URL for both then.
+
+[box]
+url = "https://my-box.tailnet-name.ts.net"   # the box's Tailscale name (tailscale serve publishes its services here)
+
+[hub]
+url = "https://my-hub.tailnet-name.ts.net"   # the always-on machine: artifact hub, box start/stop
+
+[relay]
+phone_port = 9401        # the phone's tunnel connects here, on the box's tailnet address
+local_port = 9334        # the CLI and the eyes MCP server talk to the relay here, on 127.0.0.1
+
+[phone]
+token_file = "~/.config/otto/phone-token"   # written at pairing; the phone presents it when it dials in
