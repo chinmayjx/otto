@@ -29,6 +29,7 @@ android {
         versionCode = (findProperty("versionCode") ?: "1").toString().toInt()
         versionName = (findProperty("versionName") ?: "0.1").toString()
         buildConfigField("String", "EXTRA_LINK_HOSTS", "\"${extraLinkHosts.joinToString(",")}\"")
+        manifestPlaceholders["appLabel"] = "Otto"
     }
     buildFeatures {
         buildConfig = true
@@ -46,6 +47,13 @@ android {
         }
     }
     buildTypes {
+        // The dev build: "Otto Dev", its own package beside the stable app, unshrunk (quick to build), with its
+        // own icon and a lavender handle (src/debug). It pairs with a box's dev relay (otto pair, OTTO_CONFIG).
+        debug {
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev"
+            manifestPlaceholders["appLabel"] = "Otto Dev"
+        }
         release {
             signingConfig = signingConfigs.getByName(if (System.getenv("OTTO_KEYSTORE") != null) "release" else "debug")
             // R8: Compose, Media3 and the rest come to a third of their size shrunk.

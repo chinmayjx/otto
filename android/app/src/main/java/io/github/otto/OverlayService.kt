@@ -290,7 +290,8 @@ class OverlayService : Service(), Screen.Host {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
-        private val STEEL = android.graphics.Color.parseColor("#aeb4bc")
+        // The dev build's handle is lavender, to tell it from the stable app's when both are on.
+        private val STEEL = android.graphics.Color.parseColor(if (BuildConfig.DEBUG) "#ab9cf2" else "#aeb4bc")
         const val ACTION_START = "start" // the handle, the screen closed
         const val ACTION_SHOW = "show" // the screen, where it was left
         const val ACTION_OPEN = "open" // extra "url": a link from another app (LinkActivity)
