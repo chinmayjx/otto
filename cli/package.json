@@ -1,0 +1,19 @@
+{
+  "name": "@otto/cli",
+  "private": true,
+  "type": "module",
+  "description": "otto: the one command agents, people and scripts use for the phone, its browser, the desktop and artifacts",
+  "bin": { "otto": "dist/main.js" },
+  "exports": { ".": "./dist/lib.js" },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "npm run build && node --test dist/test/*.test.js"
+  },
+  "dependencies": {
+    "smol-toml": "^1.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

@@ -121,3 +121,64 @@ test('device commands: JSON results and bytes', async () => {
   assert.match(await bad.text(), /unknown command/);
   d.destroy();
 });
+
+test('browser commands: open, snapshot refs, click, type, tabs, screenshot', async () => {
+  const run = async (cmd: string, args: any = {}) => {
+    const r = await post(`/browser/gamma/${cmd}?title=Gamma`, args);
+    assert.equal(r.status, 200, `${cmd}: ${r.status} ${r.status !== 200 ? await r.clone().text() : ''}`);
+    return r;
+  };
+  const html = '<title>Form</title><input aria-label="Name"><button onclick="document.title=document.querySelector(\'input\').value">Go</button>';
+  assert.match(await (await run('open', { url: 'data:text/html,' + encodeURIComponent(html) })).text(), /"Form"/);
+  const snap = await (await run('snapshot')).text();
+  const name = snap.match(/textbox "Name" \[ref=(e\d+)\]/)?.[1];
+  const go = snap.match(/button "Go" \[ref=(e\d+)\]/)?.[1];
+  assert.ok(name && go, snap);
+  await run('type', { ref: name, text: 'Otto' });
+  assert.match(await (await run('click', { ref: go })).text(), /"Otto"/);
+  assert.match(await (await run('eval', { js: 'document.title' })).text(), /^Otto/);
+  await run('open', { url: 'data:text/html,<title>Second</title>', new: true });
+  const tabs = await (await run('tabs')).text();
+  assert.match(tabs, /\* 1 {2}Second/);
+  assert.match(tabs, /0 {2}Otto/);
+  const png = Buffer.from(await (await run('screenshot')).arrayBuffer());
+  assert.equal(png.subarray(1, 4).toString(), 'PNG');
+  const s = await (await fetch(api + '/status')).json();
+  assert.equal(s.sessions.gamma.title, 'Gamma');
+});
+
+test('the otto CLI, against this relay', async () => {
+  const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../../cli/dist/main.js');
+  const shots = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-shots-'));
+  const otto = (...args: string[]) => new Promise<{ code: number; out: string; err: string }>(resolve => {
+    const p = spawn(process.execPath, [cli, ...args], { env: { ...process.env, OTTO_CONFIG: path.join(dir, 'config.toml'), OTTO_SESSION: 'delta', OTTO_SESSION_TITLE: 'Delta task', OTTO_SHOTS: shots } });
+    let out = '', err = '';
+    p.stdout.on('data', d => out += d);
+    p.stderr.on('data', d => err += d);
+    p.on('close', code => resolve({ code: code ?? 1, out, err }));
+  });
+  let r = await otto('browser', 'open', 'data:text/html,<title>CLI</title><a href="/x">Link here</a>');
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /"CLI"/);
+  r = await otto('browser', 'snapshot');
+  assert.match(r.out, /link "Link here" \[ref=e\d+\]/);
+  r = await otto('browser', 'screenshot');
+  assert.ok(fs.existsSync(r.out.trim()), r.out + r.err);
+  r = await otto('status');
+  assert.match(r.out, /session: delta \(group tg\d+, "Delta task"\)/);
+  const d = await fakeDevice('127.0.0.1', ports.device, 'device-secret');
+  await new Promise(res => setTimeout(res, 100));
+  r = await otto('phone', 'current');
+  assert.match(r.out, /me\.test\.app/);
+  r = await otto('phone', 'screenshot');
+  const [file, size] = r.out.trim().split('\n');
+  assert.equal(fs.readFileSync(file).toString(), 'PNGBYTES');
+  assert.equal(size, '2x1');
+  d.destroy();
+  r = await otto('show', 'https://example.com/cli');
+  assert.equal(r.code, 0, r.err);
+  r = await otto('phone', 'tap');
+  assert.notEqual(r.code, 0);
+  r = await otto('frobnicate');
+  assert.match(r.err, /unknown command/);
+});

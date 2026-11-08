@@ -6,18 +6,22 @@
 //   POST /close?session=<id>              close a session's tabs and forget its group
 //   GET  /s/<id>/json/version|list        a session's DevTools endpoint (Playwright: connectOverCDP(".../s/<id>"))
 //   WS   /s/<id>/browser
+//   POST /browser/<id>/<cmd>?title=<t>    a browser command for a session (driver.ts); JSON args in the body;
+//                                         replies text, or a PNG
 //   POST /phone/<cmd>                     a device command; JSON args in the body (install: the APK, ?name=)
 //                                         replies JSON {result}, or the bytes with the result in X-Otto-Result
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { Browser, NO_PHONE } from './browser.js';
 import { Device, NO_DEVICE } from './device.js';
+import { Driver } from './driver.js';
 import type { Sessions } from './sessions.js';
 
 const SESSION = '[\\w.:@-]{1,200}';
 
 export function serve(port: number, browser: Browser, device: Device, sessions: Sessions, log = console.log) {
   const titles = new Map<string, string>(); // titles named before a session's first tab
+  const driver = new Driver(id => `http://127.0.0.1:${port}/s/${encodeURIComponent(id)}`);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 30 });
 
   const server = http.createServer(async (req, res) => {
@@ -52,6 +56,20 @@ export function serve(port: number, browser: Browser, device: Device, sessions: 
           return send(200, { Browser: 'Chrome (phone)', 'Protocol-Version': '1.3', webSocketDebuggerUrl: `ws://127.0.0.1:${port}/s/${m[1]}/browser` });
         }
         return send(200, browser.targets(decodeURIComponent(m[1])).map(id => ({ id, type: 'page' })));
+      }
+      m = u.pathname.match(new RegExp(`^/browser/(${SESSION})/(\\w+)$`));
+      if (m && req.method === 'POST') {
+        if (!browser.phone()) return send(503, NO_PHONE);
+        const id = decodeURIComponent(m[1]);
+        if (u.searchParams.get('title') && !sessions.get(id)) titles.set(id, u.searchParams.get('title')!);
+        const raw = await body(req);
+        try {
+          const r = await driver.run(id, m[2], raw.length ? JSON.parse(raw.toString('utf8')) : {});
+          if (r.image) { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(r.image); }
+          return send(200, r.text ?? 'ok');
+        } catch (e: any) {
+          return send(502, e.message.split('\n')[0]);
+        }
       }
       m = u.pathname.match(/^\/phone\/(\w+)$/);
       if (m && req.method === 'POST') return await phone(m[1], u, req, res, device);
