@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Capture: a selection's corners, for taking a part of the page into the collector. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp" android:height="20dp" android:viewportWidth="20" android:viewportHeight="20">
+    <path android:pathData="M3,7 V3 H7 M13,3 H17 V7 M17,13 V17 H13 M7,17 H3 V13" android:strokeColor="#ffffff"
+        android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+    <path android:pathData="M10,7.2 V12.8 M7.2,10 H12.8" android:strokeColor="#ffffff" android:strokeWidth="1.6"
+        android:strokeLineCap="round" android:fillColor="#00000000" />
+</vector>

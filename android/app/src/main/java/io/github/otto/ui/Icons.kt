@@ -42,5 +42,7 @@ object Ic {
     val power = icon("power", "M12 3v9", "M6.3 6.8a8 8 0 1 0 11.4 0")
     val refresh = icon("refresh", "M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5")
     val chevron = icon("chevron", "m9 6 6 6-6 6")
+    val clipboard = icon("clipboard", "M9 4.5H7a2 2 0 0 0-2 2V19a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6.5a2 2 0 0 0-2-2h-2",
+        rect(9f, 3f, 6f, 3f, 1f), "M9 11h6M9 15h4")
     val wrap = icon("wrap", "M4 6h16M4 12h13a3 3 0 0 1 0 6h-4m2-2-2 2 2 2M4 18h5")
 }

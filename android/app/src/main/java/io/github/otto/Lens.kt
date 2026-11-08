@@ -2,9 +2,6 @@ package io.github.otto
 
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
-import android.content.ClipData
-import android.content.ClipDescription
-import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -15,13 +12,8 @@ import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.text.InputType
-import android.util.TypedValue
 import android.view.Choreographer
 import android.view.ContextThemeWrapper
 import android.view.Gravity
@@ -32,21 +24,10 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.HorizontalScrollView
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
-import androidx.core.content.FileProvider
 import io.github.otto.device.AgentAccessibility
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import org.json.JSONObject
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 import kotlin.math.abs
@@ -56,35 +37,33 @@ import kotlin.math.roundToInt
 
 /**
  * The lens: a long press on the handle freezes the screen (a screenshot through the accessibility service) in an
- * overlay of its own, where parts of it are selected with a finger and copied or shared, with a note.
+ * overlay of its own, where parts of it are selected with a finger and sent to the box as a clip (Clips), with a
+ * note, for an agent to read with `otto clip <id>`.
  *
  * Drag on the image for a selection; drag its corners or edges to adjust it, inside it to move it. Each one is a chip
- * in the bottom bar, whose × removes it. Copy puts one image on the clipboard (the selections one under another, or
- * the whole screen when there are none) and the note as a second item; Share hands each selection to another app as
- * a PNG of its own, the note as the text. The images go through the app's FileProvider, from cache/lens/, and are
- * cleared out after a day.
+ * in the collector (Collector), floating over the image, whose grip drags it up and down so what's under it can be
+ * selected too. Copy sends the selections (or the whole screen when there are none) and the text, then puts a
+ * reference to the clip on the clipboard. Until a Copy goes through, what was collected is a draft (Drafts, "lens"):
+ * closing the lens with Back or Home keeps it, and the next lens starts with its text and images.
  *
- * An overlay window rather than an app screen, so it's up the moment the screenshot is: a focusable one, so the note
- * takes the keyboard and Back comes here. It lays itself out under the system bars and keeps the bar clear of them
- * and of the keyboard itself (the image never moves).
+ * An overlay window rather than an app screen, so it's up the moment the screenshot is: a focusable one, so the text
+ * takes the keyboard and Back comes here. It lays itself out under the system bars and keeps the collector clear of
+ * them and of the keyboard (the image never moves).
  */
-class Lens private constructor(base: Context, private val shot: Bitmap, private val done: () -> Unit) {
+class Lens private constructor(base: Context, private val shot: Bitmap, private val app: String?, private val done: () -> Unit) {
     private val ctx = ContextThemeWrapper(base, android.R.style.Theme_DeviceDefault)
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private val main = Handler(Looper.getMainLooper())
     private val sels = mutableListOf<RectF>() // in the screenshot's pixels, which are the screen's
     private var active = -1
+    private var stills = mutableListOf<Bitmap>() // the draft's images, from an earlier lens
     private val root = Root(ctx)
     private val image = Frozen(ctx)
-    private val bar = LinearLayout(ctx)
-    private val chips = LinearLayout(ctx)
-    private val chipScroll = HorizontalScrollView(ctx)
-    private val hint = TextView(ctx)
-    private val note = EditText(ctx)
-    private val share: TextView
-    private val copy: TextView
-    private val close = ImageView(ctx)
-    private var busy = false
+    private val collector = Collector(ctx, docked = false)
+    private var lift = 0f // how far the collector is dragged up from the bottom
+    private var liftAtDown = 0f
+    private var topInset = 0
+    private var sent = false
     private var gone = false
 
     /** Home or Recents: the lens goes, as an app would. */
@@ -98,88 +77,48 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
     init {
         root.setBackgroundColor(Color.BLACK)
         root.addView(image, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-
-        close.setImageResource(R.drawable.ccm_close)
-        close.setColorFilter(STEEL)
-        close.scaleType = ImageView.ScaleType.CENTER
-        close.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(0xcc000000.toInt())
-            setStroke(max(1, dp(1)), BrowserService.LINE)
+        collector.onCopy = { copy() }
+        collector.onRemove = { i -> remove(i) }
+        collector.onTapPiece = { i ->
+            if (i >= stills.size) {
+                active = i - stills.size
+                chipsChanged()
+            }
         }
-        close.contentDescription = "Close the lens"
-        close.setOnClickListener { dismiss() }
-        root.addView(close, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.START))
-
-        // The bottom bar: the selections' chips (or a hint), then the note and the two buttons.
-        bar.orientation = LinearLayout.VERTICAL
-        bar.background = GradientDrawable().apply { setColor(BrowserService.BG) }
-        bar.isClickable = true // nothing falls through to the image
-        val hairline = View(ctx)
-        hairline.setBackgroundColor(HAIRLINE)
-        bar.addView(hairline, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, max(1, dp(1) / 2 + 1)))
-
-        val top = FrameLayout(ctx)
-        hint.text = "Drag to select. Nothing selected sends the whole screen."
-        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-        hint.setTextColor(BrowserService.MUTED)
-        hint.gravity = Gravity.CENTER_VERTICAL
-        hint.isSingleLine = true
-        hint.ellipsize = android.text.TextUtils.TruncateAt.END
-        top.addView(hint, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        chips.orientation = LinearLayout.HORIZONTAL
-        chips.gravity = Gravity.CENTER_VERTICAL
-        chipScroll.isHorizontalScrollBarEnabled = false
-        chipScroll.addView(chips, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        top.addView(chipScroll, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        bar.addView(top, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(CHIP_ROW)).apply {
-            topMargin = dp(6)
-            leftMargin = dp(12)
-            rightMargin = dp(12)
-        })
-
-        val row = LinearLayout(ctx)
-        row.gravity = Gravity.CENTER_VERTICAL
-        note.hint = "Add a note"
-        note.setHintTextColor(BrowserService.MUTED)
-        note.setTextColor(BrowserService.TEXT)
-        note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
-        note.isSingleLine = true
-        note.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-        note.imeOptions = EditorInfo.IME_ACTION_DONE or EditorInfo.IME_FLAG_NO_FULLSCREEN
-        note.setPadding(dp(12), 0, dp(12), 0)
-        note.background = field(BrowserService.FIELD, BrowserService.LINE)
-        note.setOnEditorActionListener { _, action, _ ->
-            if (action == EditorInfo.IME_ACTION_DONE) hideKeyboard()
-            action == EditorInfo.IME_ACTION_DONE
+        collector.onDrag = { dy ->
+            if (dy == null) liftAtDown = lift
+            else {
+                lift = (liftAtDown - dy).coerceIn(0f, maxLift())
+                collector.translationY = -lift
+            }
         }
-        row.addView(note, LinearLayout.LayoutParams(0, dp(44), 1f))
-        share = button("Share", BrowserService.TEXT, field(BrowserService.FIELD, BrowserService.LINE))
-        share.setOnClickListener { share() }
-        row.addView(share, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginStart = dp(8) })
-        copy = button("Copy", Color.WHITE, field(BrowserService.ACCENT, BrowserService.ACCENT))
-        copy.setOnClickListener { copy() }
-        row.addView(copy, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginStart = dp(8) })
-        bar.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(6)
-            leftMargin = dp(12)
-            rightMargin = dp(12)
-            bottomMargin = dp(10)
-        })
-        root.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        root.addView(collector, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        // Dragged up, it stays where it was put as it grows or the keyboard comes, but never past the top.
+        collector.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (lift > maxLift()) {
+                lift = maxLift()
+                liftAtDown = lift
+                collector.translationY = -lift
+            }
+        }
 
-        // Laid out under the system bars and the keyboard: the image stays put, the bar and × keep clear of them.
+        // Laid out under the system bars and the keyboard: the image stays put, the collector keeps clear of them.
         root.setOnApplyWindowInsetsListener { _, insets ->
             val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
             val ime = insets.getInsets(WindowInsets.Type.ime())
-            bar.setPadding(b.left, 0, b.right, max(b.bottom, ime.bottom))
-            (close.layoutParams as FrameLayout.LayoutParams).apply {
-                topMargin = b.top + dp(10)
-                leftMargin = b.left + dp(12)
-            }
-            close.requestLayout()
+            collector.setPadding(b.left, 0, b.right, max(b.bottom, ime.bottom))
+            topInset = b.top
             WindowInsets.CONSUMED
         }
+        chipsChanged()
+    }
+
+    private fun maxLift() = max(0f, (root.height - topInset - collector.height).toFloat())
+
+    /** The draft from the last lens that wasn't sent: its text and images. */
+    private fun restore(d: Drafts.Draft) {
+        stills = d.images.toMutableList()
+        collector.text = d.text
         chipsChanged()
     }
 
@@ -200,7 +139,7 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         current = this
     }
 
-    /** Out, without doing anything. */
+    /** Out (Back, Home, or after a Copy); what wasn't sent stays as the draft. */
     fun dismiss() {
         if (gone) return
         gone = true
@@ -209,196 +148,100 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
             ctx.unregisterReceiver(systemDialogs)
         } catch (_: Exception) {
         }
-        hideKeyboard()
+        collector.hideKeyboard()
+        if (!sent) {
+            val text = collector.text
+            val images = stills + regions(whole = false).map { crop(it) }
+            val app = ctx.applicationContext
+            io.execute { Drafts.save(app, DRAFT, text, images) }
+        }
         if (root.isAttachedToWindow) wm.removeViewImmediate(root)
         done()
     }
 
-    private fun hideKeyboard() {
-        ctx.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(root.windowToken, 0)
-        note.clearFocus()
-    }
+    // --- Copy ------------------------------------------------------------------------------------------------------
 
-    // --- Copy and Share ----------------------------------------------------------------------------------------
-
-    /** The selections' pixels, or the whole screen when there are none. */
-    private fun regions(): List<Rect> {
+    /** The selections' pixels; with none (and no images from the draft), the whole screen if [whole]. */
+    private fun regions(whole: Boolean): List<Rect> {
         val all = Rect(0, 0, shot.width, shot.height)
         val r = sels.map { s ->
             Rect(s.left.roundToInt(), s.top.roundToInt(), s.right.roundToInt(), s.bottom.roundToInt()).apply { intersect(all) }
         }.filter { it.width() > 0 && it.height() > 0 }
-        return r.ifEmpty { listOf(all) }
+        return if (whole && r.isEmpty() && stills.isEmpty()) listOf(all) else r
     }
 
     private fun copy() {
-        if (busy) return
-        busy = true
-        hideKeyboard()
-        val parts = regions()
-        val text = note.text.toString().trim()
-        copy.text = "…"
+        collector.sending()
+        val parts = regions(whole = true)
+        val text = collector.text.trim()
+        val source = JSONObject().put("kind", "screen")
+        if (app != null) {
+            source.put("app", app)
+            label(app)?.let { source.put("label", it) }
+        }
+        val before = stills.toList()
         io.execute {
             try {
-                val img = if (parts.size == 1) crop(parts[0]) else stack(parts)
-                val uri = save(img, stamp())
+                val id = Clips.upload(text, before + parts.map { crop(it) }, source)
+                Drafts.clear(ctx, DRAFT)
                 main.post {
-                    val types = if (text.isEmpty()) arrayOf("image/png") else arrayOf("image/png", ClipDescription.MIMETYPE_TEXT_PLAIN)
-                    val clip = ClipData(ClipDescription("Otto lens", types), ClipData.Item(uri))
-                    if (text.isNotEmpty()) clip.addItem(ClipData.Item(text))
-                    ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(clip)
-                    copy.text = "Copied"
+                    sent = true
+                    Clips.copyReference(ctx, id)
+                    collector.sent()
+                    Toast.makeText(ctx, "Copied clip $id", Toast.LENGTH_SHORT).show()
                     main.postDelayed({ dismiss() }, 550)
                 }
             } catch (e: Exception) {
-                main.post { failed("copy", e) }
+                android.util.Log.w("Lens", "copy: $e")
+                main.post { collector.failed(e.message ?: e.toString()) }
             }
         }
     }
 
-    private fun share() {
-        if (busy) return
-        busy = true
-        hideKeyboard()
-        val parts = regions()
-        val text = note.text.toString().trim()
-        share.text = "…"
-        io.execute {
-            try {
-                val base = stamp()
-                val uris = parts.mapIndexed { i, r -> save(crop(r), if (parts.size == 1) base else "$base-${i + 1}") }
-                main.post {
-                    val send = if (uris.size == 1) Intent(Intent.ACTION_SEND).putExtra(Intent.EXTRA_STREAM, uris[0])
-                    else Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
-                    send.type = "image/png"
-                    if (text.isNotEmpty()) send.putExtra(Intent.EXTRA_TEXT, text)
-                    // The ClipData carries the grant to whichever app is picked (and the chooser's previews).
-                    val clip = ClipData(ClipDescription("Otto lens", arrayOf("image/png")), ClipData.Item(uris[0]))
-                    for (u in uris.drop(1)) clip.addItem(ClipData.Item(u))
-                    send.clipData = clip
-                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    try {
-                        ctx.startActivity(Intent.createChooser(send, null)
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
-                        dismiss()
-                    } catch (e: Exception) {
-                        failed("share", e)
-                    }
-                }
-            } catch (e: Exception) {
-                main.post { failed("share", e) }
-            }
-        }
-    }
-
-    private fun failed(what: String, e: Exception) {
-        android.util.Log.w("Lens", "$what: $e")
-        Toast.makeText(ctx, "Couldn't $what: ${e.message ?: e}", Toast.LENGTH_LONG).show()
-        busy = false
-        copy.text = "Copy"
-        share.text = "Share"
+    private fun label(pkg: String): String? = try {
+        val pm = ctx.packageManager
+        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
+    } catch (_: Exception) {
+        null
     }
 
     private fun crop(r: Rect): Bitmap =
         if (r.left == 0 && r.top == 0 && r.width() == shot.width && r.height() == shot.height) shot
         else Bitmap.createBitmap(shot, r.left, r.top, r.width(), r.height())
 
-    /** The selections one under another, each centred, with a small black gap between. */
-    private fun stack(parts: List<Rect>): Bitmap {
-        val gap = max(8, dp(6))
-        val w = parts.maxOf { it.width() }
-        val h = parts.sumOf { it.height() } + gap * (parts.size - 1)
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
-        c.drawColor(Color.BLACK)
-        var y = 0
-        for (r in parts) {
-            val x = (w - r.width()) / 2
-            c.drawBitmap(shot, r, Rect(x, y, x + r.width(), y + r.height()), null)
-            y += r.height() + gap
-        }
-        return out
-    }
-
-    private fun save(b: Bitmap, name: String): Uri {
-        val f = File(dir(ctx), "otto-lens-$name.png")
-        f.outputStream().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        return FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
-    }
-
-    private fun stamp() = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(Date())
-
     // --- Selections ----------------------------------------------------------------------------------------------
 
-    /** Selections came or went, or another became the active one: the chips again. */
+    /** Selections came or went, or another became the active one: the chips again (the draft's first). */
     private fun chipsChanged() {
-        chips.removeAllViews()
-        for (i in sels.indices) chips.addView(chip(i))
-        hint.visibility = if (sels.isEmpty()) View.VISIBLE else View.GONE
-        chipScroll.visibility = if (sels.isEmpty()) View.GONE else View.VISIBLE
-        if (active >= 0) chipScroll.post { // the active one's chip into view
-            chips.getChildAt(active)?.let { chipScroll.requestChildRectangleOnScreen(chips, Rect(it.left, 0, it.right, it.height), false) }
-        }
+        val pieces = stills.map { Collector.Still(it) } + sels.indices.map { Live(it) }
+        collector.piecesChanged(pieces, if (active >= 0) stills.size + active else -1)
         image.invalidate()
     }
 
     private fun remove(i: Int) {
-        sels.removeAt(i)
-        if (active == i) active = -1 else if (active > i) active--
+        if (i < stills.size) stills.removeAt(i)
+        else {
+            val j = i - stills.size
+            sels.removeAt(j)
+            if (active == j) active = -1 else if (active > j) active--
+        }
         chipsChanged()
     }
 
-    /** A selection's chip: its thumbnail, drawn live from the screenshot, and an × that removes it. */
-    private fun chip(i: Int): View {
-        val s = sels[i]
-        val h = dp(CHIP_ROW - 14)
-        val w = (h * s.width() / max(1f, s.height())).roundToInt().coerceIn(dp(28), dp(96))
-        val f = FrameLayout(ctx)
-        val thumb = Thumb(ctx, i)
-        thumb.contentDescription = "Selection ${i + 1}"
-        thumb.setOnClickListener {
-            active = i
-            chipsChanged()
-        }
-        f.addView(thumb, FrameLayout.LayoutParams(w, h, Gravity.BOTTOM or Gravity.START).apply { topMargin = dp(8); rightMargin = dp(8) })
-        val x = ImageView(ctx)
-        x.setImageResource(R.drawable.ccm_close)
-        x.setColorFilter(BrowserService.TEXT)
-        x.scaleType = ImageView.ScaleType.FIT_CENTER
-        x.setPadding(dp(4), dp(4), dp(4), dp(4))
-        x.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(BrowserService.FIELD)
-            setStroke(max(1, dp(1)), BrowserService.LINE)
-        }
-        x.contentDescription = "Remove selection ${i + 1}"
-        x.setOnClickListener { remove(i) }
-        f.addView(x, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.TOP or Gravity.END))
-        f.layoutParams = LinearLayout.LayoutParams(w + dp(8), ViewGroup.LayoutParams.MATCH_PARENT).apply { marginEnd = dp(6) }
-        return f
-    }
-
-    private inner class Thumb(c: Context, private val i: Int) : View(c) {
-        private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-        private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    /** A selection's chip, drawn live from the screenshot. */
+    private inner class Live(private val i: Int) : Collector.Piece {
         private val src = Rect()
-        private val dst = RectF()
-
-        override fun onDraw(c: Canvas) {
-            val s = sels.getOrNull(i) ?: return
+        private fun rect(): Rect? {
+            val s = sels.getOrNull(i) ?: return null
             s.round(src)
-            if (!src.intersect(0, 0, shot.width, shot.height)) return
-            // Fitted into the chip, centred: the selection may have changed shape since the chip was made.
-            val k = min(width / src.width().toFloat(), height / src.height().toFloat())
-            val w = src.width() * k
-            val h = src.height() * k
-            dst.set((width - w) / 2, (height - h) / 2, (width + w) / 2, (height + h) / 2)
-            c.drawColor(BrowserService.FIELD)
-            c.drawBitmap(shot, src, dst, paint)
-            val on = i == active
-            outline.color = if (on) BrowserService.ACCENT else BrowserService.LINE
-            outline.strokeWidth = if (on) dp(2).toFloat() else max(1, dp(1)).toFloat()
-            val half = outline.strokeWidth / 2
-            c.drawRect(half, half, width - half, height - half, outline)
+            return if (src.intersect(0, 0, shot.width, shot.height)) src else null
+        }
+
+        override val width get() = rect()?.width() ?: 0
+        override val height get() = rect()?.height() ?: 0
+        override val active get() = i == this@Lens.active
+        override fun draw(c: Canvas, dst: RectF, paint: Paint) {
+            rect()?.let { c.drawBitmap(shot, it, dst, paint) }
         }
     }
 
@@ -460,7 +303,7 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
             val y = e.rawY
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
-                    if (note.hasFocus()) hideKeyboard()
+                    if (collector.typing) collector.hideKeyboard()
                     downX = x
                     downY = y
                     mode = NONE
@@ -505,7 +348,7 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
                     }
                     if (mode != NONE && mode != PENDING) {
                         invalidate()
-                        chips.getChildAt(active)?.let { (it as ViewGroup).getChildAt(0).invalidate() }
+                        collector.redraw(stills.size + active)
                     }
                     return true
                 }
@@ -562,7 +405,7 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         override fun dispatchKeyEvent(e: KeyEvent): Boolean {
             if (e.keyCode == KeyEvent.KEYCODE_BACK) {
                 if (e.action != KeyEvent.ACTION_UP || e.isCanceled) return true
-                if (rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true) hideKeyboard() // the keyboard goes first
+                if (rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true) collector.hideKeyboard() // the keyboard goes first
                 else dismiss()
                 return true
             }
@@ -570,35 +413,13 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         }
     }
 
-    // --- Helpers -------------------------------------------------------------------------------------------------
-
-    private fun button(text: String, color: Int, bg: GradientDrawable) = TextView(ctx).apply {
-        this.text = text
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        setTextColor(color)
-        gravity = Gravity.CENTER
-        minWidth = dp(72)
-        setPadding(dp(14), 0, dp(14), 0)
-        background = bg
-        isClickable = true
-        isFocusable = false // a tap leaves the note's focus (and the keyboard) where it is until the button acts
-    }
-
-    private fun field(color: Int, stroke: Int) = GradientDrawable().apply {
-        setColor(color)
-        cornerRadius = dp(10).toFloat()
-        setStroke(max(1, dp(1)), stroke)
-    }
-
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
     private fun dp(v: Float) = v * ctx.resources.displayMetrics.density
 
     companion object {
-        private val STEEL = Color.parseColor("#aeb4bc")
-        private val HAIRLINE = Color.parseColor("#26262a")
+        private val STEEL = Color.parseColor("#aeb4bc") // the selections that aren't the active one
         private const val DIM = 0x66000000 // over what isn't selected
-        private const val CHIP_ROW = 58
+        private const val DRAFT = "lens"
         private const val NONE = 0
         private const val PENDING = 1 // down on nothing: a new selection once it moves
         private const val DRAW = 2
@@ -608,21 +429,18 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
         private const val TOP = 2
         private const val RIGHT = 4
         private const val BOTTOM = 8
-        private const val DAY_MS = 24 * 60 * 60 * 1000L
 
-        /** Files and the screenshot's copy work off the main thread, in order. */
+        /** Uploads, drafts and the screenshot's copy work off the main thread, in order. */
         private val io = Executors.newSingleThreadExecutor { Thread(it, "lens") }
 
         var current: Lens? = null
             private set
         private var starting = false
 
-        private fun dir(ctx: Context) = File(ctx.cacheDir, "lens").apply { mkdirs() }
-
         /**
-         * Freezes the screen and opens the lens over it. Whatever shouldn't be in the picture (the handle, the second
-         * screen) has been asked to go already: the screenshot waits a few frames for that to reach the display.
-         * [done] runs when the lens is gone, or failed to open.
+         * Freezes the screen and opens the lens over it, with the last unsent draft. Whatever shouldn't be in the
+         * picture (the handle, the second screen) has been asked to go already: the screenshot waits a few frames
+         * for that to reach the display. [done] runs when the lens is gone, or failed to open.
          */
         fun open(ctx: Context, done: () -> Unit) {
             if (current != null || starting) return
@@ -633,9 +451,10 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
                 return
             }
             starting = true
-            io.execute { // last day's images out
-                val old = System.currentTimeMillis() - DAY_MS
-                dir(ctx).listFiles()?.forEach { if (it.lastModified() < old) it.delete() }
+            val app = try {
+                agent.rootInActiveWindow?.packageName?.toString()
+            } catch (_: Exception) {
+                null
             }
             val main = Handler(Looper.getMainLooper())
             var frames = 0
@@ -651,9 +470,10 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
                         } catch (e: Exception) {
                             e
                         }
+                        val draft = if (r is Bitmap) Drafts.load(ctx, DRAFT) else null
                         main.post {
                             starting = false
-                            if (r is Bitmap) Lens(ctx, r, done).show()
+                            if (r is Bitmap) Lens(ctx, r, app?.takeIf { it != ctx.packageName }, done).apply { draft?.let { restore(it) } }.show()
                             else {
                                 val why = (r as Exception).message ?: r.toString()
                                 Toast.makeText(ctx, "The lens couldn't take the screen: $why", Toast.LENGTH_LONG).show()

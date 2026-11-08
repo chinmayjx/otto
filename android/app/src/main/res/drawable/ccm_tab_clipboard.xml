@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Clipboard section: a clipboard. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M9,4.5 H7 A2,2 0 0,0 5,6.5 V19 A2,2 0 0,0 7,21 H17 A2,2 0 0,0 19,19 V6.5 A2,2 0 0,0 17,4.5 H15"
+        android:strokeColor="#ffffff" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path android:pathData="M10,3 H14 A1,1 0 0,1 15,4 V5 A1,1 0 0,1 14,6 H10 A1,1 0 0,1 9,5 V4 A1,1 0 0,1 10,3 Z M9,11 H15 M9,15 H13"
+        android:strokeColor="#ffffff" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+</vector>

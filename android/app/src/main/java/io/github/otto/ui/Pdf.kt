@@ -260,6 +260,11 @@ fun PdfPages(doc: PdfDoc?, sizes: List<Pair<Float, Float>>, modifier: Modifier =
             for (i in sizes.indices) if (geo.tops[i] + geo.ph[i] + geo.g > line) { n = i + 1; break }
             n
         } }
+        // The page in view, for the collector's notes.
+        val place = LocalPlace.current
+        LaunchedEffect(place, sizes.size) {
+            if (place != null) snapshotFlow { page }.collect { place.label = "p.$it" }
+        }
 
         var flings by remember { mutableStateOf<List<Job>>(emptyList()) }
 

@@ -104,6 +104,8 @@ sealed class Target {
     data class Artifact(val id: String, val n: Int? = null) : Target()
     data class Version(val id: String) : Target()
     data class File(val path: String) : Target()
+    /** One image of a clip on the box (the Clipboard section). */
+    data class Clip(val id: String, val file: String) : Target()
 
     /** The web viewer's route for the same thing (web/, the fallback). */
     val hash: String
@@ -111,6 +113,7 @@ sealed class Target {
             is Artifact -> "artifact/$id" + (n?.let { "/v$it" } ?: "")
             is Version -> "view/$id"
             is File -> "file?path=" + Uri.encode(path)
+            is Clip -> "clip/$id/$file" // native only
         }
 
     companion object {
@@ -145,7 +148,7 @@ object ArtifactsApi {
                 if (e.code != 404 || t.n != null) throw e
                 Net.text(ctx, "$b/api/versions/${Uri.encode(t.id)}") to true // a share link from before: /p/<version id>
             }
-            is Target.File -> throw IllegalArgumentException("not an artifact")
+            is Target.File, is Target.Clip -> throw IllegalArgumentException("not an artifact")
         }
     }
 

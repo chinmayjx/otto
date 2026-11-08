@@ -18,7 +18,13 @@ import org.json.JSONObject
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.io.IOException
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /**
@@ -26,10 +32,13 @@ import kotlin.concurrent.thread
  * from here (nothing listens on the phone), and a new outbound pipe for each stream the relay asks for:
  *   device    the device HTTP API (DeviceApi), served in this process straight from the pipe
  *   devtools  the browser's DevTools socket: the browser's process (":browser", BrowserLink) opens that pipe itself
+ * and the other way, a pipe the app dials for itself (dial()): to the relay's box API (clips), HTTP with the app as
+ * the client (Clips).
  *
  * Control lines (TCP over Tailscale, which encrypts; the first line carries the token from pairing):
- *   to the relay:   hello <package> <token> 2, info <json>, browser up|down, ping, and the browser's own lines
- *   from it:        open <pipe> <service>, ping, and lines for the browser (show, newtab, wake, ...)
+ *   to the relay:   hello <package> <token> 2, info <json>, browser up|down, ping, dial <req> box, and the
+ *                   browser's own lines
+ *   from it:        open <pipe> <service>, dialed <req> <pipe>, ping, and lines for the browser (show, newtab, ...)
  * A pipe is a TCP connection to the pipe port that starts with "<pipe>\n".
  *
  * The tunnel lives in the main process, where the accessibility service and installer are. The browser's
@@ -59,6 +68,8 @@ object Tunnel {
     private val writer = Executors.newSingleThreadExecutor()
     private val pipes = Executors.newCachedThreadPool()
     private var network: Network? = null
+    private val dials = ConcurrentHashMap<String, CompletableFuture<String>>()
+    private val nextDial = AtomicInteger(1)
 
     // The browser's process.
     private lateinit var handler: Handler
@@ -188,6 +199,7 @@ object Tunnel {
         val w = line.split(" ", limit = 3)
         when (w[0]) {
             "ping" -> {}
+            "dialed" -> if (w.size == 3) dials.remove(w[1])?.complete(w[2])
             "open" -> {
                 if (w.size < 2) return
                 when (w.getOrNull(2) ?: "devtools") {
@@ -212,6 +224,44 @@ object Tunnel {
         } catch (e: Exception) {
             Log.d(TAG, "device pipe: $e")
         }
+    }
+
+    /**
+     * A pipe of the app's own to one of the relay's services ("box": the box API), connected and past its first line:
+     * from here on it's that service's stream. Blocks; throws when there's no tunnel, or the relay doesn't know it.
+     */
+    fun dial(service: String = "box", timeoutMs: Int = 10_000): Socket {
+        val (at, pipe) = ask(service, timeoutMs)
+        val s = Socket()
+        try {
+            s.connect(at, timeoutMs)
+            s.tcpNoDelay = true
+            s.getOutputStream().write("$pipe\n".toByteArray())
+        } catch (e: Exception) {
+            s.close()
+            throw e
+        }
+        return s
+    }
+
+    /** Asks the relay for a pipe to its service: where to connect, and the line to start with. */
+    fun ask(service: String, timeoutMs: Int = 10_000): Pair<InetSocketAddress, String> {
+        if (!started) throw IOException("Otto's handle is off")
+        val p = Pairing.load(app) ?: throw IOException("Otto isn't paired with a box")
+        if (!connected) throw IOException("Not connected to the box")
+        val req = "d" + nextDial.getAndIncrement()
+        val f = CompletableFuture<String>()
+        dials[req] = f
+        send("dial $req $service")
+        val pipe = try {
+            f.get(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            throw IOException("The box's relay didn't answer (is it up to date?)")
+        } finally {
+            dials.remove(req)
+        }
+        if (pipe == "-") throw IOException("The box's relay has no $service service (update it)")
+        return InetSocketAddress(p.box, p.pipePort) to pipe
     }
 
     /** Send a line to the relay, if connected (from any thread: the writing happens on its own). */
