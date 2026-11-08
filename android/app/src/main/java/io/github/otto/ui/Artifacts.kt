@@ -123,7 +123,7 @@ fun ArtifactsScreen(model: ArtifactsModel) {
     val grid = rememberLazyGridState()
     Surface(Modifier.fillMaxSize(), color = cs.surface) {
         Column(Modifier.fillMaxSize()) {
-            SearchField(model.query, "Search artifacts", { model.query = it }, Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 4.dp))
+            SearchField(model.query, "Search artifacts", { model.query = it }, Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp))
             Box(Modifier.fillMaxWidth().height(2.dp)) {
                 if (model.busy && !model.pulled) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
             }
@@ -194,13 +194,13 @@ fun SearchField(value: String, hint: String, onChange: (String) -> Unit, modifie
                 onTouchOnly: Boolean = true) {
     val cs = MaterialTheme.colorScheme
     var touched by remember { mutableStateOf(false) }
-    Surface(shape = RoundedCornerShape(28.dp), color = cs.surfaceContainerHigh, modifier = modifier.fillMaxWidth().height(48.dp)) {
+    Surface(shape = RoundedCornerShape(28.dp), color = cs.surfaceContainerHigh, modifier = modifier.fillMaxWidth().height(40.dp)) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Ic.search, null, Modifier.size(20.dp), tint = cs.onSurfaceVariant)
-            Spacer(Modifier.width(12.dp))
+            Icon(Ic.search, null, Modifier.size(18.dp), tint = cs.onSurfaceVariant)
+            Spacer(Modifier.width(10.dp))
             Box(Modifier.weight(1f)) {
-                if (value.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = cs.onSurfaceVariant)
-                BasicTextField(value, onChange, singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = cs.onSurface),
+                if (value.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyMedium, color = cs.onSurfaceVariant)
+                BasicTextField(value, onChange, singleLine = true, textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
                     cursorBrush = SolidColor(cs.primary), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     modifier = field.fillMaxWidth()
                         .focusProperties { canFocus = touched || !onTouchOnly }
@@ -212,7 +212,7 @@ fun SearchField(value: String, hint: String, onChange: (String) -> Unit, modifie
                             }
                         })
             }
-            if (value.isNotEmpty()) IconButton(onClick = { onChange("") }) { Icon(Ic.close, "Clear", Modifier.size(20.dp)) }
+            if (value.isNotEmpty()) IconButton(onClick = { onChange("") }, Modifier.size(36.dp)) { Icon(Ic.close, "Clear", Modifier.size(18.dp)) }
             else Spacer(Modifier.width(12.dp))
         }
     }
