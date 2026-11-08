@@ -57,6 +57,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
@@ -106,13 +107,15 @@ fun Viewer(target: Target, hint: ArtifactItem?) {
 /** The viewer's bar: back, title (and a label button: the version), the collector's switch, download, ⋮. */
 @Composable
 private fun ViewerBar(title: String, label: String?, progress: Float?, onLabel: () -> Unit, onDownload: (() -> Unit)?, onMore: (() -> Unit)?,
-                      clipping: Boolean? = null, onClip: () -> Unit = {}) {
+                      clipping: Boolean? = null, onClip: () -> Unit = {}, home: String = "Artifacts home") {
     val ops = LocalOps.current
     val cs = MaterialTheme.colorScheme
     Surface(color = cs.surfaceContainer) {
         Column {
             Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { ops.closeViewer() }) { Icon(Ic.back, "Back") }
+                // Up, as a home: always the section's home (the Artifacts list, the file's folder). System Back is
+                // contextual instead (ScreenOps.up, Screen.back).
+                IconButton(onClick = { ops.up() }) { Icon(painterResource(io.github.otto.R.drawable.ccm_home), home, Modifier.size(22.dp)) }
                 Column(Modifier.weight(1f).padding(start = 2.dp)) {
                     Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (label != null) {
@@ -445,7 +448,7 @@ private fun Freeze(shot: Bitmap, done: (Bitmap?) -> Unit) {
 private fun ClipImageViewer(t: Target.Clip) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize()) {
-        ViewerBar("Clip ${t.id}", null, null, onLabel = {}, onDownload = null, onMore = null)
+        ViewerBar("Clip ${t.id}", null, null, onLabel = {}, onDownload = null, onMore = null, home = "Clipboard")
         Box(Modifier.weight(1f).clipToBounds()) { ZoomableImage(Clips.image(t.id, t.file), "Clip ${t.id}", Clips.images(ctx)) }
     }
 }
@@ -576,7 +579,7 @@ private fun FileViewer(target: Target.File, sheets: Sheets) {
     val raw = FilesApi.raw(ctx, path)
     val download = FilesApi.url(ctx, "raw", path, "&download=1")
     Column(Modifier.fillMaxSize()) {
-        ViewerBar(name, null, progress, onLabel = {},
+        ViewerBar(name, null, progress, onLabel = {}, home = "Files",
             onDownload = { ops.download(download, name) },
             onMore = {
                 sheets.show {

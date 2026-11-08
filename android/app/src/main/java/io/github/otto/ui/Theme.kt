@@ -94,6 +94,9 @@ interface ScreenOps {
     /** The viewer goes. */
     fun closeViewer()
 
+    /** Up: from the viewer to its section's home (the Artifacts list, the file's folder). */
+    fun up() = closeViewer()
+
     /** The viewer at this target, in the web viewer instead (HTML artifacts, and what has no native view). */
     fun webViewer(target: Target)
 

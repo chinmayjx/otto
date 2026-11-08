@@ -129,6 +129,11 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private var viewer: View? = null // an artifact or file opened from Files or Artifacts, over the whole second screen
     private var viewerTarget: Target? = null
     private var viewerHint: ArtifactItem? = null
+    // Back follows how things were reached; ← in the viewer's bar is Up, to its section's home.
+    private var shown: Entry? = null // the viewer on screen
+    private val under = ArrayDeque<Entry>() // the viewers it was opened from, inside Otto (the last on top)
+    private var rootViewer = false // the bottom viewer came from outside Otto (a link): Back there hides the screen
+    private var browserOver: String? = null // the browser was opened from a viewer (still in under), at this page
     private var tabState = JSONObject() // BrowserService's TABS
     private var menu: Dialog? = null // a dialog, not a PopupWindow: a popup can't show text selection's toolbar
     private var tabList: LinearLayout? = null // the open tab menu's list, refreshed as the tabs change
@@ -358,6 +363,18 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         animateTo(1f)
     }
 
+    /** A page in the browser, from a link in the viewer: Back comes back to the viewer. */
+    private fun openFromViewer(url: String) {
+        val cur = shown
+        if (viewer == null || cur == null) return open(url)
+        send(BrowserService.MSG_LOAD, "url", url)
+        under.addLast(cur)
+        removeViewer()
+        browserOver = url
+        select(BROWSER)
+        animateTo(1f)
+    }
+
     /** A link tapped in another app (LinkActivity): an artifact opens in the viewer, the hub's pages in their sections, the rest in the browser. */
     fun openLink(url: String) {
         val u = Uri.parse(url)
@@ -365,7 +382,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         when {
             Links.isArtifactHost(ctx, u) -> {
                 val hash = Links.viewerHash(u)
-                if (hash != null) showViewer(hash)
+                if (hash != null) showViewer(hash, root = true)
                 else {
                     closeViewer()
                     select(ARTIFACTS)
@@ -375,7 +392,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             Links.isHub(ctx, u) && (path.startsWith("/files") || path.startsWith("/api/fs/")) -> {
                 // A folder in Files, or a file in the viewer (/files?path=…, /api/fs/raw?path=…)
                 val p = u.getQueryParameter("path")
-                if (path.startsWith("/api/fs/") && p != null) showViewer(Target.File(p), null)
+                if (path.startsWith("/api/fs/") && p != null) showRoot(Target.File(p))
                 else {
                     closeViewer()
                     if (p != null) filesModel.go(p)
@@ -410,7 +427,15 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         }
         when {
             NativeBack.handle() -> {} // a sheet in a native screen
-            viewer != null -> closeViewer()
+            viewer != null -> when {
+                under.isNotEmpty() -> display(under.removeLast()) // the viewer it was opened from
+                rootViewer -> animateTo(0f) // reached from another app: back to it (the viewer stays, for the next time)
+                else -> closeViewer() // the list it was opened from
+            }
+            tab == BROWSER && browserOver != null && under.isNotEmpty() && sameUrl(currentTab()?.optString("url"), browserOver) -> {
+                browserOver = null
+                display(under.removeLast()) // the viewer the page was opened from
+            }
             tab == FILES && filesModel.back() -> {} // Desktop and Terminal: no history to walk
             tab == BROWSER && tabState.optBoolean("canGoBack") -> send(BrowserService.MSG_BACK)
             else -> animateTo(0f)
@@ -556,39 +581,77 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
      * The viewer over the second screen, bar included, at the web viewer's route (#artifact/<id>[/v<n>], #view/<id>
      * or #file?path=): native (ui/Viewer), which hands HTML on to the web viewer.
      */
-    fun showViewer(hash: String): Boolean {
+    /**
+     * A viewer, and where Back goes from it. [root]: reached from outside Otto (a link in another app), so Back hides
+     * the screen; otherwise from inside, so Back comes back: to the viewer this one was opened from, or to the list.
+     */
+    private class Entry(val hash: String, val target: Target?, val hint: ArtifactItem?, val web: Boolean)
+
+    fun showViewer(hash: String, root: Boolean = false): Boolean {
         if (!Links.isViewer(hash)) return false
-        val t = Target.parse(hash) ?: return showWebViewer(hash)
-        showViewer(t, null)
+        val t = Target.parse(hash)
+        navigate(Entry(hash, t, null, t == null), root)
         return true
     }
 
-    private fun showViewer(t: Target, hint: ArtifactItem?) {
-        // HTML artifacts are web pages: straight to the web viewer when the list already says so.
-        if (hint?.kind == "html") {
-            showWebViewer(t.hash)
-            return
+    private fun showRoot(t: Target) = navigate(Entry(t.hash, t, null, false), root = true)
+
+    /** From a list (Artifacts, Files, Clipboard) or a viewer, inside Otto. */
+    private fun showViewer(t: Target, hint: ArtifactItem?) = navigate(Entry(t.hash, t, hint, hint?.kind == "html"), root = false)
+
+    private fun navigate(e: Entry, root: Boolean) {
+        val cur = shown
+        when {
+            root -> { // a fresh start, from outside
+                under.clear()
+                rootViewer = true
+            }
+            viewer != null && cur != null -> under.addLast(cur) // from the viewer on screen
+            else -> { // from a list
+                under.clear()
+                rootViewer = false
+            }
         }
-        closeViewer(refresh = false)
-        viewerTarget = t
-        viewerHint = hint
-        val v = compose.view(ctx, ops) { Viewer(t, hint) }
+        browserOver = null
+        display(e)
+    }
+
+    /** Shows a viewer, leaving the stack as it is. HTML artifacts are web pages: the web viewer shows them. */
+    private fun display(e: Entry) {
+        removeViewer()
+        shown = e
+        viewerTarget = e.target
+        viewerHint = e.hint
+        val t = e.target
+        val v = if (!e.web && t != null) compose.view(ctx, ops) { Viewer(t, e.hint) }
+        else AppWeb.create(ctx, object : AppWeb.Ops {
+            override fun close() = up()
+            override fun open(hash: String) = showViewer(hash)
+        }).apply { loadUrl(AppWeb.URL + "#" + e.hash) }
         putViewer(v)
     }
 
-    /** The web viewer (web/, in AppWeb): HTML artifacts and pages, and anything the native viewer hands on. */
+    /** The native viewer hands this one on to the web viewer (HTML): the same place, so the stack stays. */
     private fun showWebViewer(hash: String): Boolean {
-        closeViewer(refresh = false)
-        viewerTarget = Target.parse(hash)
-        viewerHint = null
-        val v = AppWeb.create(ctx, object : AppWeb.Ops {
-            override fun close() = closeViewer()
-            override fun open(hash: String) = showViewer(hash)
-        })
-        v.loadUrl(AppWeb.URL + "#" + hash)
-        putViewer(v)
+        display(Entry(hash, Target.parse(hash), null, true))
         return true
     }
+
+    /** Up (← in the viewer's bar): the viewer's section, at home: the Artifacts list, the file's folder, the clips. */
+    private fun up() {
+        val t = viewerTarget
+        closeViewer(refresh = false)
+        when (t) {
+            is Target.File -> {
+                filesModel.go(t.path.substringBeforeLast('/', "/").ifEmpty { "/" })
+                select(FILES)
+            }
+            is Target.Clip -> select(CLIPBOARD)
+            else -> select(ARTIFACTS)
+        }
+    }
+
+    private fun sameUrl(a: String?, b: String?) = a != null && b != null && a.trimEnd('/') == b.trimEnd('/')
 
     private fun putViewer(v: View) {
         viewer = v
@@ -597,13 +660,23 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         if (isOpen) focusTab()
     }
 
+    /** The viewer out, and what it was opened from forgotten: Otto is back at a section. */
     private fun closeViewer(refresh: Boolean = true) {
+        under.clear()
+        rootViewer = false
+        browserOver = null
+        if (viewer == null) return
+        removeViewer()
+        if (refresh) refreshArtifacts() // e.g. after a delete
+    }
+
+    private fun removeViewer() {
         val v = viewer ?: return
         body.removeView(v)
         if (v is WebView) v.destroy() else (v as? ComposeView)?.disposeComposition()
         viewer = null
         viewerTarget = null
-        if (refresh) refreshArtifacts() // e.g. after a delete
+        shown = null
         placeSurface()
         if (isOpen) focusTab()
     }
@@ -615,10 +688,11 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private inner class Ops : ScreenOps {
         override fun openViewer(target: Target, hint: ArtifactItem?) = showViewer(target, hint)
         override fun closeViewer() = this@Screen.closeViewer()
+        override fun up() = this@Screen.up()
         override fun webViewer(target: Target) {
             showWebViewer(target.hash)
         }
-        override fun openInBrowser(url: String) = open(url)
+        override fun openInBrowser(url: String) = openFromViewer(url)
         override fun download(url: String, name: String) = AppWeb.download(ctx, url, name)
         override fun share(text: String, title: String) {
             val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text).putExtra(Intent.EXTRA_SUBJECT, title)
@@ -806,7 +880,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         val v = viewer
         when {
             v is WebView -> v.reload()
-            v != null -> viewerTarget?.let { showViewer(it, viewerHint) }
+            v != null -> shown?.let { display(it) }
             tab == BROWSER -> send(BrowserService.MSG_RELOAD)
             tab == FILES -> filesModel.refresh(pull = true)
             tab == ARTIFACTS -> artifactsModel.refresh(pull = true)

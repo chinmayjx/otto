@@ -107,6 +107,10 @@ Open Otto. It's a setup screen: the handle's switch at the top, then each thing 
   `OverlayService`; both post the same notification (same id and channel), so there's one. A foreground service's
   process is neither frozen nor killed in the background, so the browser stays reachable with the screen closed or
   the phone locked. `Screen` rebinds if its binding dies. Turning the handle off stops both, and the tunnel.
+- Back follows how a screen was reached (`Screen`): a viewer opened from a link in another app is a root, and Back
+  hides the second screen, back to that app (the viewer stays for the next time); one opened from a list, or from
+  another viewer, goes back to it; a page opened from a viewer comes back to the viewer. The home icon in the
+  viewer's bar is Up instead: always the section's home (the Artifacts list, the file's folder).
 - `LinkActivity` takes the links: the manifest claims `https://*.ts.net` on the hub's routes (`/`, `/desktop`,
   `/terminal`, `/files`, `/api/fs/`) and the artifact hub's (`/a/`, `/p/`, `/v/`); at runtime the app keeps only links
   to the paired hub and artifact hub (`Links`) and hands every other one to the default browser.
