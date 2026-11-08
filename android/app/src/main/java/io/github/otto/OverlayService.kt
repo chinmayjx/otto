@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.provider.Settings
 import android.view.ContextThemeWrapper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -27,8 +28,8 @@ import kotlin.math.roundToInt
 
 /**
  * Keeps the second screen at hand over every app: a handle on the right edge (an overlay window, so it stays
- * above the screen too; a tap fades the screen in and out), and the screen itself (Screen), which lives here and
- * is shown in ScreenActivity while it's in. A foreground service, so Android keeps all of it, the browser's tabs
+ * above the screen too; a tap fades the screen in and out, a long press opens the lens), and the screen itself
+ * (Screen), which lives here and is shown in ScreenActivity while it's in. A foreground service, so Android keeps all of it, the browser's tabs
  * included, while other apps are in front.
  *
  * While the handle is on, Otto is connected to the box: this service keeps the tunnel up (Tunnel), and starts the
@@ -158,7 +159,7 @@ class OverlayService : Service(), Screen.Host {
 
     /**
      * The one handle, on the right edge, over the screen too: a tap or a swipe across it fades the screen in, the
-     * next fades it out. A drag up or down moves it along the edge.
+     * next fades it out. A drag up or down moves it along the edge. A long press opens the lens (Lens).
      */
     @SuppressLint("ClickableViewAccessibility")
     private fun addRightHandle() {
@@ -175,6 +176,14 @@ class OverlayService : Service(), Screen.Host {
             var startY = 0
             var moving = false // a drag up or down, not a tap
             var swiped = false // a swipe across, which toggles the screen as a tap does
+            var pressed = false // held still long enough: the lens, and nothing else for this touch
+            val longPress = Runnable {
+                pressed = true
+                pill.animate().scaleX(1f).scaleY(1f).setDuration(90)
+                handle.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                holding = false
+                lens()
+            }
 
             override fun onTouch(v: View, e: MotionEvent): Boolean {
                 val screen = screen ?: return false
@@ -185,6 +194,8 @@ class OverlayService : Service(), Screen.Host {
                         swiped = false
                         startY = rightLp.y
                         moving = false
+                        pressed = false
+                        handle.postDelayed(longPress, LONG_PRESS_MS)
                         pill.animate().scaleX(1.5f).scaleY(1.12f).setDuration(90)
                         // The app screen comes up at the touch, so it's there by the time the finger lifts.
                         holding = true
@@ -192,10 +203,12 @@ class OverlayService : Service(), Screen.Host {
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
+                        if (pressed) return true
                         val dx = e.rawX - downX
                         val dy = e.rawY - downY
                         if (!moving && !swiped && max(abs(dx), abs(dy)) > slop) {
                             // Whichever way it went first decides: across toggles the screen at once, up or down moves the handle.
+                            handle.removeCallbacks(longPress)
                             if (abs(dx) > abs(dy)) {
                                 swiped = true
                                 toggle()
@@ -205,6 +218,8 @@ class OverlayService : Service(), Screen.Host {
                         return true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        handle.removeCallbacks(longPress)
+                        if (pressed) return true
                         pill.animate().scaleX(1f).scaleY(1f).setDuration(140)
                         holding = false
                         if (moving) prefs.edit().putInt("y", rightLp.y).apply()
@@ -217,6 +232,18 @@ class OverlayService : Service(), Screen.Host {
             }
         })
         wm.addView(handle, rightLp)
+    }
+
+    /**
+     * The lens: the handle and the second screen out of the picture first (the screen at once, no fade), back when
+     * the lens is gone.
+     */
+    private fun lens() {
+        val handle = right ?: return
+        handle.visibility = View.INVISIBLE
+        val screen = screen
+        if (screen != null && !screen.isClosed) screen.closeNow() else ScreenActivity.current?.leave()
+        Lens.open(this) { right?.visibility = View.VISIBLE }
     }
 
     private fun toggle() {
@@ -240,6 +267,7 @@ class OverlayService : Service(), Screen.Host {
     override fun onDestroy() {
         running = false
         if (instance === this) instance = null
+        Lens.current?.dismiss()
         ScreenActivity.current?.finish()
         right?.let { if (it.isAttachedToWindow) wm.removeView(it) }
         screen?.destroy()
@@ -265,6 +293,7 @@ class OverlayService : Service(), Screen.Host {
         const val PREFS = "overlay" // "on": the handle is wanted (BootReceiver brings it back); "y": where it is
         private const val HANDLE_W = 28
         private const val HANDLE_H = 120
+        private const val LONG_PRESS_MS = 450L
 
         @Volatile
         var running = false

@@ -159,6 +159,7 @@ Three tools: `desktop_screenshot`, `browser_screenshot`, `phone_screenshot`. Eac
 The second screen and the device agent in one APK.
 
 - The handle, the overlay, `ScreenActivity`, link capture and boot restore, from second-screen.
+- The lens: a long press on the handle freezes the screen (an accessibility screenshot) in an overlay, to select parts of it and copy them as one image or share them, with a note.
 - The browser runs in its own process (`:browser`), drawn into the second screen with `SurfaceControlViewHost`. Android's switch for WebView debugging (the DevTools socket agents drive) is per process: in one process, agents could also reach the app's other WebViews, such as the terminal (and type into your shell) or HTML artifacts. Its own process also gives the browser its own cookies and lets a crash or a memory kill take only the browser down.
 - The accessibility service, screenshots, input, installs and logs, from device-agent, now served as a device HTTP API through the tunnel. Handled in-process from tunnel pipes, never on a localhost port (every app on the phone can reach localhost).
 - Link capture: `*.ts.net` with path prefixes, keeping only the configured box and hub hosts at runtime and handing every other link to the browser. Android does let the user approve the wildcard host under Open by default (checked on Android 17). Hosts outside the tailnet (an artifact hub's public domain) go into the build: `otto.extraLinkHosts`.

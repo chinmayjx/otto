@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="accessibility_description">Lets your box see the screen and tap, swipe and type on this phone, but only while Otto is on and connected to it.</string>
+    <string name="accessibility_description">Lets your box see the screen and tap, swipe and type on this phone, but only while Otto is on and connected to it. The handle\'s lens takes its screenshots through it too.</string>
 </resources>

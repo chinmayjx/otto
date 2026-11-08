@@ -2,8 +2,10 @@
 
 The second screen and the device agent in one Android app, in Kotlin (package `io.github.otto`, Android 12+):
 
-- a handle on the screen's right edge: a tap or a swipe across it fades the second screen in and out over any app;
-  a drag up or down moves it;
+- a handle on the screen's right edge: a tap or a swipe across it fades the second screen in and out over any app
+  (Back and Home put it away too; nothing on the screen itself swipes it out); a drag up or down moves it;
+- the lens: a long press on the handle freezes the screen, to select parts of it and copy them (one image, with an
+  optional note) or share them (`Lens`; it takes the screenshot through the accessibility service);
 - the second screen: the browser agents drive (embedded Chromium, in its own process), files, artifacts, the box's
   desktop and terminal, its status;
 - links to the paired box's hub and to the artifact hub, tapped in any app, open there;
@@ -76,7 +78,9 @@ Open Otto. It's a setup screen: the handle's switch at the top, then each thing 
 
 - `OverlayService`, a foreground service while the handle is on, keeps the handle (an overlay window), the second
   screen (`Screen`, shown in the transparent `ScreenActivity` while it's in, so other overlays, Back, the keyboard
-  and Home work as in any app) and the tunnel (`Tunnel`).
+  and Home work as in any app) and the tunnel (`Tunnel`). A long press on the handle opens the lens (`Lens`): an
+  overlay window of its own, focusable so its note takes the keyboard, over a screenshot; its images reach other
+  apps through the FileProvider, from `cache/lens/` (cleared after a day).
 - `Tunnel` (main process) keeps the one control connection to the box's relay and opens a pipe per stream the relay
   asks for: `device` pipes it serves itself (`device/DeviceApi`: HTTP/1.1, kept alive, one route per command);
   `devtools` pipes it hands to the browser's process, which opens them to its own DevTools socket. It binds

@@ -17,6 +17,7 @@ import io.github.otto.OverlayService
 import io.github.otto.Tunnel
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
 
@@ -103,11 +104,15 @@ class AgentAccessibility : AccessibilityService() {
     /** Windows on screen, top layer first. */
     fun windowsTopFirst(): List<AccessibilityWindowInfo> = windows.sortedByDescending { it.layer }
 
-    fun screenshot(): Bitmap {
+    /**
+     * The screen, as a software bitmap. Blocks, so never on the main thread; the copy out of the hardware buffer runs
+     * on [executor] (the main thread's by default; the lens gives its own, so the main thread doesn't stutter).
+     */
+    fun screenshot(executor: Executor = mainExecutor): Bitmap {
         var attempt = 0
         while (true) {
             val f = CompletableFuture<Any?>()
-            takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+            takeScreenshot(Display.DEFAULT_DISPLAY, executor, object : TakeScreenshotCallback {
                 override fun onSuccess(r: ScreenshotResult) {
                     val hw = Bitmap.wrapHardwareBuffer(r.hardwareBuffer, r.colorSpace)
                     val b = hw?.copy(Bitmap.Config.ARGB_8888, false)
