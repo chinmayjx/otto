@@ -48,7 +48,10 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName(if (System.getenv("OTTO_KEYSTORE") != null) "release" else "debug")
-            isMinifyEnabled = false
+            // R8: Compose, Media3 and the rest come to a third of their size shrunk.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
     compileOptions {
