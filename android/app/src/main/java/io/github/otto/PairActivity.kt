@@ -29,13 +29,12 @@ class PairActivity : AppCompatActivity() {
         val message = buildString {
             if (old != null && old.box != p.box) append("This replaces the pairing with ${old.box}.\n\n")
             append("Box: ${p.box}\n")
-            append("Browser link: port ${p.browserPort} (pipes ${p.pipePort})\n")
-            append("Device link: port ${p.devicePort}\n")
+            append("Tunnel: port ${p.port} (pipes ${p.pipePort})\n")
             append("Hub: ${p.hubUrl}\n")
             append("Artifacts: ${p.artifactsUrl}\n")
             if (p.publicArtifactsUrl.isNotEmpty()) append("Public artifacts: ${p.publicArtifactsUrl}\n")
             if (p.panelUrl.isNotEmpty()) append("Panel: ${p.panelUrl}\n")
-            append("Tokens: ${mask(p.browserToken)}, ${mask(p.deviceToken)}\n\n")
+            append("Token: ${mask(p.token)}\n\n")
             append("The box will be able to drive Otto's browser, and to see and control this phone while Otto's handle is on.")
         }
         MaterialAlertDialogBuilder(this)

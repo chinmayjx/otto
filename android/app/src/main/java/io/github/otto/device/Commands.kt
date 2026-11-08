@@ -20,6 +20,7 @@ import android.provider.Settings
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import io.github.otto.BuildConfig
+import io.github.otto.Events
 import io.github.otto.MainActivity
 import org.json.JSONArray
 import org.json.JSONObject
@@ -30,31 +31,33 @@ import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 
-/** Runs one command from the box and sends its reply. The command names follow adb where they can. */
-class Commands(private val ctx: Context, private val frames: Frames) {
-    private class Reply(val result: Any?, val body: ByteArray? = null)
+/**
+ * Runs one command from the box (DeviceApi turns each route into one). The command names follow adb where they can.
+ */
+class Commands(private val ctx: Context) {
+    /**
+     * A command's result: JSON (a JSONObject or JSONArray), a string, or bytes of [type] with the result beside them.
+     * [after] runs once the reply is sent (installing Otto itself, which ends this process).
+     */
+    class Reply(val result: Any?, val body: ByteArray? = null, val type: String = "application/octet-stream", val after: (() -> Unit)? = null)
 
-    fun run(req: Frames.Frame) {
-        val id = req.head.optString("id")
-        val cmd = req.head.optString("cmd")
-        val args = req.head.optJSONObject("args") ?: JSONObject()
+    class Unknown(cmd: String) : Exception("unknown command $cmd")
+
+    /** Runs a command; throws with the reason if it fails. */
+    fun run(cmd: String, args: JSONObject, body: ByteArray?): Reply {
         val t0 = System.currentTimeMillis()
         val summary = cmd + if (args.length() > 0) " " + brief(args) else ""
         try {
-            val r = dispatch(id, cmd, args, req.body)
-            if (r != null) frames.write(JSONObject().put("id", id).put("ok", true).put("result", r.result), r.body)
+            val r = dispatch(cmd, args, body)
             CommandLog.add("$summary  ✓ ${System.currentTimeMillis() - t0} ms")
+            return r
         } catch (e: Throwable) {
-            val msg = e.message ?: e.toString()
-            try {
-                frames.write(JSONObject().put("id", id).put("ok", false).put("error", msg))
-            } catch (_: Exception) {
-            }
-            CommandLog.add("$summary  ✗ $msg")
+            CommandLog.add("$summary  ✗ ${e.message ?: e}")
+            throw e
         }
     }
 
-    private fun dispatch(id: String, cmd: String, a: JSONObject, body: ByteArray?): Reply? = when (cmd) {
+    private fun dispatch(cmd: String, a: JSONObject, body: ByteArray?): Reply = when (cmd) {
         "info" -> Reply(info())
         "screenshot" -> screenshot(a)
         "ui" -> Reply(ui(a))
@@ -69,10 +72,11 @@ class Commands(private val ctx: Context, private val frames: Frames) {
         "forcestop" -> Reply(forceStop(a.getString("package")))
         "packages" -> Reply(packages(a))
         "appinfo" -> Reply(appInfo(a.getString("package")))
-        "install" -> install(id, body)
+        "install" -> install(body)
         "uninstall" -> Reply(Installer.await(Installer.uninstall(ctx, a.getString("package"))))
         "logcat" -> logcat(a)
-        else -> throw Exception("unknown command $cmd")
+        "events" -> Reply(Events.text(ctx))
+        else -> throw Unknown(cmd)
     }
 
     /** Actions return once the screen has settled, so the next screenshot or tree shows the result. */
@@ -135,9 +139,10 @@ class Commands(private val ctx: Context, private val frames: Frames) {
         val out = ByteArrayOutputStream()
         if (format == "jpg" || format == "jpeg") b.compress(Bitmap.CompressFormat.JPEG, a.optInt("quality", 80), out)
         else b.compress(Bitmap.CompressFormat.PNG, 100, out)
-        val r = JSONObject().put("width", b.width).put("height", b.height).put("format", if (format.startsWith("jp")) "jpeg" else "png")
+        val jpeg = format.startsWith("jp")
+        val r = JSONObject().put("width", b.width).put("height", b.height).put("format", if (jpeg) "jpeg" else "png")
         b.recycle()
-        return Reply(r, out.toByteArray())
+        return Reply(r, out.toByteArray(), if (jpeg) "image/jpeg" else "image/png")
     }
 
     private fun ui(a: JSONObject): String {
@@ -375,17 +380,18 @@ class Commands(private val ctx: Context, private val frames: Frames) {
         return o
     }
 
-    private fun install(id: String, apk: ByteArray?): Reply? {
-        if (apk == null) throw Exception("no APK sent")
+    private fun install(apk: ByteArray?): Reply {
+        if (apk == null || apk.isEmpty()) throw Exception("no APK sent")
         val f = File(ctx.cacheDir, "incoming.apk")
         f.writeBytes(apk)
         val pkg = Installer.packageOf(ctx, f) ?: throw Exception("that file isn't an APK Android can read")
         Installer.checkUpdate(ctx, f, pkg) // fail here rather than silently, above all when updating Otto itself
         if (pkg == ctx.packageName) {
-            // Updating Otto itself ends this process: answer first; it reconnects once the update is in
-            frames.write(JSONObject().put("id", id).put("ok", true).put("result", "updating Otto itself; it reconnects in a few seconds"))
-            Installer.install(ctx, f, pkg)
-            return null
+            // Updating Otto itself ends this process: answer first, then install; it reconnects once the update is in
+            return Reply("updating Otto itself; it reconnects in a few seconds", after = {
+                Events.add(ctx, "updating Otto itself (from version ${BuildConfig.VERSION_CODE})")
+                Installer.install(ctx, f, pkg)
+            })
         }
         val r = Installer.await(Installer.install(ctx, f, pkg))
         f.delete()
@@ -417,7 +423,7 @@ class Commands(private val ctx: Context, private val frames: Frames) {
             q.uids = setOf(uid.toString(), LogReader.uidName(uid))
         }
         if (a.has("grep") && !a.isNull("grep")) q.grep = Regex(a.getString("grep"))
-        return Reply(JSONObject().put("fullAccess", LogReader.full), LogReader.query(q).toByteArray())
+        return Reply(JSONObject().put("fullAccess", LogReader.full), LogReader.query(q).toByteArray(), "text/plain; charset=utf-8")
     }
 
     /**

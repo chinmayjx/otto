@@ -1,10 +1,10 @@
 package io.github.otto
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
-import android.net.Network
+import android.os.Message
+import android.os.Messenger
 import android.util.Log
 import org.json.JSONArray
 import java.io.ByteArrayOutputStream
@@ -17,13 +17,13 @@ import kotlin.concurrent.thread
 
 /**
  * Lets agents on the box drive the second screen's browser with Playwright. Runs in the browser's process
- * (BrowserService starts it), so the DevTools socket it relays is this process's own: the browser's tabs only.
+ * (BrowserService starts it), so the DevTools socket it hands out is this process's own: the browser's tabs only.
  *
- * The app keeps a control connection to the box's relay (otto/box/relay/src/browser.ts; plain TCP over
- * Tailscale, which already encrypts; the first line carries the browser token from pairing). Lines from the relay:
+ * Its lines travel the app's tunnel to the box's relay (Tunnel, in the main process, which binds BrowserService:
+ * MSG_LINE both ways). The relay's side is otto/box/relay/src/browser.ts. Lines from the relay:
  *   show <url>                     slide in the browser and load url in the current tab
- *   open <id>                      a debugger connected on the box: open a pipe connection tagged <id> and join it
- *                                  to this process's DevTools socket
+ *   open <id>                      a debugger connected on the box: open a pipe tagged <id> to the box (the
+ *                                  tunnel's pipe port) and join it to this process's DevTools socket
  *   newtab <req> <group> <title>   open a tab in that group (a new agent group titled <title> if there's no such
  *                                  group, or <group> is "-"); answered "made <req> <targetId> <group>"
  *   wake <req> <group>             bring the group's tabs to life and keep them so; answered "woke <req> <n>" once
@@ -33,16 +33,11 @@ import kotlin.concurrent.thread
  *   closegroup <group>             close the group's tabs, dormant ones too
  *   focus <targetId>               show that tab
  * and to it:
- *   hello <package> <token>, then a "tab" line for each live tab
+ *   browser up                     (when the tunnel asks: MSG_SYNC) then a "tab" line for each live tab
  *   active                         the user is looking at this app (the relay sends new tabs to it)
  *   tab <targetId> <tabId> <group> a live tab (group "-": none). A tab's id lasts; its target is new each time it
  *                                  comes back to life
  *   gone <targetId>                a tab was closed, or went dormant
- *   ping                           now and then, to notice a dead connection (the relay ignores it)
- *
- * The connection is kept up for as long as this process runs (BrowserService is a foreground service while the
- * handle is on): it reconnects with a growing pause (1 s up to 30 s) and at once when the network comes back or
- * the pairing changes.
  *
  * The browser knows nothing of agent sessions: which session works in which group is the relay's to know. It
  * does need each live tab's DevTools target id. A WebView can't say which target is its own, so each tab's is
@@ -50,114 +45,43 @@ import kotlin.concurrent.thread
  */
 object BrowserLink {
     private const val TAG = "BrowserLink"
-    private const val MIN_PAUSE = 1_000L
-    private const val MAX_PAUSE = 30_000L
-    private const val PING_MS = 60_000L
 
     private lateinit var app: Context
     private var started = false
     private val lock = Any()
-    private var control: OutputStream? = null // guarded by lock
     private val known = LinkedHashMap<String, String>() // targetId -> "<tabId> <group>"; guarded by lock
-    @Volatile private var socket: Socket? = null
-    private val wake = Object()
-    private var network: Network? = null
+    @Volatile private var tunnel: Messenger? = null
 
     // Finding target ids runs one tab at a time, so "the target no tab has" is that tab's.
     private val finder = Executors.newSingleThreadExecutor()
-    private val writer = Executors.newSingleThreadExecutor()
-
-    @Volatile private var enabled = false
 
     @Synchronized
     fun start(service: BrowserService) {
-        enabled = true
-        if (started) return poke()
+        if (started) return
         started = true
         app = service.applicationContext
-        thread(name = "browser-link", isDaemon = true) { controlLoop() }
-        thread(name = "browser-link-ping", isDaemon = true) { pingLoop() }
-        app.getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(n: Network) {
-                val changed = network != null && network != n
-                network = n
-                if (changed) relink() else poke()
-            }
-        })
     }
 
-    /** Disconnect, and stay so until started again (the browser's service is gone). */
+    /** The tunnel (main process) bound to the browser: lines go to it from now on. */
+    fun attach(m: Messenger) {
+        tunnel = m
+    }
+
+    /** The tunnel is connected to the box: say the browser is up, and list its live tabs (after any being found). */
+    fun sync() {
+        finder.execute {
+            synchronized(lock) {
+                send("browser up")
+                for ((target, tab) in known) send("tab $target $tab")
+            }
+        }
+    }
+
     fun stop() {
-        enabled = false
-        relink()
+        tunnel = null
     }
 
-    /** Reconnect now (a new pairing, or a new network). */
-    fun relink() {
-        try {
-            socket?.close()
-        } catch (_: Exception) {
-        }
-        poke()
-    }
-
-    private fun poke() = synchronized(wake) { wake.notifyAll() }
-
-    private fun state(s: String) = LinkState.write(app, LinkState.BROWSER, s)
-
-    private fun controlLoop() {
-        var pause = MIN_PAUSE
-        while (true) {
-            if (!enabled) {
-                state("off")
-                synchronized(wake) { wake.wait(MAX_PAUSE) }
-                continue
-            }
-            val p = Pairing.load(app)
-            if (p == null) {
-                state("not paired")
-                synchronized(wake) { wake.wait(MAX_PAUSE) }
-                continue
-            }
-            state("connecting")
-            try {
-                Socket().use { s ->
-                    socket = s
-                    s.connect(InetSocketAddress(p.box, p.browserPort), 10_000)
-                    s.keepAlive = true
-                    synchronized(lock) {
-                        val hello = StringBuilder("hello ${app.packageName} ${p.browserToken}\n")
-                        for ((target, tab) in known) hello.append("tab ").append(target).append(' ').append(tab).append('\n')
-                        control = s.getOutputStream().also { it.write(hello.toString().toByteArray()) }
-                    }
-                    pause = MIN_PAUSE
-                    state("connected")
-                    s.getInputStream().bufferedReader().forEachLine { handle(it) }
-                }
-            } catch (e: Exception) {
-                Log.d(TAG, "control: $e")
-            } finally {
-                socket = null
-                synchronized(lock) { control = null }
-            }
-            if (!enabled) continue
-            state("can't reach the box; retrying")
-            synchronized(wake) { wake.wait(pause) }
-            pause = minOf(pause * 2, MAX_PAUSE)
-        }
-    }
-
-    private fun pingLoop() {
-        while (true) {
-            Thread.sleep(PING_MS)
-            if (socket != null) {
-                send("ping")
-                state("connected")
-            }
-        }
-    }
-
-    private fun handle(line: String) {
+    fun handle(line: String) {
         val w = line.split(" ", limit = 4)
         val svc = BrowserService.instance ?: return
         when (w[0]) {
@@ -195,18 +119,14 @@ object BrowserLink {
         }
     }
 
-    /** Send a line to the relay, if connected (from any thread: the writing happens on its own). */
+    /** Send a line to the relay, through the tunnel (if it's bound; it asks for the state again when it connects). */
     fun send(line: String) {
-        writer.execute {
-            synchronized(lock) {
-                val out = control ?: return@execute
-                try {
-                    out.write("$line\n".toByteArray())
-                    out.flush()
-                } catch (e: Exception) {
-                    Log.d(TAG, "send: $e")
-                }
-            }
+        val m = tunnel ?: return
+        try {
+            m.send(Message.obtain(null, Tunnel.MSG_LINE).also { it.data.putString("line", line) })
+        } catch (e: Exception) {
+            Log.d(TAG, "send: $e")
+            tunnel = null
         }
     }
 
@@ -289,7 +209,7 @@ object BrowserLink {
         try {
             devtools().use { devtools ->
                 Socket().use { relay ->
-                    relay.connect(InetSocketAddress(p.box, p.pipePort), 5000)
+                    relay.connect(InetSocketAddress(p.box, p.pipePort), 10_000)
                     relay.getOutputStream().write("$id\n".toByteArray())
                     val up = thread { copy(relay.getInputStream(), devtools.outputStream) { devtools.shutdownOutput() } }
                     copy(devtools.inputStream, relay.getOutputStream()) { relay.shutdownOutput() }

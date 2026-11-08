@@ -29,9 +29,9 @@ import kotlin.math.roundToInt
  * is shown in ScreenActivity while it's in. A foreground service, so Android keeps all of it, the browser's tabs
  * included, while other apps are in front.
  *
- * While the handle is on, Otto is connected to the box: this service holds the device link (DeviceLink), and
- * starts the browser's service (BrowserService, in ":browser") as a foreground service too, so the browser link
- * stays up with the screen closed. Both share one notification.
+ * While the handle is on, Otto is connected to the box: this service keeps the tunnel up (Tunnel), and starts the
+ * browser's service (BrowserService, in ":browser") as a foreground service too, so the browser stays reachable
+ * with the screen closed. Both share one notification.
  */
 class OverlayService : Service(), Screen.Host {
     private lateinit var wm: WindowManager
@@ -58,6 +58,8 @@ class OverlayService : Service(), Screen.Host {
         // A themed context, so the screen's dialogs and the WebViews' pickers have a theme to draw with.
         screen = Screen(ContextThemeWrapper(this, android.R.style.Theme_DeviceDefault), this)
         addRightHandle()
+        Events.add(this, "handle on")
+        Tunnel.start(this, "the handle")
         device = DeviceLink(applicationContext).also { it.start() }
         startBrowser()
     }
@@ -82,8 +84,8 @@ class OverlayService : Service(), Screen.Host {
             ACTION_OPEN -> intent.getStringExtra("url")?.let { screen.openLink(it) }
             ACTION_SHOW -> screen.open()
             ACTION_RELINK -> {
+                Tunnel.relink()
                 device?.relink()
-                startForegroundService(Intent(this, BrowserService::class.java).setAction(BrowserService.ACTION_RELINK))
             }
         }
         return START_STICKY
@@ -240,6 +242,8 @@ class OverlayService : Service(), Screen.Host {
         right?.let { if (it.isAttachedToWindow) wm.removeView(it) }
         screen?.destroy()
         device?.stop()
+        Events.add(this, "handle service gone" + if (wanted(this)) "" else " (turned off)")
+        if (!wanted(this)) Tunnel.stop()
         // With the handle off, Otto is off: the browser (unbound by the screen above) and its link stop too.
         stopService(Intent(this, BrowserService::class.java))
         super.onDestroy()

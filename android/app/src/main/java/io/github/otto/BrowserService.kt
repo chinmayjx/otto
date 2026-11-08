@@ -76,6 +76,7 @@ import kotlin.math.roundToInt
  *   ACTIVE           the user opened the second screen: this app is the one in use (the relay sends new tabs here)
  *   HIDE_KEYBOARD    Back with the keyboard up over a page: the page lets go of focus, and so of the keyboard
  *   CLIENT           Screen is bound (replyTo: where to send what follows), before it has a surface to embed in
+ * and from the tunnel (Tunnel, main process): TUNNEL (replyTo: the tunnel), SYNC, LINE {line} (see BrowserLink).
  * and to it: SHOW (slide in the second screen on the Browser tab), TABS {json}, BACK_KEY (Back was pressed while a
  * page had the keyboard focus: the key comes here, not to the screen's window).
  */
@@ -125,7 +126,6 @@ class BrowserService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Started by OverlayService with startForegroundService, which wants startForeground every time.
         Notifications.startForeground(this)
-        if (intent?.action == ACTION_RELINK) BrowserLink.relink()
         return START_STICKY
     }
 
@@ -153,6 +153,9 @@ class BrowserService : Service() {
                     client = m.replyTo
                     publish()
                 }
+                Tunnel.MSG_TUNNEL -> BrowserLink.attach(m.replyTo)
+                Tunnel.MSG_SYNC -> BrowserLink.sync()
+                Tunnel.MSG_LINE -> b.getString("line")?.let { BrowserLink.handle(it) }
                 MSG_RESIZE -> host?.relayout(b.getInt("width"), b.getInt("height"))
                 MSG_LOAD -> go(b.getString("url"))
                 MSG_SELECT -> byId(b.getString("id"))?.let { select(it) }
@@ -697,9 +700,8 @@ class BrowserService : Service() {
         const val MSG_HIDE_KEYBOARD = 16
         const val MSG_CLIENT = 17
 
-        /** Start commands: keep it in the foreground (OverlayService, while the handle is on); reconnect the link. */
+        /** Start command: keep it in the foreground (OverlayService, while the handle is on). */
         const val ACTION_KEEP = "keep"
-        const val ACTION_RELINK = "relink"
 
         const val AGENT = "agent"
         private const val TAG = "BrowserService"

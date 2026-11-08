@@ -11,6 +11,10 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import io.github.otto.BootReceiver
+import io.github.otto.Events
+import io.github.otto.OverlayService
+import io.github.otto.Tunnel
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
@@ -27,6 +31,13 @@ class AgentAccessibility : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         CommandLog.add("accessibility service on")
+        // After an update (or a restart) Android binds this service again: the way back to the box, even if the
+        // handle's foreground service can't be started from here.
+        if (OverlayService.wanted(this)) {
+            Events.add(this, "accessibility service on")
+            Tunnel.start(this, "accessibility")
+            BootReceiver.restore(this, "accessibility")
+        }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
