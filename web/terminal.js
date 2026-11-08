@@ -31,7 +31,7 @@ export async function terminal() {
   const term = new Terminal({
     fontFamily: 'monospace', fontSize: 15, cursorBlink: true, scrollback: 2000,
     overviewRuler: { width: 1 }, // FitAddon keeps this much free on the right for a scrollbar (14px unset); touch scrolls
-    theme: { background: '#000000', foreground: '#edeef0', cursor: '#ff3b30', selectionBackground: '#ff3b3055' },
+    theme: { background: '#000000', foreground: '#edeef0', cursor: '#aeb4bc', selectionBackground: '#aeb4bc55' },
   });
   const fit = new FitAddon();
   term.loadAddon(fit);

@@ -1,5 +1,5 @@
 /* Desktop (desktop.js): the VNC desktop made for a phone. */
-:root { --dbar:#000; --fg:#edeef0; --track:#17171a; --accent:#ff3b30; }
+:root { --dbar:#000; --fg:#edeef0; --track:#17171a; --accent:#aeb4bc; --on-accent:#0b0c0e; }
 #app.desktop { background:#000; }
 
 #view { position:relative; flex:1; min-height:0; overflow:hidden; background:#111; }
@@ -10,11 +10,11 @@
 #keys { display:none; gap:6px; padding:6px 8px 0; background:var(--dbar); overflow-x:auto; scrollbar-width:none; }
 #app.typing #keys { display:flex; }
 #keys button, #kb { flex:none; height:34px; min-width:44px; padding:0 10px; border:0; border-radius:8px; background:var(--track); color:var(--fg); font:inherit; }
-#keys button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+#keys button[aria-pressed="true"] { background:var(--accent); color:var(--on-accent); }
 #bar { display:flex; align-items:center; gap:10px; height:48px; padding:0 10px; background:var(--dbar); }
 #kb, #hover, #zoom { min-width:40px; padding:0; display:flex; align-items:center; justify-content:center; }
 #hover, #zoom { flex:none; height:34px; border:0; border-radius:8px; background:var(--track); color:var(--fg); }
-#app.typing #kb, #app.hovering #hover, #app.whole #zoom { background:var(--accent); color:#fff; }
+#app.typing #kb, #app.hovering #hover, #app.whole #zoom { background:var(--accent); color:var(--on-accent); }
 /* Hover mode: where the pointer was left, a ring that fades. */
 #ptr { position:absolute; z-index:3; width:26px; height:26px; margin:-13px 0 0 -13px; border:2px solid var(--accent); border-radius:50%; pointer-events:none; opacity:0; transition:opacity .9s; }
 #ptr.on { opacity:1; transition:none; }

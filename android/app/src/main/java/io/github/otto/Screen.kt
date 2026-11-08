@@ -453,7 +453,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         filesUp.alpha = if (up) 1f else 0.3f
         filesHome.isEnabled = home
         filesHome.alpha = if (home) 1f else 0.3f
-        filesHidden.setColorFilter(if (hidden) BrowserService.ACCENT else BrowserService.TEXT)
+        filesHidden.setColorFilter(if (hidden) BrowserService.TEXT else BrowserService.MUTED)
     }
 
     /**
@@ -690,7 +690,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         pull.rotation = d / most * 270
         val ready = min(1f, d / most)
         pull.alpha = ready
-        pull.setColorFilter(if (ready >= 1) BrowserService.ACCENT else BrowserService.TEXT)
+        pull.setColorFilter(if (ready >= 1) BrowserService.TEXT else BrowserService.MUTED)
     }
 
     private fun hidePull(reloading: Boolean) {
