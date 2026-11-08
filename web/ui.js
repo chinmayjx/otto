@@ -21,6 +21,7 @@ export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCode
 
 const ICON = {
   back: '<path d="M15 18 9 12l6-6"/>',
+  home: '<path d="M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4.5v-6h-5v6H5a1 1 0 0 1-1-1z"/>',
   download: '<path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/>',
   more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
   latest: '<path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/>',
@@ -114,7 +115,7 @@ export function close(fallback) {
 export function viewerShell(title, label, on) {
   app.className = 'viewer';
   app.innerHTML = `<div class="bar">
-      <button class="icon-btn" data-act="close" aria-label="Back">${icon('back')}</button>
+      <button class="icon-btn" data-act="close" aria-label="Artifacts home">${icon('home')}</button>
       <div class="vt"><b></b><button data-act="label"></button></div>
       <button class="icon-btn" data-act="download" aria-label="Download" ${on.download ? '' : 'hidden'}>${icon('download')}</button>
       <button class="icon-btn" data-act="more" aria-label="More" ${on.more ? '' : 'hidden'}>${icon('more')}</button>
