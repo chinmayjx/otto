@@ -3,7 +3,12 @@
   "private": true,
   "description": "Your phone and a Linux box, wired together for any coding agent",
   "license": "MIT",
-  "workspaces": ["box/relay", "cli", "mcp"],
+  "workspaces": [
+    "box/relay",
+    "cli",
+    "mcp",
+    "adapters"
+  ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "npm test --workspaces --if-present"

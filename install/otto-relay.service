@@ -1,0 +1,15 @@
+# The relay, as a system service on the box. Copy to /etc/systemd/system/, set User and the path, then
+# systemctl enable --now otto-relay. It needs the tailnet up (it listens on the box's Tailscale address).
+[Unit]
+Description=Otto relay: the phone's browser and device for agents on this box
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+ExecStart=/usr/bin/node /home/ubuntu/code/personal/otto/box/relay/dist/main.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

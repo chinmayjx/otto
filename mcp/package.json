@@ -1,0 +1,17 @@
+{
+  "name": "@otto/mcp",
+  "private": true,
+  "type": "module",
+  "description": "The eyes MCP server: screenshots of the desktop, the phone's browser and the phone, inline",
+  "bin": { "otto-eyes": "dist/main.js" },
+  "scripts": { "build": "tsc -p ." },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@otto/cli": "*",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}
