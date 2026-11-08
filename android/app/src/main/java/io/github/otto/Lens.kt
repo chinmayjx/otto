@@ -473,7 +473,7 @@ class Lens private constructor(base: Context, private val handle: (Boolean) -> U
         }
 
         private fun outline(c: Canvas, s: RectF, on: Boolean) {
-            line.color = if (on) BrowserService.ACCENT else STEEL
+            line.color = if (on) BrowserService.ACCENT else Collector.CHIP_OFF
             line.strokeWidth = if (on) dp(2).toFloat() else dp(1.5f)
             c.drawRect(s, line)
             if (!on) return
@@ -621,7 +621,6 @@ class Lens private constructor(base: Context, private val handle: (Boolean) -> U
     private fun dp(v: Float) = v * ctx.resources.displayMetrics.density
 
     companion object {
-        private val STEEL = Color.parseColor("#aeb4bc") // the selections that aren't the active one
         private const val DIM = 0x66000000 // over what isn't selected
         private const val DRAFT = "lens"
         private const val FADE_OUT_MS = 110L

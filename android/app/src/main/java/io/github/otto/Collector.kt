@@ -3,12 +3,16 @@ package io.github.otto
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.content.res.ColorStateList
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
@@ -88,8 +92,8 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     var frozen = false
         set(v) {
             field = v
-            capture.setColorFilter(if (v) BrowserService.TEXT else BrowserService.MUTED)
-            capture.background = rounded(if (v) BrowserService.LINE else BrowserService.FIELD, if (v) BrowserService.TEXT else BrowserService.LINE)
+            capture.setColorFilter(if (v) BrowserService.ACCENT else ICON)
+            capture.background = round(v)
             capture.contentDescription = if (v) "Unfreeze" else if (docked) "Freeze the page to select parts of it" else "Freeze the screen to select parts of it"
             changed()
         }
@@ -120,7 +124,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         defaultFocusHighlightEnabled = false
 
         val hairline = View(ctx)
-        hairline.setBackgroundColor(BrowserService.LINE)
+        hairline.setBackgroundColor(HAIRLINE)
         addView(hairline, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, max(1, dp(1) / 2 + 1)))
         if (!docked) {
             // The grip: a slim full-width strip on the top edge, with a short bar in the middle, dragged up and down.
@@ -145,50 +149,51 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             rightMargin = dp(12)
         })
 
-        // The toolbar: ×, freeze, whole, (docked) the place, and Copy at the right end.
+        // The toolbar: ×, freeze, whole, (docked) the place, and Copy at the right end. The icons are plain round
+        // buttons, with no box; the freeze toggle, when on, gets a soft fill and the accent.
         val bar = LinearLayout(ctx)
         bar.gravity = Gravity.CENTER_VERTICAL
         fun icon(v: ImageView, res: Int, run: () -> Unit) {
             v.setImageResource(res)
-            v.setColorFilter(BrowserService.TEXT)
+            v.setColorFilter(ICON)
             v.scaleType = ImageView.ScaleType.CENTER
-            v.background = rounded(BrowserService.FIELD, BrowserService.LINE)
+            v.background = round(false)
             v.setOnClickListener {
                 // Taken as it is on screen: after the keyboard has gone and the layout has settled.
                 val ime = rootWindowInsets?.isVisible(android.view.WindowInsets.Type.ime()) == true
                 hideKeyboard()
                 if (ime) postDelayed({ run() }, 450) else run()
             }
-            bar.addView(v, LayoutParams(dp(BUTTON), dp(BUTTON)).apply { marginEnd = dp(6) })
+            bar.addView(v, LayoutParams(dp(BUTTON), dp(BUTTON)).apply { marginEnd = dp(4) })
         }
-        icon(close, R.drawable.ccm_close) { onClose() }
-        close.background = null // compact: just the ×
-        close.setColorFilter(BrowserService.MUTED)
+        icon(close, R.drawable.ccm_x) { onClose() }
         close.contentDescription = if (docked) "Close the collector" else "Close the lens"
-        (close.layoutParams as LayoutParams).apply {
-            width = dp(30)
-            marginEnd = dp(4)
-        }
-        icon(capture, R.drawable.ccm_capture) { onCapture() }
+        icon(capture, R.drawable.ccm_freeze) { onCapture() }
         icon(whole, R.drawable.ccm_whole) { onWhole() }
         whole.contentDescription = if (docked) "Take the whole page in view" else "Take the whole screen"
-        placeButton = button("+ Note", BrowserService.TEXT, rounded(BrowserService.FIELD, BrowserService.LINE))
-        placeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        // The place: a small outlined pill.
+        placeButton = button("+ Note", ICON, pill(Color.TRANSPARENT, BrowserService.LINE, dp(16)))
+        placeButton.typeface = Typeface.DEFAULT
+        placeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
         placeButton.minWidth = 0
-        placeButton.setPadding(dp(10), 0, dp(10), 0)
+        placeButton.setPadding(dp(12), 0, dp(12), 0)
         placeButton.visibility = GONE
-        bar.addView(placeButton, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(BUTTON)))
+        bar.addView(placeButton, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { marginStart = dp(2) })
         bar.addView(View(ctx), LayoutParams(0, 1, 1f))
-        copy = button("Copy", BrowserService.ON_ACCENT, rounded(BrowserService.ACCENT, BrowserService.ACCENT))
-        copy.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-        copy.minWidth = dp(64)
+        // Copy: a pill with a small copy icon; grey (not a dimmed accent) while there's nothing to send.
+        copy = button("Copy", BrowserService.ON_ACCENT, pill(BrowserService.ACCENT, BrowserService.ACCENT, dp(19)))
+        copy.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        copy.minWidth = 0
+        copy.setPadding(dp(16), 0, dp(18), 0)
+        copy.compoundDrawablePadding = dp(6)
+        copy.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ccm_copy, 0, 0, 0)
         copy.contentDescription = "Copy: send to the box, and a reference to the clipboard"
         copy.setOnClickListener {
             if (busy || !ready()) return@setOnClickListener
             hideKeyboard()
             onCopy()
         }
-        bar.addView(copy, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(BUTTON)))
+        bar.addView(copy, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)))
         addView(bar, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(if (docked) 8 else 2)
             leftMargin = dp(12)
@@ -205,8 +210,8 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             rightMargin = dp(14)
         })
 
-        // The note: one full-width strip that grows to four lines.
-        note.setHintTextColor(BrowserService.MUTED)
+        // The note: one full-width rounded strip that grows to four lines, its caret in the accent.
+        note.setHintTextColor(PLACEHOLDER)
         note.setTextColor(BrowserService.TEXT)
         note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
         note.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
@@ -215,9 +220,13 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         note.maxLines = 4
         note.gravity = Gravity.CENTER_VERTICAL or Gravity.START
         note.imeOptions = EditorInfo.IME_FLAG_NO_FULLSCREEN
-        note.minHeight = dp(44)
-        note.setPadding(dp(12), dp(9), dp(12), dp(9))
-        note.background = rounded(BrowserService.FIELD, BrowserService.LINE)
+        note.minHeight = dp(46)
+        note.setPadding(dp(16), dp(11), dp(16), dp(11))
+        note.background = pill(NOTE_FILL, NOTE_LINE, dp(23))
+        note.textCursorDrawable = GradientDrawable().apply {
+            setColor(BrowserService.ACCENT)
+            setSize(dp(2), 1)
+        }
         note.setOnTouchListener { _, e ->
             if (e.actionMasked == MotionEvent.ACTION_DOWN) onNoteTouch()
             false
@@ -246,7 +255,11 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     /** The note's placeholder and Copy's state, after the text, the chips or the freeze changed. */
     private fun changed() {
         note.hint = if (frozen && pieces.isEmpty()) "Drag to select" else "Add a note"
-        copy.alpha = if (ready() || busy) 1f else 0.4f
+        val on = ready() || busy
+        copy.background = if (on) pill(BrowserService.ACCENT, BrowserService.ACCENT, dp(19)) else pill(OFF_FILL, OFF_FILL, dp(19))
+        val fg = if (on) BrowserService.ON_ACCENT else OFF_TEXT
+        copy.setTextColor(fg)
+        copy.compoundDrawablesRelative[0]?.setTint(fg)
     }
 
     /** The text button left of capture: [text] runs [run]; null hides it. */
@@ -355,6 +368,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
         private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
         private val dst = RectF()
+        private val clip = Path()
 
         override fun onDraw(c: Canvas) {
             val p = pieces.getOrNull(i) ?: return
@@ -364,13 +378,19 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             val w = p.width * k
             val h = p.height * k
             dst.set((width - w) / 2, (height - h) / 2, (width + w) / 2, (height + h) / 2)
+            // A rounded chip: the picture clipped to its corners, the outline round them.
+            val r = 8 * resources.displayMetrics.density
+            clip.reset()
+            clip.addRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, Path.Direction.CW)
+            c.save()
+            c.clipPath(clip)
             c.drawColor(BrowserService.FIELD)
             p.draw(c, dst, paint)
-            val on = p.active
-            outline.color = if (on) BrowserService.ACCENT else BrowserService.LINE
-            outline.strokeWidth = if (on) dp(2).toFloat() else max(1, dp(1)).toFloat()
+            c.restore()
+            outline.color = if (p.active) BrowserService.ACCENT else CHIP_OFF
+            outline.strokeWidth = 1.5f * resources.displayMetrics.density
             val half = outline.strokeWidth / 2
-            c.drawRect(half, half, width - half, height - half, outline)
+            c.drawRoundRect(half, half, width - half, height - half, r - half, r - half, outline)
         }
     }
 
@@ -402,6 +422,26 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         isFocusable = false // a tap leaves the text's focus (and the keyboard) where it is until the button acts
     }
 
+    /** A pill (or any rounded box) of [fill], with a 1dp [stroke] border. */
+    private fun pill(fill: Int, stroke: Int, radius: Int) = GradientDrawable().apply {
+        setColor(fill)
+        cornerRadius = radius.toFloat()
+        setStroke(max(1, dp(1)), stroke)
+    }
+
+    /** A round icon button's background: a ripple, over a soft fill when [on]. */
+    private fun round(on: Boolean): RippleDrawable {
+        val disc = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(if (on) ON_FILL else Color.TRANSPARENT)
+        }
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(Color.WHITE)
+        }
+        return RippleDrawable(ColorStateList.valueOf(RIPPLE), disc, mask)
+    }
+
     private fun rounded(color: Int, stroke: Int) = GradientDrawable().apply {
         setColor(color)
         cornerRadius = dp(10).toFloat()
@@ -412,7 +452,20 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
 
     companion object {
         private const val CHIP_ROW = 56
-        private const val BUTTON = 38
+        private const val BUTTON = 40
+
+        // The toolbar's own greys (the theme's are in BrowserService): icons, the empty Copy, the note.
+        private val ICON = Color.parseColor("#c3c8cf") // the icon buttons, light steel
+        private const val ON_FILL = 0x1AFFFFFF // an icon button that's on: white at 10%
+        private const val RIPPLE = 0x33FFFFFF
+        private val OFF_FILL = Color.parseColor("#1e1e22") // Copy, with nothing to send
+        private val OFF_TEXT = Color.parseColor("#5f646b")
+        private val NOTE_FILL = Color.parseColor("#121214")
+        private val NOTE_LINE = Color.parseColor("#26262a")
+        private val PLACEHOLDER = Color.parseColor("#6f757d")
+        private val HAIRLINE = Color.parseColor("#1f1f23")
+        /** A chip, or a selection's box, that isn't the active one. */
+        val CHIP_OFF = Color.parseColor("#3a3a40")
 
         /** The notes in a docked collector's text: lines starting with a place in brackets, "[p.4] …". */
         private val NOTE = Regex("^\\[([^\\]]+)]\\s*(.*)$")
