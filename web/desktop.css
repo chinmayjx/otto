@@ -1,5 +1,5 @@
 /* Desktop (desktop.js): the VNC desktop made for a phone. */
-:root { --dbar:#000; --fg:#edeef0; --track:#17171a; --accent:#aeb4bc; --on-accent:#0b0c0e; }
+:root { --dbar:#000; --fg:#edeef0; --track:#17171a; --accent:#c8553d; --on-accent:#0b0c0e; }
 #app.desktop { background:#000; }
 
 #view { position:relative; flex:1; min-height:0; overflow:hidden; background:#111; }

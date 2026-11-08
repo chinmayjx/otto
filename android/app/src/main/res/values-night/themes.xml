@@ -1,10 +1,10 @@
 <resources>
-    <!-- AMOLED: true black, cards one step up with an outline (shadows don't show on black), steel accent. -->
+    <!-- AMOLED: true black, cards one step up with an outline (shadows don't show on black), brick accent. -->
     <style name="Theme.Otto" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">#AEB4BC</item>
+        <item name="colorPrimary">#C8553D</item>
         <item name="colorOnPrimary">#0B0C0E</item>
-        <item name="colorPrimaryContainer">#24272B</item>
-        <item name="colorOnPrimaryContainer">#E3E6EA</item>
+        <item name="colorPrimaryContainer">#3A1A13</item>
+        <item name="colorOnPrimaryContainer">#F6D3C9</item>
         <item name="colorSecondary">#AEB4BC</item>
         <item name="colorOnSecondary">#1A1D21</item>
         <item name="colorSecondaryContainer">#24272B</item>

@@ -268,7 +268,7 @@ const DOC_CSS = `
   :root { color-scheme: dark; }
   body { margin: 0; background: #000; color: #edeef0; font: 15px/1.6 system-ui, Roboto, sans-serif; }
   article { padding: 4px 16px 40px; overflow-wrap: anywhere; }
-  a { color: #c9d4e0; }
+  a { color: #e07a62; }
   h1, h2, h3 { line-height: 1.3; margin: 1.2em 0 .5em; }
   h1 { font-size: 1.5em; } h2 { font-size: 1.25em; } h3 { font-size: 1.1em; }
   code { font: 13px/1.5 ui-monospace, Menlo, monospace; background: #17171a; padding: 1px 4px; border-radius: 3px; }

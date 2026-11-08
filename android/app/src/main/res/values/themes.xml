@@ -1,10 +1,10 @@
 <resources>
-    <!-- Otto's own colours (not the wallpaper's): black, white and steel; the icon's red stays on the icon. Light: white. -->
+    <!-- Otto's own colours (not the wallpaper's): steel greys and a brick red accent. Light: white. -->
     <style name="Theme.Otto" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="colorPrimary">#4A515B</item>
+        <item name="colorPrimary">#A8432D</item>
         <item name="colorOnPrimary">#FFFFFF</item>
-        <item name="colorPrimaryContainer">#E3E6EA</item>
-        <item name="colorOnPrimaryContainer">#1A1D21</item>
+        <item name="colorPrimaryContainer">#F9DED6</item>
+        <item name="colorOnPrimaryContainer">#3A0F06</item>
         <item name="colorSecondary">#5E6570</item>
         <item name="colorOnSecondary">#FFFFFF</item>
         <item name="colorSecondaryContainer">#E3E6EA</item>
