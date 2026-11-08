@@ -204,13 +204,41 @@ private fun markdownBlocks(col: LinearLayout, markwon: Markwon, text: String, fg
         // A sideways scroll measures its child with no width limit and ignores the layout width: set it on the view.
         tv.minWidth = width
         tv.maxWidth = width
-        col.addView(HorizontalScrollView(c).apply {
+        col.addView(SidewaysScroll(c).apply {
             isFillViewport = true // narrower than the screen: the full width, as before
             isHorizontalScrollBarEnabled = false
             addView(tv, FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT))
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
     flush(true)
+}
+
+/**
+ * A sideways scroll inside the page's vertical one. A finger always drifts a little, and the page took the drag the
+ * moment it drifted past the slop vertically, before the sideways movement got there; this one holds the gesture
+ * from the first touch and lets the page have it only once the finger is clearly going up or down.
+ */
+private class SidewaysScroll(c: android.content.Context) : HorizontalScrollView(c) {
+    private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
+    private var x0 = 0f
+    private var y0 = 0f
+
+    override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
+        when (e.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                x0 = e.x
+                y0 = e.y
+                // Nothing to scroll (the table fits): leave the page alone.
+                if (getChildAt(0)?.let { it.width > width } == true) parent.requestDisallowInterceptTouchEvent(true)
+            }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                val dx = kotlin.math.abs(e.x - x0)
+                val dy = kotlin.math.abs(e.y - y0)
+                if (dy > slop && dy > dx) parent.requestDisallowInterceptTouchEvent(false)
+            }
+        }
+        return super.dispatchTouchEvent(e)
+    }
 }
 
 /** A table's natural width: its widest cell (on one line, up to 240dp, plus the cell padding) times its columns. */
