@@ -98,6 +98,8 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         orientation = VERTICAL
         background = GradientDrawable().apply { setColor(BrowserService.BG) }
         isClickable = true // nothing falls through to what's under it
+        isFocusable = false // nor does it take the focus (and its grey highlight) when the text lets go of it
+        defaultFocusHighlightEnabled = false
 
         if (!docked) {
             // The grip: a full-width strip on the top edge, with a short bar in the middle, dragged up and down.

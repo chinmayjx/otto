@@ -25,6 +25,7 @@
     <application
         android:name=".App"
         android:allowBackup="false"
+        android:networkSecurityConfig="@xml/network_security"
         android:label="Otto"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"

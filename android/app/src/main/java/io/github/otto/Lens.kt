@@ -60,9 +60,10 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
     private val root = Root(ctx)
     private val image = Frozen(ctx)
     private val collector = Collector(ctx, docked = false)
-    private var lift = 0f // how far the collector is dragged up from the bottom
+    private var lift = 0f // how far the collector's bottom is dragged up from the screen's
     private var liftAtDown = 0f
     private var topInset = 0
+    private var bottomInset = 0 // the navigation bar's, or the keyboard's when it's up
     private var sent = false
     private var gone = false
 
@@ -86,34 +87,36 @@ class Lens private constructor(base: Context, private val shot: Bitmap, private 
             }
         }
         collector.onDrag = { dy ->
-            if (dy == null) liftAtDown = lift
+            if (dy == null) liftAtDown = max(lift, bottomInset.toFloat())
             else {
                 lift = (liftAtDown - dy).coerceIn(0f, maxLift())
-                collector.translationY = -lift
+                place()
             }
         }
         root.addView(collector, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
-        // Dragged up, it stays where it was put as it grows or the keyboard comes, but never past the top.
-        collector.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
-            if (lift > maxLift()) {
-                lift = maxLift()
-                liftAtDown = lift
-                collector.translationY = -lift
-            }
-        }
+        // Dragged up, it stays where it was put as it grows, but never past the top.
+        collector.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> place() }
 
         // Laid out under the system bars and the keyboard: the image stays put, the collector keeps clear of them.
         root.setOnApplyWindowInsetsListener { _, insets ->
             val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
             val ime = insets.getInsets(WindowInsets.Type.ime())
-            collector.setPadding(b.left, 0, b.right, max(b.bottom, ime.bottom))
+            collector.setPadding(b.left, 0, b.right, 0)
             topInset = b.top
+            bottomInset = max(b.bottom, ime.bottom)
+            place()
             WindowInsets.CONSUMED
         }
         chipsChanged()
     }
 
     private fun maxLift() = max(0f, (root.height - topInset - collector.height).toFloat())
+
+    /** Where it was dragged to, but always above the navigation bar and the keyboard. */
+    private fun place() {
+        lift = min(lift, maxLift())
+        collector.translationY = -max(lift, bottomInset.toFloat())
+    }
 
     /** The draft from the last lens that wasn't sent: its text and images. */
     private fun restore(d: Drafts.Draft) {

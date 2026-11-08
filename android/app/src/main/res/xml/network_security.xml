@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Plain HTTP only to "otto-relay": the relay's box API, which the app reaches over its tunnel's pipes (Clips), never
+     by that name on any network. Everything else stays HTTPS (the tailnet's services have real certificates). -->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">otto-relay</domain>
+    </domain-config>
+</network-security-config>
