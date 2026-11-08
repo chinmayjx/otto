@@ -33,10 +33,10 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
-/** Dark: AMOLED black, surfaces one step up, brick red accent (as res/values-night/themes.xml). */
+/** Dark: AMOLED black, surfaces one step up, lavender accent (as res/values-night/themes.xml). */
 private val Dark = darkColorScheme(
-    primary = Color(0xFFC8553D), onPrimary = Color(0xFF0B0C0E),
-    primaryContainer = Color(0xFF3A1A13), onPrimaryContainer = Color(0xFFF6D3C9),
+    primary = Color(0xFFAB9CF2), onPrimary = Color(0xFF0B0C0E),
+    primaryContainer = Color(0xFF2A2540), onPrimaryContainer = Color(0xFFE4DEFF),
     secondary = Color(0xFFAEB4BC), onSecondary = Color(0xFF1A1D21),
     secondaryContainer = Color(0xFF24272B), onSecondaryContainer = Color(0xFFE3E6EA),
     tertiary = Color(0xFFAEB4BC), onTertiary = Color(0xFF1A1D21),
@@ -51,10 +51,10 @@ private val Dark = darkColorScheme(
     errorContainer = Color(0xFF3B0A18), onErrorContainer = Color(0xFFFFD9DF),
 )
 
-/** Light: white, with a darker brick accent (as res/values/themes.xml). */
+/** Light: white, with a deeper lavender accent (as res/values/themes.xml). */
 private val Light = lightColorScheme(
-    primary = Color(0xFFA8432D), onPrimary = Color.White,
-    primaryContainer = Color(0xFFF9DED6), onPrimaryContainer = Color(0xFF3A0F06),
+    primary = Color(0xFF6E5BD0), onPrimary = Color.White,
+    primaryContainer = Color(0xFFE8E2FF), onPrimaryContainer = Color(0xFF22125E),
     secondary = Color(0xFF5E6570), onSecondary = Color.White,
     secondaryContainer = Color(0xFFE3E6EA), onSecondaryContainer = Color(0xFF1A1D21),
     tertiary = Color(0xFF5E6570), onTertiary = Color.White,

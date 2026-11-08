@@ -705,13 +705,13 @@ class BrowserService : Service() {
 
         const val AGENT = "agent"
         private const val TAG = "BrowserService"
-        // The second screen's colours (always dark): AMOLED black, steel greys, and a soft brick red as the accent.
+        // The second screen's colours (always dark): AMOLED black, steel greys, and a soft lavender as the accent (primary).
         val BG = Color.parseColor("#000000")
         val FIELD = Color.parseColor("#17171a")
         val LINE = Color.parseColor("#2e2e33")
         val TEXT = Color.parseColor("#edeef0")
         val MUTED = Color.parseColor("#8e949c")
-        val ACCENT = Color.parseColor("#c8553d") // the one primary button's fill, and marks
+        val ACCENT = Color.parseColor("#ab9cf2") // the one primary button's fill, and marks
         val ON_ACCENT = Color.parseColor("#0b0c0e") // text and icons on ACCENT
         private const val HOME = "https://www.google.com"
         private const val MAX_LIVE = 5 // live WebViews, besides those of woken groups

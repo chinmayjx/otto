@@ -1,6 +1,6 @@
 :root {
   --bg: #000; --raised: #0e0e10; --field: #17171a; --line: rgb(255 255 255 / .09);
-  --text: #edeef0; --muted: #8e949c; --accent: #c8553d; --on-accent: #0b0c0e; --danger: #ff6b81;
+  --text: #edeef0; --muted: #8e949c; --accent: #ab9cf2; --on-accent: #0b0c0e; --danger: #ff6b81;
   --bar: 48px;
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
