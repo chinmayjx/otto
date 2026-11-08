@@ -137,9 +137,9 @@ class OverlayService : Service(), Screen.Host {
         val h = FrameLayout(this)
         val pill = View(this)
         pill.background = GradientDrawable().apply {
-            setColor(BrowserService.ACCENT)
+            setColor(STEEL) // the icon ring's steel: reads on dark, white and photos without looking like an alert
             cornerRadius = dp(3).toFloat()
-            alpha = 220
+            alpha = 230
         }
         h.addView(pill, FrameLayout.LayoutParams(dp(5), dp(76), Gravity.CENTER_VERTICAL or Gravity.END).apply { rightMargin = dp(3) })
         h.contentDescription = "Otto"
@@ -256,6 +256,7 @@ class OverlayService : Service(), Screen.Host {
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
+        private val STEEL = android.graphics.Color.parseColor("#aeb4bc")
         const val ACTION_START = "start" // the handle, the screen closed
         const val ACTION_SHOW = "show" // the screen, where it was left
         const val ACTION_OPEN = "open" // extra "url": a link from another app (LinkActivity)
