@@ -32,7 +32,6 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.SurfaceControlViewHost
 import android.view.SurfaceView
-import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
@@ -75,9 +74,9 @@ import kotlin.math.roundToInt
  * (OverlayService). Files is a file manager, the browser a browser.
  *
  * The top bar: the section's name as a title (tap it to switch sections), then, for the browser, the tab block,
- * whose menu holds the address bar and the tabs, as BrowserService reports them. A drag right on the bar fades the
- * screen out as it goes, a pull down on it reloads; Back walks back (the viewer, the section's history) and then
- * closes.
+ * whose menu holds the address bar and the tabs, as BrowserService reports them. A pull down on the bar reloads;
+ * Back walks back (the viewer, the section's history) and then closes. Nothing on the screen itself swipes it away:
+ * the handle, Back and Home put it away.
  *
  * Sections: Files, Artifacts and Devbox, native (Compose, io.github.otto.ui); Desktop and Terminal, the app's own
  * web UI (AppWeb, a WebView each, under the bar); and Browser, BrowserService's views drawn here from the
@@ -141,13 +140,10 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private var settle: ValueAnimator? = null
     private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
     private var tracking = false
-    private var dragging = false
     private var pulling = false
     private val pull: ImageView // the reload mark a pull down on the top bar brings down
     private var downX = 0f
     private var downY = 0f
-    private var downPosition = 0f
-    private var velocity: VelocityTracker? = null
     private var topInset = 0
     private var refocus = false // the window's next focus goes on to the section in view (see Root.onWindowFocusChanged)
     private var terminalState: JSONObject? = null
@@ -595,9 +591,9 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         }
     }
 
-    // Moving. The handle (OverlayService) brings the screen in and out through animateTo; here, a horizontal drag
-    // that starts on the top bar (or the viewer's header) pushes it out, following the finger, and the views under
-    // the finger get a cancel instead. A pull down on the bar reloads.
+    // Moving. The handle (OverlayService) brings the screen in and out through animateTo, and Back and Home put it
+    // away; no swipe on the screen does. A pull down on the top bar (or the viewer's header) reloads: the views under
+    // the finger get a cancel instead.
 
     /** The window's view: asks onTouch first, and takes Back. */
     private inner class Root(c: Context) : FrameLayout(c) {
@@ -644,81 +640,41 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private fun onTouch(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                dragging = false
-                tracking = startsDrag(e)
-                if (tracking) {
-                    downX = e.x
-                    downY = e.y
-                    downPosition = position
-                    pulling = false
-                    settle?.cancel()
-                    velocity = VelocityTracker.obtain().also { it.addMovement(e) }
-                }
+                tracking = startsPull(e)
+                pulling = false
+                downX = e.x
+                downY = e.y
                 return false
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!tracking) return false
-                val vt = velocity!!
-                vt.addMovement(e)
                 val dx = e.x - downX
                 val dy = e.y - downY
                 if (pulling) {
                     showPull(dy)
                     return true
                 }
-                if (!dragging && dy > slop && dy > 2 * abs(dx)) { // down on the top bar: reload
+                if (dy > slop && dy > 2 * abs(dx)) { // down on the top bar: reload
                     pulling = true
                     root.cancelChildren(e)
                     showPull(dy)
                     return true
                 }
-                if (!dragging) {
-                    if (abs(dx) < slop || abs(dx) < 2 * abs(dy)) return false
-                    if (dx < 0) { // only out, to the right
-                        tracking = false
-                        vt.recycle()
-                        velocity = null
-                        return false
-                    }
-                    dragging = true
-                    root.cancelChildren(e)
-                }
-                setPosition(downPosition - dx / width())
-                return true
+                if (max(abs(dx), abs(dy)) > slop) tracking = false // something else: the views under it have it
+                return false
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (!tracking) return false
                 tracking = false
-                val vt = velocity!!
-                velocity = null
-                if (pulling) {
-                    vt.recycle()
-                    pulling = false
-                    val go = e.actionMasked == MotionEvent.ACTION_UP && e.y - downY >= dp(PULL_DP)
-                    if (go) reload()
-                    hidePull(go)
-                    return true
-                }
-                if (!dragging) {
-                    vt.recycle()
-                    return false
-                }
-                vt.addMovement(e)
-                vt.computeCurrentVelocity(1000)
-                val vx = vt.xVelocity
-                vt.recycle()
-                dragging = false
-                release(vx)
+                if (!pulling) return false
+                pulling = false
+                val go = e.actionMasked == MotionEvent.ACTION_UP && e.y - downY >= dp(PULL_DP)
+                if (go) reload()
+                hidePull(go)
                 return true
             }
         }
-        return tracking && (dragging || pulling)
-    }
-
-    /** A drag let go: a flick decides, else whichever side is nearer. */
-    private fun release(vx: Float) {
-        if (abs(vx) > dp(400)) animateTo(if (vx < 0) 1f else 0f)
-        else animateTo(if (position > 0.5f) 1f else 0f)
+        return tracking && pulling
     }
 
     // Pulling down on the top bar (or the viewer's header) reloads what's on screen: the viewer, the browser tab or the section.
@@ -755,8 +711,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         }
     }
 
-    /** A drag can start on the top bar, or (the viewer covers the bar) on the viewer's header band. */
-    private fun startsDrag(e: MotionEvent): Boolean {
+    /** A pull can start on the top bar, or (the viewer covers the bar) on the viewer's header band. */
+    private fun startsPull(e: MotionEvent): Boolean {
         if (position < 0.5f) return false
         val r = Rect()
         bar.getGlobalVisibleRect(r)
@@ -765,13 +721,6 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             r.bottom = r.top + dp(TOP_BAND_DP)
         }
         return r.contains(e.x.toInt(), e.y.toInt())
-    }
-
-    /** Puts the screen where a finger has it. */
-    fun setPosition(p: Float) {
-        settle?.cancel()
-        position = p.coerceIn(0f, 1f)
-        apply()
     }
 
     fun animateTo(target: Float) {
@@ -820,11 +769,6 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             }
             devboxModel.shown(open && tab == DEVBOX) // its metrics poll only while it's in view
         }
-    }
-
-    private fun width(): Float {
-        val w = root.width
-        return if (w > 0) w.toFloat() else ctx.resources.displayMetrics.widthPixels.toFloat()
     }
 
     // The top bar.
