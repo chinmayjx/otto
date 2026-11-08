@@ -364,7 +364,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     }
 
     /** A page in the browser, from a link in the viewer: Back comes back to the viewer. */
-    private fun openFromViewer(url: String) {
+    fun openFromViewer(url: String) {
         val cur = shown
         if (viewer == null || cur == null) return open(url)
         send(BrowserService.MSG_LOAD, "url", url)
@@ -585,19 +585,19 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
      * A viewer, and where Back goes from it. [root]: reached from outside Otto (a link in another app), so Back hides
      * the screen; otherwise from inside, so Back comes back: to the viewer this one was opened from, or to the list.
      */
-    private class Entry(val hash: String, val target: Target?, val hint: ArtifactItem?, val web: Boolean)
+    private class Entry(val target: Target, val hint: ArtifactItem?)
 
+    /** A viewer at a route (#artifact/<id>[/v<n>], #view/<id>, #file?path=), always the native one. */
     fun showViewer(hash: String, root: Boolean = false): Boolean {
-        if (!Links.isViewer(hash)) return false
-        val t = Target.parse(hash)
-        navigate(Entry(hash, t, null, t == null), root)
+        val t = Target.parse(hash) ?: return false
+        navigate(Entry(t, null), root)
         return true
     }
 
-    private fun showRoot(t: Target) = navigate(Entry(t.hash, t, null, false), root = true)
+    private fun showRoot(t: Target) = navigate(Entry(t, null), root = true)
 
     /** From a list (Artifacts, Files, Clipboard) or a viewer, inside Otto. */
-    private fun showViewer(t: Target, hint: ArtifactItem?) = navigate(Entry(t.hash, t, hint, hint?.kind == "html"), root = false)
+    private fun showViewer(t: Target, hint: ArtifactItem?) = navigate(Entry(t, hint), root = false)
 
     private fun navigate(e: Entry, root: Boolean) {
         val cur = shown
@@ -616,25 +616,13 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         display(e)
     }
 
-    /** Shows a viewer, leaving the stack as it is. HTML artifacts are web pages: the web viewer shows them. */
+    /** Shows a viewer (the native one, whatever it shows: the web UI's viewer isn't the app's), leaving the stack as it is. */
     private fun display(e: Entry) {
         removeViewer()
         shown = e
         viewerTarget = e.target
         viewerHint = e.hint
-        val t = e.target
-        val v = if (!e.web && t != null) compose.view(ctx, ops) { Viewer(t, e.hint) }
-        else AppWeb.create(ctx, object : AppWeb.Ops {
-            override fun close() = up()
-            override fun open(hash: String) = showViewer(hash)
-        }).apply { loadUrl(AppWeb.URL + "#" + e.hash) }
-        putViewer(v)
-    }
-
-    /** The native viewer hands this one on to the web viewer (HTML): the same place, so the stack stays. */
-    private fun showWebViewer(hash: String): Boolean {
-        display(Entry(hash, Target.parse(hash), null, true))
-        return true
+        putViewer(compose.view(ctx, ops) { Viewer(e.target, e.hint) })
     }
 
     /** Up (← in the viewer's bar): the viewer's section, at home: the Artifacts list, the file's folder, the clips. */
@@ -689,9 +677,6 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         override fun openViewer(target: Target, hint: ArtifactItem?) = showViewer(target, hint)
         override fun closeViewer() = this@Screen.closeViewer()
         override fun up() = this@Screen.up()
-        override fun webViewer(target: Target) {
-            showWebViewer(target.hash)
-        }
         override fun openInBrowser(url: String) = openFromViewer(url)
         override fun download(url: String, name: String) = AppWeb.download(ctx, url, name)
         override fun share(text: String, title: String) {

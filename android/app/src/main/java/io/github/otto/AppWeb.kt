@@ -80,19 +80,7 @@ object AppWeb {
         // HTML artifacts' alert / confirm dialogs, and the devices input artifacts ask for: a MIDI keyboard and the
         // microphone. Everything this WebView shows is the owner's own (the app's UI, artifacts, the box's files),
         // so those are granted; the microphone needs the app's own Android permission first, asked for on first use.
-        web.webChromeClient = object : WebChromeClient() {
-            override fun onPermissionRequest(req: PermissionRequest) {
-                val grant = ArrayList<String>()
-                for (r in req.resources) {
-                    if (r == PermissionRequest.RESOURCE_MIDI_SYSEX) grant.add(r)
-                    else if (r == PermissionRequest.RESOURCE_AUDIO_CAPTURE) {
-                        if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) grant.add(r)
-                        else MainActivity.askForMicrophone(ctx) // a service can't ask: the app's screen does
-                    }
-                }
-                if (grant.isEmpty()) req.deny() else req.grant(grant.toTypedArray())
-            }
-        }
+        web.webChromeClient = devices(ctx)
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(v: WebView, req: WebResourceRequest): WebResourceResponse? {
                 val u = req.url
@@ -121,6 +109,51 @@ object AppWeb {
             }
         }
         return web
+    }
+
+    /**
+     * A WebView for a web page in the native viewer (an HTML artifact or file, framed): the same devices as the app's
+     * UI (MIDI, the microphone), media that plays on its own, and links that leave the page going to the second
+     * screen's browser. No bridge to the app.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    fun frame(ctx: Context): WebView {
+        val web = WebView(ctx)
+        // Its own size, not its content's: a WebView laid out to wrap its content gives the page no viewport height,
+        // so pages sized to the screen (100%, 100dvh) collapse to nothing. (AndroidView adds views as they come.)
+        web.layoutParams = android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT)
+        web.setBackgroundColor(BrowserService.BG)
+        web.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            mediaPlaybackRequiresUserGesture = false
+            setSupportMultipleWindows(false) // a link to a new window opens in this one's place: then the browser
+        }
+        web.webChromeClient = devices(ctx)
+        web.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
+                if (!req.isForMainFrame) return false // the framed page navigates inside itself
+                Screen.current?.openFromViewer(req.url.toString()) // Back comes back to the page
+                return true
+            }
+        }
+        return web
+    }
+
+    /** Alerts and confirms, and the devices pages ask for: a MIDI keyboard, the microphone (with the app's permission). */
+    private fun devices(ctx: Context) = object : WebChromeClient() {
+        override fun onPermissionRequest(req: PermissionRequest) {
+            val grant = ArrayList<String>()
+            for (r in req.resources) {
+                if (r == PermissionRequest.RESOURCE_MIDI_SYSEX) grant.add(r)
+                else if (r == PermissionRequest.RESOURCE_AUDIO_CAPTURE) {
+                    if (ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) grant.add(r)
+                    else MainActivity.askForMicrophone(ctx) // a service can't ask: the app's screen does
+                }
+            }
+            if (grant.isEmpty()) req.deny() else req.grant(grant.toTypedArray())
+        }
     }
 
     private fun handle(ctx: Context, ops: Ops, m: JSONObject) {

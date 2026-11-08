@@ -11,6 +11,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import io.github.otto.AppWeb
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -87,7 +90,7 @@ import kotlin.math.roundToInt
 /**
  * The viewer, native: an artifact (any version) or a file on the box, over the whole second screen. PDFs and
  * office files (their PDF) through PdfRenderer, images zoomable, audio and video through Media3, markdown through
- * Markwon, text and code. HTML, and what has no native view, goes to the web viewer (ScreenOps.webViewer).
+ * Markwon, text and code, and web pages (HTML artifacts and files) framed in a WebView: never the web UI's viewer.
  */
 @Composable
 fun Viewer(target: Target, hint: ArtifactItem?) {
@@ -104,23 +107,29 @@ fun Viewer(target: Target, hint: ArtifactItem?) {
     }
 }
 
-/** The viewer's bar: back, title (and a label button: the version), the collector's switch, download, ⋮. */
+/**
+ * The viewer's bar, one line, as tall as the second screen's own: home (Up), the title (ellipsized), the version
+ * right after it in the accent (it picks a version, and never shrinks: the title does), then the collector's switch,
+ * download and ⋮. Loading shows as a thin line along its bottom edge.
+ */
 @Composable
 private fun ViewerBar(title: String, label: String?, progress: Float?, onLabel: () -> Unit, onDownload: (() -> Unit)?, onMore: (() -> Unit)?,
                       clipping: Boolean? = null, onClip: () -> Unit = {}, home: String = "Artifacts home") {
     val ops = LocalOps.current
     val cs = MaterialTheme.colorScheme
     Surface(color = cs.surfaceContainer) {
-        Column {
-            Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.fillMaxWidth().height(48.dp)) {
+            Row(Modifier.fillMaxSize().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 // Up, as a home: always the section's home (the Artifacts list, the file's folder). System Back is
                 // contextual instead (ScreenOps.up, Screen.back).
                 IconButton(onClick = { ops.up() }) { Icon(painterResource(io.github.otto.R.drawable.ccm_home), home, Modifier.size(22.dp)) }
-                Column(Modifier.weight(1f).padding(start = 2.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(Modifier.weight(1f).padding(start = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
                     if (label != null) {
-                        Text(label, Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onLabel).padding(vertical = 1.dp),
-                            style = MaterialTheme.typography.labelMedium, color = cs.primary)
+                        Text(label, Modifier.padding(start = 6.dp).clip(RoundedCornerShape(6.dp)).clickable(onClick = onLabel)
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelLarge, color = cs.primary, maxLines = 1, softWrap = false)
                     }
                 }
                 if (clipping != null) IconButton(onClick = onClip) {
@@ -131,9 +140,9 @@ private fun ViewerBar(title: String, label: String?, progress: Float?, onLabel: 
                 if (onMore != null) IconButton(onClick = onMore) { Icon(Ic.more, "More") }
             }
             if (progress != null) {
-                if (progress < 0f) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
-                else LinearProgressIndicator({ progress }, Modifier.fillMaxWidth().height(2.dp))
-            } else Spacer(Modifier.height(2.dp))
+                val m = Modifier.fillMaxWidth().height(2.dp).align(Alignment.BottomCenter)
+                if (progress < 0f) LinearProgressIndicator(m) else LinearProgressIndicator({ progress }, m)
+            }
         }
     }
 }
@@ -171,10 +180,6 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
     }
 
     val cur = v
-    // HTML artifacts are web pages: the web viewer shows them.
-    LaunchedEffect(cur?.kind) {
-        if (cur != null && cur.kind == "html") ops.webViewer(target)
-    }
 
     val title = cur?.title ?: hint?.title ?: ""
     val behind = cur != null && cur.pinned && cur.version < cur.latest
@@ -192,7 +197,7 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
             onLabel = { if (cur != null) sheets.show { VersionsSheet(cur, sheets) { target = it } } },
             onDownload = cur?.let { { ops.download("${ArtifactsApi.files(ctx, it)}/download", it.filename) } },
             onMore = cur?.let { { sheets.show { ArtifactMoreSheet(it, sheets) } } },
-            clipping = if (cur != null && cur.kind != "html") clipping else null,
+            clipping = if (cur != null) clipping else null,
             onClip = {
                 clipping = !clipping
                 if (!clipping) clip?.save()
@@ -207,7 +212,7 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
                 cur == null -> {}
                 else -> androidx.compose.runtime.key(cur.versionId) {
                     CompositionLocalProvider(LocalPlace provides place) {
-                        ArtifactBody(cur, onProgress = { progress = it }, onNoPreview = { ops.webViewer(target) })
+                        ArtifactBody(cur, onProgress = { progress = it })
                     }
                 }
             }
@@ -454,20 +459,24 @@ private fun ClipImageViewer(t: Target.Clip) {
 }
 
 @Composable
-private fun ArtifactBody(v: ArtifactVersion, onProgress: (Float?) -> Unit, onNoPreview: () -> Unit) {
+private fun ArtifactBody(v: ArtifactVersion, onProgress: (Float?) -> Unit) {
     val ctx = LocalContext.current
     val ops = LocalOps.current
     val files = ArtifactsApi.files(ctx, v)
+    var noPdf by remember(v.versionId) { mutableStateOf(false) } // no preview.pdf (yet): the hub's page images
     when (v.kind) {
-        "pdf", "office" -> {
-            if (v.kind == "office" && v.preview == "failed") NoPreview(v.filename, "${files}/download", v.size, "The preview couldn't be made.")
-            else PdfBody("$files/preview.pdf", if (v.kind == "pdf") "$files/file" else null, "a-" + v.versionId, v.pages, onProgress, onNoPreview)
+        "pdf", "office" -> when {
+            v.kind == "office" && v.preview == "failed" -> NoPreview(v.filename, "${files}/download", v.size, "The preview couldn't be made.")
+            noPdf && !v.pages.isNullOrEmpty() -> PageImages(null, { n -> "$files/page/$n.svg" }, onProgress, v.pages)
+            noPdf -> NoPreview(v.filename, "$files/download", v.size, null)
+            else -> PdfBody("$files/preview.pdf", if (v.kind == "pdf") "$files/file" else null, "a-" + v.versionId, v.pages, onProgress) { noPdf = true }
         }
         "image" -> ZoomableImage("$files/file", v.title)
         "audio", "video" -> MediaPlayer("$files/file", v.kind == "audio")
         "markdown" -> TextBody("$files/file", "md-" + v.versionId, onProgress) { MarkdownText(it, ops::openInBrowser) }
         "text" -> TextBody("$files/file", "txt-" + v.versionId, onProgress) { CodeText(it, v.filename) }
-        "html" -> {}
+        // The hub's own page in embed mode: the artifact, plus the bridge its data needs (window.hub).
+        "html" -> HtmlBody("$files?embed=1", sandbox = false)
         else -> NoPreview(v.filename, "$files/download", v.size, null)
     }
 }
@@ -572,10 +581,6 @@ private fun FileViewer(target: Target.File, sheets: Sheets) {
         progress = null
     }
     val f = info
-    LaunchedEffect(f?.kind) {
-        // HTML pages, and office files (the box's hub previews those as page images), in the web viewer.
-        if (f != null && (f.kind == "html" || f.kind == "office")) ops.webViewer(target)
-    }
     val raw = FilesApi.raw(ctx, path)
     val download = FilesApi.url(ctx, "raw", path, "&download=1")
     Column(Modifier.fillMaxSize()) {
@@ -614,7 +619,9 @@ private fun FileViewer(target: Target.File, sheets: Sheets) {
                             CodeText(it, name, if (cut) "The first 2 MB of ${size(f.size)}" else null)
                         }
                     }
-                    "html", "office" -> {}
+                    // An HTML file is the box's, not one of Otto's pages: sandboxed, so its scripts can't reach the hub.
+                    "html" -> HtmlBody(raw, sandbox = true)
+                    "office" -> PageImages(FilesApi.url(ctx, "pages", path), { n -> FilesApi.url(ctx, "page", path, "&n=$n") }, { progress = it })
                     else -> NoPreview(name, download, f.size, null)
                 }
             }
@@ -724,6 +731,73 @@ private fun NoPreview(name: String, downloadUrl: String, size: Long, why: String
             androidx.compose.material3.FilledTonalButton(onClick = { ops.download(downloadUrl, name) }) { Text("Download") }
             Spacer(Modifier.width(12.dp))
             androidx.compose.material3.Button(onClick = { openWith(ctx, scope, ops, downloadUrl, name) }) { Text("Open with…") }
+        }
+    }
+}
+
+/**
+ * A web page as the viewer's body: an artifact (the hub's embed page) or an HTML file on the box. It's framed in a
+ * small page of its own, as the web viewer framed it: an artifact may use MIDI, the microphone and autoplay; a box
+ * file is sandboxed (no access to the hub that serves it). Links that leave it open in the second screen's browser.
+ */
+@Composable
+fun HtmlBody(url: String, sandbox: Boolean) {
+    val frame = remember(url, sandbox) {
+        val attrs = if (sandbox) "sandbox=\"allow-scripts allow-popups allow-forms allow-modals\""
+        else "allow=\"midi; microphone; autoplay; fullscreen\""
+        "<!doctype html><meta name=viewport content=\"width=device-width,initial-scale=1\"><style>html,body{margin:0;height:100%;" +
+            "background:#000}iframe{display:block;border:0;width:100%;height:100%}</style>" +
+            "<iframe $attrs src=\"${android.text.Html.escapeHtml(url)}\"></iframe>"
+    }
+    AndroidView(
+        factory = { c -> AppWeb.frame(c) },
+        update = { w ->
+            if (w.tag != frame) {
+                w.tag = frame
+                w.loadDataWithBaseURL(null, frame, "text/html", "utf-8", null)
+            }
+        },
+        onRelease = { it.destroy() },
+        modifier = Modifier.fillMaxSize().clipToBounds(), // Compose doesn't clip the views it hosts
+    )
+}
+
+/**
+ * Pages as images, one under the other: an office file on the box (the hub renders its pages, numbered from 1, and
+ * says their sizes at [sizesUrl]), or an artifact's pages while its PDF isn't there ([known] sizes).
+ */
+@Composable
+private fun PageImages(sizesUrl: String?, pageUrl: (Int) -> String, onProgress: (Float?) -> Unit, known: List<Pair<Float, Float>>? = null) {
+    val ctx = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    var sizes by remember(sizesUrl) { mutableStateOf(known) }
+    var error by remember(sizesUrl) { mutableStateOf<String?>(null) }
+    LaunchedEffect(sizesUrl) {
+        if (sizesUrl == null || sizes != null) return@LaunchedEffect
+        onProgress(-1f) // making an office file's pages can take a while
+        try {
+            val a = JSONObject(Net.text(ctx, sizesUrl)).getJSONArray("pages")
+            sizes = (0 until a.length()).map { val p = a.getJSONArray(it); p.getDouble(0).toFloat() to p.getDouble(1).toFloat() }
+        } catch (e: Exception) {
+            error = if (e is HttpError) "Couldn't make a preview (is the rendering service up?)" else unreachable("the devbox")
+        }
+        onProgress(null)
+    }
+    val s = sizes
+    when {
+        error != null -> Centered(error!!)
+        s == null -> {}
+        s.isEmpty() -> Centered("No pages.")
+        else -> androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxSize().background(cs.surfaceContainerHighest),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(6.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+            items(s.size) { i ->
+                val (w, h) = s[i]
+                Box(Modifier.fillMaxWidth().aspectRatio(if (w > 0 && h > 0) w / h else 0.75f).background(androidx.compose.ui.graphics.Color.White)) {
+                    coil.compose.AsyncImage(model = pageUrl(i + 1), contentDescription = "Page ${i + 1}", imageLoader = Net.images(ctx),
+                        modifier = Modifier.fillMaxSize())
+                }
+            }
         }
     }
 }
