@@ -134,9 +134,11 @@ private fun ViewerBar(title: String, label: String?, progress: Float?, onLabel: 
                 }
                 // A tight group: 40dp targets, 22dp icons.
                 val tight = Modifier.size(40.dp)
-                if (clipping != null) IconButton(onClick = onClip, modifier = tight) {
-                    Icon(Ic.clipboard, if (clipping) "Close the collector" else "Collect notes and parts for your agent", Modifier.size(22.dp),
-                        tint = if (clipping) cs.onSurface else cs.onSurfaceVariant)
+                // A toggle: a plain icon like its neighbours, on a lavender-tinted disc while the collector is open.
+                if (clipping != null) IconButton(onClick = onClip, modifier = tight,
+                    colors = if (clipping) androidx.compose.material3.IconButtonDefaults.iconButtonColors(
+                        containerColor = cs.primaryContainer, contentColor = cs.onPrimaryContainer) else androidx.compose.material3.IconButtonDefaults.iconButtonColors()) {
+                    Icon(Ic.clipboard, if (clipping) "Close the collector" else "Collect notes and parts for your agent", Modifier.size(22.dp))
                 }
                 if (onDownload != null) IconButton(onClick = onDownload, modifier = tight) { Icon(Ic.download, "Download", Modifier.size(22.dp)) }
                 if (onMore != null) IconButton(onClick = onMore, modifier = tight) { Icon(Ic.more, "More", Modifier.size(22.dp)) }
