@@ -1,15 +1,26 @@
-# ~/.config/otto/config.toml on the box. Everything Otto needs to find its parts.
-# The box and the hub may be the same machine; give the same URL for both then.
+# ~/.config/otto/config.toml on the box. Everything Otto needs to find its parts; every key has a default.
+# (OTTO_CONFIG points the relay and the CLI at another file, e.g. for a second, test relay.)
 
 [box]
-url = "https://my-box.tailnet-name.ts.net"   # the box's Tailscale name (tailscale serve publishes its services here)
-
-[hub]
-url = "https://my-hub.tailnet-name.ts.net"   # the always-on machine: artifact hub, box start/stop
+url = "https://my-box.tailnet-name.ts.net"   # the box's Tailscale name; its host is what the phone dials (otto pair)
 
 [relay]
-phone_port = 9401        # the phone's tunnel connects here, on the box's tailnet address
-local_port = 9334        # the CLI and the eyes MCP server talk to the relay here, on 127.0.0.1
+# tailnet_host = "100.x.y.z"   # where the phone's links listen (default: this machine's Tailscale address)
+browser_port = 9401            # the browser link: the app's control connection
+pipe_port = 9402               # ... and its DevTools pipes
+device_port = 9411             # the device link
+local_port = 9334              # the CLI and the eyes MCP server talk to the relay here, on 127.0.0.1
+# state_file = "~/.local/state/otto/relay.json"   # which agent session's tabs are which group
 
 [phone]
-token_file = "~/.config/otto/phone-token"   # written at pairing; the phone presents it when it dials in
+browser_token_file = "~/.config/otto/browser-token"   # the tokens the app presents on each link (given at pairing)
+device_token_file = "~/.config/otto/device-token"
+# What the app's second screen opens, given to it at pairing (otto pair):
+hub_url = "https://my-box.tailnet-name.ts.net:8446"         # the box's hub: files, desktop, terminal
+artifacts_url = "https://my-hub.tailnet-name.ts.net:8444"   # the artifact hub, over the tailnet
+# public_artifacts_url = "https://artifacts.example.com"    # its public address, for links you share (optional)
+# panel_url = "https://my-hub.tailnet-name.ts.net:8445"     # the box's control panel: status, start, stop (optional)
+# box = "my-box.tailnet-name.ts.net"                         # what the phone dials, if not [box] url's host
+
+[desktop]
+# display = ":1"   # the VNC desktop otto desktop screenshot captures

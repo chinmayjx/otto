@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- Artifacts and pages that ask for the microphone (AppWeb) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- The device agent: installs, uninstalls, every app's info -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- Android 12+: updates of apps Otto installed go through without a prompt -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
+    <!-- Granted once over adb: adb shell pm grant io.github.otto android.permission.READ_LOGS -->
+    <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
+
+    <application
+        android:name=".App"
+        android:allowBackup="false"
+        android:label="Otto"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:largeHeap="true"
+        android:theme="@style/Theme.Otto">
+
+        <!-- Setup: what Otto needs from Android, pairing, and the handle's switch. -->
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Pairing with a box: otto://pair?box=…&browser_port=…&… (otto pair on the box builds it). -->
+        <activity
+            android:name=".PairActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity="io.github.otto.pair">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="otto" android:host="pair" />
+            </intent-filter>
+        </activity>
+
+        <!-- The second screen while it's in (see ScreenActivity): its own task, kept out of Recents. -->
+        <activity
+            android:name=".ScreenActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Screen"
+            android:launchMode="singleTask"
+            android:taskAffinity="io.github.otto.screen"
+            android:excludeFromRecents="true"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density" />
+
+        <!-- Links to the box's hub and the artifact hub, from any app, into the second screen (LinkActivity). The app
+             claims the tailnet's *.ts.net names on the hub's and artifact hub's routes, and keeps only links to the
+             hosts it's paired with; anything else goes on to the browser. The hosts aren't verified (no
+             assetlinks.json), so they're turned on by hand: Settings → Apps → Otto → Open by default. -->
+        <activity
+            android:name=".LinkActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+                <data android:host="*.ts.net" />
+                <!-- the hub (devbox-hub): its front page, desktop, terminal and files -->
+                <data android:path="/" />
+                <data android:pathPrefix="/desktop" />
+                <data android:pathPrefix="/terminal" />
+                <data android:pathPrefix="/files" />
+                <data android:pathPrefix="/api/fs/" />
+                <!-- the artifact hub: an artifact, a public page, a version -->
+                <data android:pathPrefix="/a/" />
+                <data android:pathPrefix="/p/" />
+                <data android:pathPrefix="/v/" />
+            </intent-filter>
+            <!-- otto.extraLinkHosts -->
+        </activity>
+
+        <!-- The handle, the second screen and the device link, while the handle is on. -->
+        <service
+            android:name=".OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="A screen drawn over other apps, pulled in from an edge handle, and the owner's connection to their own machine" />
+        </service>
+
+        <!-- The browser: its own process, so the DevTools socket BrowserLink hands to the box holds only its tabs.
+             Drawn into the screen through SurfaceControlViewHost (see Screen and BrowserService). A foreground
+             service of its own while the handle is on, sharing the overlay's notification, so Android neither kills
+             nor freezes it and agents can reach the browser with the screen closed. -->
+        <service
+            android:name=".BrowserService"
+            android:process=":browser"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="The browser the owner's agents on their own machine drive, kept connected while the screen is closed" />
+        </service>
+
+        <!-- The device agent's eyes and hands (see device/AgentAccessibility). -->
+        <service
+            android:name=".device.AgentAccessibility"
+            android:exported="false"
+            android:label="Otto"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility" />
+        </service>
+
+        <receiver android:name=".device.Installer$StatusReceiver" android:exported="false" />
+
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

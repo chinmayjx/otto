@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Second screen tab icon: Artifacts (a stack of pages) (tinted by SecondScreen). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp" android:height="22dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M7,7.5 L7,5 C7,4.2 7.7,3.5 8.5,3.5 L18.5,3.5 C19.3,3.5 20,4.2 20,5 L20,15 C20,15.8 19.3,16.5 18.5,16.5 L16.5,16.5" android:strokeColor="#ffffff" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+    <path android:pathData="M4,9 C4,8.2 4.7,7.5 5.5,7.5 L15,7.5 C15.8,7.5 16.5,8.2 16.5,9 L16.5,19 C16.5,19.8 15.8,20.5 15,20.5 L5.5,20.5 C4.7,20.5 4,19.8 4,19 Z" android:strokeColor="#ffffff" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+</vector>

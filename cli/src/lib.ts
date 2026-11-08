@@ -14,18 +14,101 @@ export interface Config {
   shots: string; // where screenshots are saved
 }
 
-export function loadConfig(): Config {
-  const file = process.env.OTTO_CONFIG || path.join(home, '.config/otto/config.toml');
-  let t: Record<string, any> = {};
-  try { t = parse(fs.readFileSync(file, 'utf8')) as Record<string, any>; } catch (e: any) {
+const configFile = () => process.env.OTTO_CONFIG || path.join(home, '.config/otto/config.toml');
+
+function readToml(file: string): Record<string, any> {
+  try { return parse(fs.readFileSync(file, 'utf8')) as Record<string, any>; } catch (e: any) {
     if (e.code !== 'ENOENT') throw new Error(`${file}: ${e.message}`);
+    return {};
   }
+}
+
+export function loadConfig(): Config {
+  const t = readToml(configFile());
   return {
     relay: `http://127.0.0.1:${t.relay?.local_port ?? 9334}`,
     display: t.desktop?.display ?? ':1',
     sessionCommand: process.env.OTTO_SESSION_COMMAND || t.session?.command || null,
     shots: process.env.OTTO_SHOTS || path.join(os.tmpdir(), 'otto-shots'),
   };
+}
+
+/**
+ * What the phone needs to pair with this box, from the config file and the token files it points to: the relay's
+ * links (the box's tailnet name and ports, the two tokens) and the web services' URLs ([phone] hub_url,
+ * artifacts_url, and optionally public_artifacts_url, panel_url).
+ */
+export interface Pairing {
+  box: string;
+  browserPort: number;
+  pipePort: number;
+  devicePort: number;
+  browserToken: string;
+  deviceToken: string;
+  hub: string;
+  artifacts: string;
+  publicArtifacts?: string;
+  panel?: string;
+}
+
+export function pairing(box?: string): Pairing {
+  const file = configFile();
+  const t = readToml(file);
+  const relay = t.relay ?? {}, phone = t.phone ?? {};
+  const token = (f: string, what: string) => {
+    try { return fs.readFileSync(f.replace(/^~(?=\/|$)/, home), 'utf8').trim(); } catch {
+      throw new OttoError(`no ${what} token at ${f} (set phone.${what}_token_file in ${file})`);
+    }
+  };
+  const need = (v: any, key: string) => {
+    if (!v) throw new OttoError(`set ${key} in ${file} (see install/config.example.toml)`);
+    return String(v).replace(/\/+$/, '');
+  };
+  let host = box || phone.box;
+  if (!host && t.box?.url) { try { host = new URL(t.box.url).hostname; } catch {} }
+  host ||= relay.tailnet_host || tailnetAddress();
+  if (!host) throw new OttoError(`can't tell the box's tailnet name: set [box] url in ${file}, or pass --box`);
+  return {
+    box: host,
+    browserPort: relay.browser_port ?? 9401,
+    pipePort: relay.pipe_port ?? 9402,
+    devicePort: relay.device_port ?? 9411,
+    browserToken: token(phone.browser_token_file ?? '~/.config/otto/browser-token', 'browser'),
+    deviceToken: token(phone.device_token_file ?? '~/.config/otto/device-token', 'device'),
+    hub: need(phone.hub_url, '[phone] hub_url'),
+    artifacts: need(phone.artifacts_url, '[phone] artifacts_url'),
+    publicArtifacts: phone.public_artifacts_url || undefined,
+    panel: phone.panel_url || undefined,
+  };
+}
+
+/** The pairing link the Otto app takes: otto://pair?box=…&browser_port=…&… */
+export function pairingLink(p: Pairing): string {
+  const q = new URLSearchParams({
+    box: p.box,
+    browser_port: String(p.browserPort),
+    pipe_port: String(p.pipePort),
+    device_port: String(p.devicePort),
+    browser_token: p.browserToken,
+    device_token: p.deviceToken,
+    hub: p.hub,
+    artifacts: p.artifacts,
+  });
+  if (p.publicArtifacts) q.set('public_artifacts', p.publicArtifacts);
+  if (p.panel) q.set('panel', p.panel);
+  return `otto://pair?${q}`;
+}
+
+/** This machine's Tailscale IPv4 address (100.64.0.0/10), if it has one. */
+function tailnetAddress(): string {
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list ?? []) {
+      if (a.family !== 'IPv4') continue;
+      const [x, y] = a.address.split('.').map(Number);
+      if (x === 100 && y >= 64 && y < 128) return a.address;
+    }
+  }
+  return '';
 }
 
 export interface Session { id: string; title: string }

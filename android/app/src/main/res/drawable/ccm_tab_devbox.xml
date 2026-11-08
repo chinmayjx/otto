@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Second screen tab icon: Devbox (a server: two stacked units with status lights) (tinted by SecondScreen). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp" android:height="22dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M5.5,4 L18.5,4 C19.3,4 20,4.7 20,5.5 L20,9.5 C20,10.3 19.3,11 18.5,11 L5.5,11 C4.7,11 4,10.3 4,9.5 L4,5.5 C4,4.7 4.7,4 5.5,4 Z M5.5,13 L18.5,13 C19.3,13 20,13.7 20,14.5 L20,18.5 C20,19.3 19.3,20 18.5,20 L5.5,20 C4.7,20 4,19.3 4,18.5 L4,14.5 C4,13.7 4.7,13 5.5,13 Z" android:strokeColor="#ffffff" android:strokeWidth="1.6" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" />
+    <path android:pathData="M8,7.5 L8.01,7.5 M8,16.5 L8.01,16.5" android:strokeColor="#ffffff" android:strokeWidth="2.2" android:strokeLineCap="round" android:fillColor="#00000000" />
+</vector>

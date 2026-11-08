@@ -113,8 +113,9 @@ The second screen and the device agent in one APK.
 - The handle, the overlay, `ScreenActivity`, link capture and boot restore, from second-screen.
 - The browser runs in its own process (`:browser`), drawn into the second screen with `SurfaceControlViewHost`. Android's switch for WebView debugging (the DevTools socket agents drive) is per process: in one process, agents could also reach the app's other WebViews, such as the terminal (and type into your shell) or HTML artifacts. Its own process also gives the browser its own cookies and lets a crash or a memory kill take only the browser down.
 - The accessibility service, screenshots, input, installs and logs, from device-agent, now served as a device HTTP API through the tunnel. Handled in-process from tunnel pipes, never on a localhost port (every app on the phone can reach localhost).
-- Link capture: `*.ts.net` with path prefixes, keeping only the configured box and hub hosts at runtime and handing every other link to the browser. *To verify: whether Android lets the user approve a wildcard host under Open by default.* If not, the host goes into the build.
-- Pairing replaces the two tokens baked into today's APKs: `otto setup` shows a code or QR, the app stores the box URL and token.
+- Link capture: `*.ts.net` with path prefixes, keeping only the configured box and hub hosts at runtime and handing every other link to the browser. Android does let the user approve the wildcard host under Open by default (checked on Android 17). Hosts outside the tailnet (an artifact hub's public domain) go into the build: `otto.extraLinkHosts`.
+- Pairing replaces the two tokens baked into today's APKs: `otto pair` builds an `otto://pair?…` link (printed, as a QR code, or opened on the phone with `--send`); the app shows it, asks, and stores the box, the relay's ports, the tokens and the hub's and artifact hub's URLs.
+- The browser's process is a foreground service of its own while the handle is on (one shared notification), so the browser link stays up with the screen closed.
 - One-time adb grants for logs (`READ_LOGS`) during setup.
 
 #### Stack: Kotlin, native screens
@@ -207,6 +208,5 @@ Today's setup keeps working throughout; each piece switches over once its Otto v
 
 ## Open decisions
 
-- Wildcard link capture versus the host in the build: to be tested on a phone first.
 - Per-service tokens: later; tailnet-only until then.
 - A GitHub organisation: later.

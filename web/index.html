@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Otto</title>
+<link rel="stylesheet" href="ide.css">
+<link rel="stylesheet" href="desktop.css">
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
+<link rel="stylesheet" href="terminal.css">
+</head>
+<body>
+<!-- The app's own UI (see ide.js). In the Android app it is loaded from the APK's assets at
+     https://appassets.androidplatform.net/assets/ide/; any browser can open it too. Where the services are:
+     config.js. -->
+<main id="app"></main>
+<div id="toast" hidden></div>
+<script src="config.js"></script>
+<script type="module" src="ide.js"></script>
+</body>
+</html>

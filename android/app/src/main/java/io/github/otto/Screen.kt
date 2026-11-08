@@ -1,0 +1,1274 @@
+package io.github.otto
+
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
+import android.annotation.SuppressLint
+import android.app.Dialog
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Rect
+import android.graphics.Typeface
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
+import android.net.Uri
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.Message
+import android.os.Messenger
+import android.text.Editable
+import android.text.TextUtils
+import android.text.TextWatcher
+import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.SurfaceControlViewHost
+import android.view.SurfaceView
+import android.view.VelocityTracker
+import android.view.View
+import android.view.ViewConfiguration
+import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowInsets
+import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
+import android.webkit.WebView
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+
+/**
+ * The second screen, over every app: a full screen that fades in and out at a tap on the edge handle
+ * (OverlayService). Files is a file manager, the browser a browser.
+ *
+ * The top bar: the section's name as a title (tap it to switch sections), then, for the browser, the tab block,
+ * whose menu holds the address bar and the tabs, as BrowserService reports them. A drag right on the bar fades the
+ * screen out as it goes, a pull down on it reloads; Back walks back (the viewer, the section's history) and then
+ * closes.
+ *
+ * Sections: Files, Artifacts, Desktop, Terminal and Devbox, the app's own web UI (AppWeb, one WebView each, under
+ * the bar), and Browser, BrowserService's views drawn here from the ":browser" process through a SurfaceView
+ * (SurfaceControlViewHost), the browser agents on the box drive through BrowserLink.
+ */
+class Screen(private val ctx: Context, private val host: Host) : ServiceConnection {
+    interface Host {
+        /** Where the screen is now, 0 (out) to 1 (covering the display): on every frame it moves. */
+        fun moved(position: Float)
+
+        /** It came to rest open, or closed. */
+        fun settled(open: Boolean)
+    }
+
+    private val root: Root = Root(ctx) // the overlay window's view
+    private val scrim = View(ctx) // dims the app beneath as the screen comes in
+    private val shutter = FrameLayout(ctx) // what moves
+    private val panel = LinearLayout(ctx)
+    private val bar = LinearLayout(ctx)
+    private val tabBlock = LinearLayout(ctx)
+    private val more: ImageView // the browser's options (⋮)
+    private val filesButtons = LinearLayout(ctx) // Files: up a folder, home, hidden files
+    private val filesUp: ImageView
+    private val filesHome: ImageView
+    private val filesHidden: ImageView
+    private val titleText: TextView
+    private val tabTitle: TextView
+    private val tabHost: TextView
+    private val tabMark: TextView
+    private val tabCount: TextView
+    private val surface = SurfaceView(ctx)
+    private val files: WebView
+    private val artifacts: WebView
+    private val desktop: WebView
+    private val terminal: WebView
+    private val devbox: WebView
+    private val body = FrameLayout(ctx)
+    private var viewer: WebView? = null // an artifact or file opened from Files or Artifacts, over the whole second screen
+    private var tabState = JSONObject() // BrowserService's TABS
+    private var menu: Dialog? = null // a dialog, not a PopupWindow: a popup can't show text selection's toolbar
+    private var tabList: LinearLayout? = null // the open tab menu's list, refreshed as the tabs change
+    private var typed: String? = null // what's typed in the tab menu's address bar, while it's a query (then the list suggests)
+    private var suggestSeq = 0
+    private var tab = BROWSER
+    private val replies = Messenger(Handler(Looper.getMainLooper(), ::onReply))
+    private var service: Messenger? = null
+    private var attached = false
+    private var bound = false
+
+    private var position = 0f // 0 = out, 1 = covering the display
+    private var wasOpen = false
+    private var settle: ValueAnimator? = null
+    private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
+    private var tracking = false
+    private var dragging = false
+    private var pulling = false
+    private val pull: ImageView // the reload mark a pull down on the top bar brings down
+    private var downX = 0f
+    private var downY = 0f
+    private var downPosition = 0f
+    private var velocity: VelocityTracker? = null
+    private var topInset = 0
+    private var refocus = false // the window's next focus goes on to the section in view (see Root.onWindowFocusChanged)
+    private var terminalState: JSONObject? = null
+    private var terminalList: LinearLayout? = null
+
+    init {
+        scrim.setBackgroundColor(0x80000000.toInt())
+        scrim.alpha = 0f
+        root.addView(scrim, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        shutter.elevation = dp(24).toFloat()
+        root.addView(shutter, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        panel.orientation = LinearLayout.VERTICAL
+        panel.setBackgroundColor(BrowserService.BG)
+        panel.isClickable = true // nothing falls through to the scrim
+        shutter.addView(panel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        // Section contents, one shown at a time; the web sections run under the top bar.
+        panel.addView(body, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // Files and Artifacts: the app's own web UI (AppWeb), below the bar; a file or an artifact opens in the viewer.
+        fun underBar() = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { topMargin = dp(BAR_DP) }
+        files = AppWeb.create(ctx, object : AppWeb.Ops {
+            override fun filesBar(up: Boolean, home: Boolean, hidden: Boolean) = this@Screen.filesBar(up, home, hidden)
+        })
+        body.addView(files, underBar())
+        files.loadUrl(AppWeb.URL + "#files")
+        artifacts = AppWeb.create(ctx, object : AppWeb.Ops {})
+        body.addView(artifacts, underBar())
+        artifacts.loadUrl(AppWeb.URL + "#artifacts")
+        // Desktop: the app's own VNC view (web/desktop.js); connected when first opened.
+        desktop = AppWeb.create(ctx, object : AppWeb.Ops {})
+        body.addView(desktop, underBar())
+        // Terminal: the box's tmux windows (web/terminal.js); connected when first opened.
+        terminal = AppWeb.create(ctx, object : AppWeb.Ops {
+            override fun terminalBar(state: JSONObject?) {
+                terminalState = state
+                if (tab == TERMINAL) showTerminals()
+            }
+        })
+        body.addView(terminal, underBar())
+        // Devbox: the box's status, metrics, start and stop (web/devbox.js, on the box's control panel).
+        devbox = AppWeb.create(ctx, object : AppWeb.Ops {})
+        body.addView(devbox, underBar())
+
+        // Browser: BrowserService's views from the ":browser" process.
+        // Typing in the browser needs window focus, which only the host can grant the embedded views: a focused
+        // SurfaceView passes it on (see focusTab()).
+        // Above the window, not punched through below it: input goes to the topmost window under the finger.
+        surface.setZOrderOnTop(true)
+        surface.isFocusable = true
+        surface.isFocusableInTouchMode = true
+        body.addView(surface, underBar())
+        surface.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
+            if (r - l != or - ol || b - t != ob - ot) attachOrResize()
+        }
+        // The top bar, over the sections: the title, then (Browser) the tab block.
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setPadding(dp(BAR_START), 0, dp(8), 0)
+        bar.setBackgroundColor(BrowserService.BG)
+        val title = LinearLayout(ctx)
+        title.gravity = Gravity.CENTER_VERTICAL
+        title.setPadding(dp(TITLE_PAD), 0, dp(TITLE_PAD), 0)
+        title.background = pressable(dp(8))
+        titleText = titleLabel()
+        title.addView(titleText)
+        title.addView(icon(R.drawable.ccm_chevron_down, BrowserService.MUTED), LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(5) })
+        title.contentDescription = "Switch section"
+        onTap(title) { sectionMenu() }
+        bar.addView(title, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
+
+        tabBlock.gravity = Gravity.CENTER_VERTICAL
+        tabBlock.setPadding(dp(11), 0, dp(9), 0)
+        tabBlock.background = rounded(BrowserService.FIELD, dp(9))
+        tabBlock.contentDescription = "Tabs"
+        tabMark = label("✳", 13)
+        tabMark.setTextColor(BrowserService.CLAUDE)
+        tabMark.setPadding(0, 0, dp(7), 0)
+        tabBlock.addView(tabMark)
+        val lines = LinearLayout(ctx)
+        lines.orientation = LinearLayout.VERTICAL
+        tabTitle = line(13f, BrowserService.TEXT)
+        tabHost = line(10.5f, BrowserService.MUTED)
+        lines.addView(tabTitle)
+        lines.addView(tabHost)
+        tabBlock.addView(lines, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        tabCount = label("1", 11)
+        tabCount.setTextColor(BrowserService.MUTED)
+        tabCount.background = GradientDrawable().apply {
+            cornerRadius = dp(5).toFloat()
+            setStroke(max(1, dp(1)), BrowserService.MUTED)
+        }
+        tabCount.setPadding(dp(4), 0, dp(4), 0)
+        tabCount.minWidth = dp(18)
+        tabBlock.addView(tabCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(17)).apply { marginStart = dp(8) })
+        tabBlock.addView(icon(R.drawable.ccm_chevron_down, BrowserService.MUTED), LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(6) })
+        onTap(tabBlock) { if (tab == TERMINAL) terminalMenu() else tabMenu() }
+        bar.addView(tabBlock, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
+        more = icon(R.drawable.ccm_more, BrowserService.TEXT)
+        more.scaleType = ImageView.ScaleType.CENTER
+        more.background = pressable(dp(20))
+        more.contentDescription = "Options"
+        onTap(more) { optionsMenu() }
+        bar.addView(more, LinearLayout.LayoutParams(dp(36), dp(40)).apply { marginStart = dp(2) })
+        // Files' buttons, on the right: each runs the page's ccmFiles(action). They keep their places (Up and Home dim
+        // when they don't apply) so nothing moves under a finger; the page says what applies (AppWeb op "filesBar").
+        filesButtons.gravity = Gravity.CENTER_VERTICAL or Gravity.END
+        filesUp = filesButton(R.drawable.ccm_up, "Up one folder", "up")
+        filesHome = filesButton(R.drawable.ccm_home, "Home folder", "home")
+        filesHidden = filesButton(R.drawable.ccm_eye, "Show hidden files", "hidden")
+        filesBar(false, false, false)
+        bar.addView(filesButtons, LinearLayout.LayoutParams(0, dp(40), 1f))
+        body.addView(bar, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(BAR_DP)))
+        showTabs()
+        select(BROWSER)
+
+        // The window lies under the system bars and the keyboard; the screen keeps its content clear of them.
+        root.setOnApplyWindowInsetsListener { _, insets ->
+            val b = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime())
+            panel.setPadding(b.left, b.top, b.right, b.bottom)
+            topInset = b.top
+            WindowInsets.CONSUMED
+        }
+
+        pull = icon(R.drawable.ccm_reload, BrowserService.TEXT)
+        pull.scaleType = ImageView.ScaleType.CENTER
+        pull.background = rounded(Color.parseColor("#3a3936"), dp(20)) // lighter than the bar's blocks
+        pull.elevation = dp(30).toFloat()
+        pull.alpha = 0f
+        root.addView(pull, FrameLayout.LayoutParams(dp(40), dp(40), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        root.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or, _ -> if (r - l != or - ol) apply() }
+        // Each time it lands in a window (ScreenActivity's, anew each time it comes in), the browser's pages are
+        // embedded in it again: the surface, and the window it belongs to, are new.
+        root.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {
+                attached = false
+                root.post { attachOrResize() }
+            }
+
+            override fun onViewDetachedFromWindow(v: View) {
+                attached = false
+            }
+        })
+        apply()
+
+        bind()
+        current = this
+    }
+
+    fun view(): View = root
+
+    /** Into ScreenActivity's window, as it comes in. */
+    fun attach(parent: ViewGroup) {
+        if (root.parent === parent) return
+        (root.parent as? ViewGroup)?.removeView(root)
+        parent.addView(root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    /** Out of it, as it goes. The browser's pages stay alive in BrowserService meanwhile. */
+    fun detach(parent: ViewGroup) {
+        if (root.parent === parent) parent.removeView(root)
+    }
+
+    /** Out (or on its way out) and not moving: nothing to show. */
+    val isClosed: Boolean get() = position == 0f && settle?.isRunning != true
+
+    /** Out at once, no fade (something else came to the front). */
+    fun closeNow() {
+        settle?.cancel()
+        position = 0f
+        apply()
+        host.settled(false)
+    }
+
+    fun destroy() {
+        if (current === this) current = null
+        menu?.dismiss()
+        if (bound) {
+            bound = false
+            ctx.unbindService(this)
+        }
+        for (w in listOf(files, artifacts, desktop, terminal, devbox, viewer)) w?.destroy()
+    }
+
+    val isOpen: Boolean get() = position > 0.5f
+
+    /** In, where it was left. */
+    fun open() {
+        if (tab == ARTIFACTS) refreshArtifacts()
+        animateTo(1f)
+    }
+
+    /** In on the Browser tab at that page (a link from the app's UI, or the relay's "show"). */
+    fun open(url: String?) {
+        if (url != null) {
+            send(BrowserService.MSG_LOAD, "url", url)
+            closeViewer()
+            select(BROWSER)
+        }
+        animateTo(1f)
+    }
+
+    /** A link tapped in another app (LinkActivity): an artifact opens in the viewer, the hub's pages in their sections, the rest in the browser. */
+    fun openLink(url: String) {
+        val u = Uri.parse(url)
+        val path = u.path ?: ""
+        when {
+            Links.isArtifactHost(ctx, u) -> {
+                val hash = Links.viewerHash(u)
+                if (hash != null) showViewer(hash)
+                else {
+                    closeViewer()
+                    select(ARTIFACTS)
+                }
+                open()
+            }
+            Links.isHub(ctx, u) && path.startsWith("/desktop") -> {
+                closeViewer()
+                select(DESKTOP)
+                open()
+            }
+            Links.isHub(ctx, u) && path.startsWith("/terminal") -> {
+                closeViewer()
+                select(TERMINAL)
+                open()
+            }
+            else -> open(url)
+        }
+    }
+
+    /** Out of the way at once, for something opening under it (a share sheet, an app). */
+    fun hide() = animateTo(0f)
+
+    /** Back: the viewer, then the section's own history, then the browser's; then the screen goes out. */
+    fun back() {
+        menu?.let {
+            if (it.isShowing) {
+                it.dismiss()
+                return
+            }
+        }
+        val web = if (tab == FILES) files else if (tab == ARTIFACTS) artifacts else null // Desktop and Terminal: no history to walk
+        when {
+            viewer != null -> closeViewer()
+            web != null && web.canGoBack() -> web.goBack()
+            tab == BROWSER && tabState.optBoolean("canGoBack") -> send(BrowserService.MSG_BACK)
+            else -> animateTo(0f)
+        }
+    }
+
+    /**
+     * A top-bar button's tap, on the finger lifting inside it. Not a click: Android drops a click whose window lost
+     * focus while the finger was down, and the focus does move between this window and the browser's pages as they
+     * get the keyboard. (The click stays, for accessibility.)
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun onTap(v: View, run: () -> Unit) {
+        v.setOnClickListener { run() }
+        v.setOnTouchListener { view, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    view.drawableHotspotChanged(e.x, e.y)
+                    view.isPressed = true
+                }
+                MotionEvent.ACTION_UP -> {
+                    view.isPressed = false
+                    if (e.x >= 0 && e.y >= 0 && e.x < view.width && e.y < view.height) run()
+                }
+                MotionEvent.ACTION_CANCEL -> view.isPressed = false
+            }
+            true
+        }
+    }
+
+    private fun filesButton(res: Int, label: String, action: String): ImageView {
+        val b = icon(res, BrowserService.TEXT)
+        b.scaleType = ImageView.ScaleType.CENTER
+        b.background = pressable(dp(20))
+        b.contentDescription = label
+        onTap(b) { if (b.isEnabled) files.evaluateJavascript("window.ccmFiles && ccmFiles('$action')", null) }
+        filesButtons.addView(b, LinearLayout.LayoutParams(dp(40), dp(40)))
+        return b
+    }
+
+    /** Files says what applies to the folder on screen: Up (not at the top), Home (not at home already), hidden files shown. */
+    fun filesBar(up: Boolean, home: Boolean, hidden: Boolean) {
+        filesUp.isEnabled = up
+        filesUp.alpha = if (up) 1f else 0.3f
+        filesHome.isEnabled = home
+        filesHome.alpha = if (home) 1f else 0.3f
+        filesHidden.setColorFilter(if (hidden) BrowserService.CLAUDE else BrowserService.TEXT)
+    }
+
+    /** The viewer (web/, #artifact/<id>, #view/<id> or #file?path=) over the second screen, bar included. */
+    fun showViewer(hash: String): Boolean {
+        if (!Links.isViewer(hash)) return false
+        closeViewer()
+        val v = AppWeb.create(ctx, object : AppWeb.Ops {
+            override fun close() = closeViewer()
+            override fun open(hash: String) = showViewer(hash)
+        })
+        viewer = v
+        body.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        v.loadUrl(AppWeb.URL + "#" + hash)
+        placeSurface()
+        if (isOpen) focusTab()
+        return true
+    }
+
+    private fun closeViewer() {
+        val v = viewer ?: return
+        body.removeView(v)
+        v.destroy()
+        viewer = null
+        refreshArtifacts() // e.g. after a delete
+        placeSurface()
+        if (isOpen) focusTab()
+    }
+
+    /** The Artifacts list fetches the list again: what was published (or deleted) since. */
+    fun refreshArtifacts() {
+        artifacts.evaluateJavascript("window.ccmRefresh && ccmRefresh()", null)
+    }
+
+    private fun select(which: Int) {
+        if (which == ARTIFACTS && tab != ARTIFACTS) refreshArtifacts()
+        tab = which
+        titleText.text = NAMES[which]
+        tabBlock.visibility = if (which == BROWSER || which == TERMINAL) View.VISIBLE else View.GONE
+        if (which == TERMINAL) showTerminals() else if (which == BROWSER) showTabs()
+        filesButtons.visibility = if (which == FILES) View.VISIBLE else View.GONE
+        more.visibility = if (which == BROWSER) View.VISIBLE else View.GONE
+        files.visibility = if (which == FILES) View.VISIBLE else View.GONE
+        artifacts.visibility = if (which == ARTIFACTS) View.VISIBLE else View.GONE
+        desktop.visibility = if (which == DESKTOP) View.VISIBLE else View.GONE
+        if (which == DESKTOP && desktop.url == null) desktop.loadUrl(AppWeb.URL + "#desktop")
+        terminal.visibility = if (which == TERMINAL) View.VISIBLE else View.GONE
+        if (which == TERMINAL && terminal.url == null) terminal.loadUrl(AppWeb.URL + "#terminal")
+        devbox.visibility = if (which == DEVBOX) View.VISIBLE else View.GONE
+        if (which == DEVBOX && devbox.url == null) devbox.loadUrl(AppWeb.URL + "#devbox")
+        placeSurface()
+        if (isOpen) focusTab()
+    }
+
+    /**
+     * The browser stays laid out when another section (or the viewer) is in front, only moved out of sight: agents
+     * may be working in its tabs, and a page that was never shown has no size (no screenshots, no layout). Its
+     * surface is drawn above the window, so out of sight has to mean off the screen.
+     */
+    private fun placeSurface() {
+        surface.translationX = if (tab == BROWSER && viewer == null) 0f else 4f * max(surface.width, dp(400))
+    }
+
+    private fun sectionWeb(): WebView = when (tab) {
+        FILES -> files
+        ARTIFACTS -> artifacts
+        DEVBOX -> devbox
+        TERMINAL -> terminal
+        else -> desktop
+    }
+
+    /** Focus (and so the keyboard) goes to the section in view. */
+    private fun focusTab() {
+        val v = viewer
+        when {
+            v != null -> {
+                surface.clearFocus()
+                v.requestFocus()
+            }
+            tab == BROWSER -> surface.requestFocus()
+            else -> {
+                surface.clearFocus()
+                sectionWeb().requestFocus()
+            }
+        }
+    }
+
+    // Moving. The handle (OverlayService) brings the screen in and out through animateTo; here, a horizontal drag
+    // that starts on the top bar (or the viewer's header) pushes it out, following the finger, and the views under
+    // the finger get a cancel instead. A pull down on the bar reloads.
+
+    /** The window's view: asks onTouch first, and takes Back. */
+    private inner class Root(c: Context) : FrameLayout(c) {
+        override fun dispatchTouchEvent(e: MotionEvent): Boolean = onTouch(e) || super.dispatchTouchEvent(e)
+
+        /**
+         * The window can take focus only once the screen is in (OverlayService.settled), after focusTab() already
+         * ran, and it loses it to a menu: when it gets it then, the section in view asks again. The browser's
+         * surface has to lose and regain focus for that, as only then does it hand the focus on to its pages. Not
+         * otherwise: a tap on the top bar while a page has the focus brings it here too, and handing it straight
+         * back would lose the tap.
+         */
+        override fun onWindowFocusChanged(has: Boolean) {
+            super.onWindowFocusChanged(has)
+            if (!has || !refocus || !isOpen) return
+            refocus = false
+            if (surface.hasFocus()) surface.clearFocus()
+            focusTab()
+        }
+
+        fun cancelChildren(e: MotionEvent) {
+            val cancel = MotionEvent.obtain(e)
+            cancel.action = MotionEvent.ACTION_CANCEL
+            super.dispatchTouchEvent(cancel)
+            cancel.recycle()
+        }
+
+        override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+            if (e.keyCode == KeyEvent.KEYCODE_BACK) {
+                if (e.action != KeyEvent.ACTION_UP || e.isCanceled) return true
+                if (rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true) { // the keyboard goes first
+                    // Over the browser it's the browser process's to put away (BrowserService); else this window's.
+                    if (tab == BROWSER && viewer == null) send(BrowserService.MSG_HIDE_KEYBOARD)
+                    else ctx.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(windowToken, 0)
+                } else {
+                    back()
+                }
+                return true
+            }
+            return super.dispatchKeyEvent(e)
+        }
+    }
+
+    private fun onTouch(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                dragging = false
+                tracking = startsDrag(e)
+                if (tracking) {
+                    downX = e.x
+                    downY = e.y
+                    downPosition = position
+                    pulling = false
+                    settle?.cancel()
+                    velocity = VelocityTracker.obtain().also { it.addMovement(e) }
+                }
+                return false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!tracking) return false
+                val vt = velocity!!
+                vt.addMovement(e)
+                val dx = e.x - downX
+                val dy = e.y - downY
+                if (pulling) {
+                    showPull(dy)
+                    return true
+                }
+                if (!dragging && dy > slop && dy > 2 * abs(dx)) { // down on the top bar: reload
+                    pulling = true
+                    root.cancelChildren(e)
+                    showPull(dy)
+                    return true
+                }
+                if (!dragging) {
+                    if (abs(dx) < slop || abs(dx) < 2 * abs(dy)) return false
+                    if (dx < 0) { // only out, to the right
+                        tracking = false
+                        vt.recycle()
+                        velocity = null
+                        return false
+                    }
+                    dragging = true
+                    root.cancelChildren(e)
+                }
+                setPosition(downPosition - dx / width())
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (!tracking) return false
+                tracking = false
+                val vt = velocity!!
+                velocity = null
+                if (pulling) {
+                    vt.recycle()
+                    pulling = false
+                    val go = e.actionMasked == MotionEvent.ACTION_UP && e.y - downY >= dp(PULL_DP)
+                    if (go) reload()
+                    hidePull(go)
+                    return true
+                }
+                if (!dragging) {
+                    vt.recycle()
+                    return false
+                }
+                vt.addMovement(e)
+                vt.computeCurrentVelocity(1000)
+                val vx = vt.xVelocity
+                vt.recycle()
+                dragging = false
+                release(vx)
+                return true
+            }
+        }
+        return tracking && (dragging || pulling)
+    }
+
+    /** A drag let go: a flick decides, else whichever side is nearer. */
+    private fun release(vx: Float) {
+        if (abs(vx) > dp(400)) animateTo(if (vx < 0) 1f else 0f)
+        else animateTo(if (position > 0.5f) 1f else 0f)
+    }
+
+    // Pulling down on the top bar (or the viewer's header) reloads what's on screen: the viewer, the browser tab or the section.
+
+    private fun showPull(dy: Float) {
+        val d = max(0f, dy) * 0.6f
+        val most = dp(PULL_DP) * 0.6f
+        pull.animate().cancel()
+        var y = topInset + min(d, most * 1.4f) - dp(20)
+        // The browser's pages are drawn above this window (see surface): there it stays in the bar.
+        if (tab == BROWSER && viewer == null) y = min(y, (topInset + dp((BAR_DP - 40) / 2)).toFloat())
+        pull.translationY = y
+        pull.rotation = d / most * 270
+        val ready = min(1f, d / most)
+        pull.alpha = ready
+        pull.setColorFilter(if (ready >= 1) BrowserService.CLAUDE else BrowserService.TEXT)
+    }
+
+    private fun hidePull(reloading: Boolean) {
+        if (reloading) pull.animate().rotationBy(360f).setDuration(400).withEndAction { pull.animate().alpha(0f).setDuration(150) }
+        else pull.animate().alpha(0f).setDuration(150)
+    }
+
+    private fun reload() {
+        val v = viewer
+        when {
+            v != null -> v.reload()
+            tab == BROWSER -> send(BrowserService.MSG_RELOAD)
+            else -> sectionWeb().reload()
+        }
+    }
+
+    /** A drag can start on the top bar, or (the viewer covers the bar) on the viewer's header band. */
+    private fun startsDrag(e: MotionEvent): Boolean {
+        if (position < 0.5f) return false
+        val r = Rect()
+        bar.getGlobalVisibleRect(r)
+        viewer?.let {
+            it.getGlobalVisibleRect(r)
+            r.bottom = r.top + dp(TOP_BAND_DP)
+        }
+        return r.contains(e.x.toInt(), e.y.toInt())
+    }
+
+    /** Puts the screen where a finger has it. */
+    fun setPosition(p: Float) {
+        settle?.cancel()
+        position = p.coerceIn(0f, 1f)
+        apply()
+    }
+
+    fun animateTo(target: Float) {
+        settle?.cancel()
+        val a = ValueAnimator.ofFloat(position, target)
+        settle = a
+        a.duration = (60 + 160 * abs(target - position)).toLong()
+        a.interpolator = DecelerateInterpolator()
+        a.addUpdateListener {
+            position = it.animatedValue as Float
+            apply()
+        }
+        a.addListener(object : AnimatorListenerAdapter() {
+            private var cancelled = false
+
+            override fun onAnimationCancel(animation: Animator) {
+                cancelled = true
+            }
+
+            override fun onAnimationEnd(animation: Animator) {
+                if (cancelled) return
+                if (target >= 1) {
+                    send(BrowserService.MSG_ACTIVE) // agents' new tabs open here now
+                    refocus = true
+                }
+                host.settled(target >= 1)
+            }
+        })
+        a.start()
+    }
+
+    private fun apply() {
+        // A fade: the screen's views, and the browser's surface, which is drawn apart and takes no parent's opacity.
+        root.alpha = position
+        surface.alpha = position
+        host.moved(position)
+        val open = position > 0.5f
+        if (open != wasOpen) {
+            wasOpen = open
+            // Focus (and so the keyboard) goes with the screen in view.
+            ctx.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(root.windowToken, 0)
+            if (open) focusTab()
+            else {
+                surface.clearFocus()
+                menu?.dismiss()
+            }
+        }
+    }
+
+    private fun width(): Float {
+        val w = root.width
+        return if (w > 0) w.toFloat() else ctx.resources.displayMetrics.widthPixels.toFloat()
+    }
+
+    // The top bar.
+
+    private fun titleLabel() = TextView(ctx).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 15.5f)
+        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        setTextColor(BrowserService.TEXT)
+        isSingleLine = true
+    }
+
+    /** The tab block: the current tab's title and site, and how many tabs there are. */
+    private fun showTabs() {
+        if (tab == TERMINAL) return
+        tabBlock.contentDescription = "Tabs"
+        val t = currentTab()
+        val g = t?.let { groupOf(it.optString("group")) }
+        tabMark.visibility = if (g != null && g.optString("owner") == BrowserService.AGENT) View.VISIBLE else View.GONE
+        tabTitle.text = if (t == null) "New tab" else tabName(t)
+        val host = if (t == null) "" else host(t.optString("url"))
+        tabHost.text = host
+        tabHost.visibility = if (host.isEmpty()) View.GONE else View.VISIBLE
+        tabCount.text = (tabState.optJSONArray("tabs")?.length() ?: 1).toString()
+        if (tabList != null && typed == null) fillTabList()
+    }
+
+    private fun showTerminals() {
+        val state = terminalState
+        val windows = state?.optJSONArray("windows")
+        val current = state?.optString("current") ?: ""
+        tabMark.visibility = View.GONE
+        tabTitle.text = "Terminal"
+        tabHost.text = if (state != null && state.has("error")) state.optString("error") else "Connecting…"
+        tabHost.visibility = View.VISIBLE
+        tabBlock.contentDescription = "Terminal windows"
+        tabCount.text = (windows?.length() ?: 0).toString()
+        for (i in 0 until (windows?.length() ?: 0)) {
+            val w = windows!!.optJSONObject(i)
+            if (current != w.optString("target")) continue
+            tabTitle.text = w.optString("name")
+            tabHost.text = w.optString("command")
+        }
+        if (terminalList != null) fillTerminalList()
+    }
+
+    private fun terminalMenu() {
+        terminal.evaluateJavascript("window.ccmTerminal?.()", null)
+        val box = menuBox()
+        val scroll = maxHeightScroll((panel.height * 0.6f).toInt())
+        val list = LinearLayout(ctx)
+        list.orientation = LinearLayout.VERTICAL
+        terminalList = list
+        scroll.addView(list)
+        box.addView(scroll)
+        fillTerminalList()
+        showMenu(box, bar.width - dp(16), true)
+        menu?.setOnDismissListener { terminalList = null }
+    }
+
+    private fun fillTerminalList() {
+        val list = terminalList ?: return
+        list.removeAllViews()
+        val state = terminalState
+        val windows = state?.optJSONArray("windows")
+        if (windows == null || windows.length() == 0) {
+            val empty = line(14f, BrowserService.MUTED)
+            empty.text = if (state != null && state.has("error")) state.optString("error") else "Waiting for terminals…"
+            empty.setPadding(dp(10), dp(10), dp(10), dp(10))
+            list.addView(empty)
+            return
+        }
+        val all = (0 until windows.length()).map { windows.optJSONObject(it) }
+        for (group in all.map { it.optString("group") }.distinct()) {
+            var heading = false
+            for (w in all) {
+                if (group != w.optString("group")) continue
+                if (!heading) {
+                    val head = line(11f, BrowserService.MUTED)
+                    head.text = (if (group.startsWith("claude:")) "✳  " else "") + w.optString("title").uppercase(Locale.ROOT)
+                    head.letterSpacing = 0.04f
+                    head.setPadding(dp(10), dp(8), dp(10), dp(3))
+                    list.addView(head)
+                    heading = true
+                }
+                val target = w.optString("target")
+                val sub = w.optString("command") + " · " + w.optString("session")
+                list.addView(menuItem(R.drawable.ccm_tab_terminal, w.optString("name"), sub, target == state.optString("current"), {
+                    terminal.evaluateJavascript("window.ccmTerminal?.(" + JSONObject.quote(target) + ")", null)
+                    menu?.dismiss()
+                }, null))
+            }
+        }
+    }
+
+    private fun suggest(query: String) {
+        val svc = service ?: return
+        val m = Message.obtain(null, BrowserService.MSG_SUGGEST)
+        m.data.putString("query", query)
+        m.data.putInt("seq", ++suggestSeq)
+        m.replyTo = replies
+        try {
+            svc.send(m)
+        } catch (e: Exception) {
+            Log.e(TAG, "suggest", e)
+        }
+    }
+
+    /** In place of the tab list while a query is typed: matching open tabs, then pages from history. */
+    private fun showSuggestions(list: JSONArray) {
+        val tabList = tabList ?: return
+        tabList.removeAllViews()
+        for (i in 0 until list.length()) {
+            val s = list.optJSONObject(i)
+            val url = s.optString("url")
+            val host = host(url)
+            val name = tabName(s)
+            val shown = url.replaceFirst(Regex("^https?://(www\\.)?"), "").replaceFirst(Regex("/$"), "")
+            if (s.has("tab")) {
+                val id = s.optString("tab")
+                tabList.addView(menuItem(R.drawable.ccm_tab_browser, name, "Switch to tab · $host", false, {
+                    send(BrowserService.MSG_SELECT, "id", id)
+                    menu?.dismiss()
+                }, null))
+            } else {
+                tabList.addView(menuItem(R.drawable.ccm_history, name, shown, false, {
+                    send(BrowserService.MSG_LOAD, "url", url)
+                    menu?.dismiss()
+                }, null))
+            }
+        }
+    }
+
+    private fun currentTab(): JSONObject? {
+        val all = tabState.optJSONArray("tabs") ?: return null
+        val cur = tabState.optString("current")
+        return (0 until all.length()).map { all.optJSONObject(it) }.firstOrNull { it.optString("id") == cur }
+    }
+
+    /** A tab group, by id ("" or unknown: null). */
+    private fun groupOf(id: String): JSONObject? {
+        if (id.isEmpty()) return null
+        val gs = tabState.optJSONArray("groups") ?: return null
+        return (0 until gs.length()).map { gs.optJSONObject(it) }.firstOrNull { it.optString("id") == id }
+    }
+
+    /** The section menu, under the title. */
+    private fun sectionMenu() {
+        val list = menuBox()
+        val all = tabState.optJSONArray("tabs")
+        for (i in intArrayOf(BROWSER, ARTIFACTS, FILES, DESKTOP, TERMINAL, DEVBOX)) {
+            val sub = if (i == BROWSER && all != null) "${all.length()} " + (if (all.length() == 1) "tab" else "tabs") else null
+            list.addView(menuItem(ICONS[i], NAMES[i], sub, i == tab, {
+                menu?.dismiss()
+                select(i)
+            }, null))
+        }
+        showMenu(list, dp(220), false)
+    }
+
+    /** The browser's options, under ⋮ (at the right end): settings for the current tab's site, and Chrome. */
+    private fun optionsMenu() {
+        val list = menuBox()
+        val url = currentTab()?.optString("url") ?: ""
+        val host = host(url)
+        val on = tabState.optBoolean("desktop")
+        val desktopRow = menuItem(R.drawable.ccm_tab_desktop, "Desktop site",
+            if (host.isEmpty()) null else (if (on) "On for " else "For ") + host.replaceFirst(Regex("^www\\."), ""), false, {
+                menu?.dismiss()
+                send(BrowserService.MSG_DESKTOP, "on", if (on) null else "1")
+            }, null) as LinearLayout
+        val check = icon(R.drawable.ccm_check, BrowserService.CLAUDE)
+        check.visibility = if (on) View.VISIBLE else View.INVISIBLE
+        desktopRow.addView(check, LinearLayout.LayoutParams(dp(20), dp(20)))
+        desktopRow.isEnabled = host.isNotEmpty()
+        desktopRow.alpha = if (host.isEmpty()) 0.4f else 1f
+        list.addView(desktopRow)
+        val chrome = menuItem(R.drawable.ccm_tab_browser, "Open in Chrome", null, false, {
+            menu?.dismiss()
+            openOutside(url)
+        }, null)
+        chrome.isEnabled = host.isNotEmpty()
+        chrome.alpha = if (host.isEmpty()) 0.4f else 1f
+        list.addView(chrome)
+        showMenu(list, dp(250), false)
+        menu?.window?.let { w ->
+            val lp = w.attributes
+            lp.x = max(dp(8), lp.x + bar.width - dp(16) - dp(250)) // under ⋮, at the bar's right end
+            w.attributes = lp
+        }
+    }
+
+    /** The page in Chrome (or, without it, the default browser; never this app), with the screen out of the way. */
+    private fun openOutside(url: String) {
+        val i = Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            ctx.startActivity(Intent(i).setPackage("com.android.chrome"))
+        } catch (e: Exception) {
+            Links.openElsewhere(ctx, url)
+        }
+        animateTo(0f)
+    }
+
+    /** The tab menu, under the tab block: the address bar, then the tabs (yours, then each group's). */
+    private fun tabMenu() {
+        val box = menuBox()
+        val row = LinearLayout(ctx)
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(4), dp(4), 0, dp(6))
+        val address = EditText(ctx)
+        address.setText(currentTab()?.optString("url") ?: "")
+        address.isSingleLine = true
+        address.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        address.setTextColor(BrowserService.TEXT)
+        address.setHintTextColor(BrowserService.MUTED)
+        address.hint = "Search or type a URL"
+        address.setSelectAllOnFocus(true)
+        address.imeOptions = EditorInfo.IME_ACTION_GO
+        address.inputType = EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_URI
+        address.setPadding(dp(14), 0, dp(14), 0)
+        address.background = rounded(BrowserService.BG, dp(19)).apply { setStroke(max(1, dp(1)), Color.parseColor("#3a3936")) }
+        val initial = address.text.toString()
+        address.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
+            override fun onTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
+            override fun afterTextChanged(e: Editable) {
+                val q = e.toString()
+                typed = if (q.isBlank() || q == initial) null else q
+                if (tabList == null) return
+                val t = typed
+                if (t == null) fillTabList() else suggest(t)
+            }
+        })
+        address.setOnEditorActionListener { _, _, _ ->
+            send(BrowserService.MSG_LOAD, "url", address.text.toString())
+            menu?.dismiss()
+            true
+        }
+        row.addView(address, LinearLayout.LayoutParams(0, dp(40), 1f))
+        val reload = icon(R.drawable.ccm_reload, BrowserService.TEXT)
+        reload.scaleType = ImageView.ScaleType.CENTER
+        reload.background = pressable(dp(20))
+        reload.contentDescription = "Reload"
+        reload.setOnClickListener {
+            send(BrowserService.MSG_RELOAD)
+            menu?.dismiss()
+        }
+        row.addView(reload, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(4) })
+        box.addView(row)
+
+        // The list's first heading, "Your tabs", fixed above it (however long the list), with + for a new tab.
+        val head = LinearLayout(ctx)
+        head.gravity = Gravity.CENTER_VERTICAL
+        head.setPadding(dp(10), dp(2), 0, 0)
+        val yours = line(11f, BrowserService.MUTED)
+        yours.text = "YOUR TABS"
+        yours.letterSpacing = 0.04f
+        head.addView(yours, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val plus = icon(R.drawable.ccm_plus, BrowserService.TEXT)
+        plus.scaleType = ImageView.ScaleType.CENTER
+        plus.background = pressable(dp(18))
+        plus.contentDescription = "New tab"
+        plus.setOnClickListener {
+            send(BrowserService.MSG_NEW)
+            address.setText("")
+            address.requestFocus()
+            ctx.getSystemService(InputMethodManager::class.java).showSoftInput(address, 0)
+        }
+        head.addView(plus, LinearLayout.LayoutParams(dp(40), dp(36)))
+        box.addView(head)
+
+        val scroll = maxHeightScroll((panel.height * 0.6f).toInt())
+        val list = LinearLayout(ctx)
+        list.orientation = LinearLayout.VERTICAL
+        tabList = list
+        scroll.addView(list)
+        box.addView(scroll)
+        fillTabList()
+        showMenu(box, bar.width - dp(16), true)
+        menu?.setOnDismissListener {
+            tabList = null
+            typed = null
+        }
+    }
+
+    private fun maxHeightScroll(maxHeight: Int) = object : ScrollView(ctx) {
+        override fun onMeasure(w: Int, h: Int) {
+            super.onMeasure(w, MeasureSpec.makeMeasureSpec(maxHeight, MeasureSpec.AT_MOST))
+        }
+    }
+
+    private fun fillTabList() {
+        val tabList = tabList ?: return
+        tabList.removeAllViews()
+        val all = tabState.optJSONArray("tabs") ?: return
+        val tabs = (0 until all.length()).map { all.optJSONObject(it) }
+        // The tabs in no group ("Your tabs", whose heading is above the list), then each group's.
+        val groups = LinkedHashMap<String, JSONObject?>()
+        groups[""] = null
+        tabState.optJSONArray("groups")?.let { gs -> for (i in 0 until gs.length()) groups[gs.optJSONObject(i).optString("id")] = gs.optJSONObject(i) }
+        for ((gid, g) in groups) {
+            var any = false
+            for (t in tabs) {
+                if (t.optString("group") != gid) continue
+                if (!any && g != null) {
+                    // The group's heading: its title, ✳ for an agent session's.
+                    val head = line(11f, BrowserService.MUTED)
+                    val agent = g.optString("owner") == BrowserService.AGENT
+                    head.text = (if (agent) "✳  " else "") + g.optString("title").uppercase(Locale.ROOT)
+                    head.letterSpacing = 0.04f
+                    head.setPadding(dp(10), dp(8), dp(10), dp(3))
+                    tabList.addView(head)
+                }
+                any = true
+                val id = t.optString("id")
+                val host = host(t.optString("url"))
+                tabList.addView(menuItem(R.drawable.ccm_tab_browser, tabName(t), host.ifEmpty { null },
+                    id == tabState.optString("current"),
+                    {
+                        send(BrowserService.MSG_SELECT, "id", id)
+                        menu?.dismiss()
+                    },
+                    { send(BrowserService.MSG_CLOSE, "id", id) }))
+            }
+        }
+    }
+
+    private fun menuBox() = LinearLayout(ctx).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(6), dp(6), dp(6), dp(6))
+    }
+
+    /** A menu row: icon, name (and a second line), highlighted when it's the current one; × when it can close. */
+    private fun menuItem(iconRes: Int, name: String, sub: String?, on: Boolean, click: () -> Unit, close: (() -> Unit)?): View {
+        val row = LinearLayout(ctx)
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(10), dp(9), if (close == null) dp(10) else 0, dp(9))
+        row.minimumHeight = dp(44)
+        val bg = rounded(if (on) Color.argb(18, 255, 255, 255) else Color.TRANSPARENT, dp(11))
+        row.background = RippleDrawable(ColorStateList.valueOf(Color.argb(30, 255, 255, 255)), bg, rounded(Color.WHITE, dp(11)))
+        row.addView(icon(iconRes, BrowserService.MUTED), LinearLayout.LayoutParams(dp(20), dp(20)))
+        val text = LinearLayout(ctx)
+        text.orientation = LinearLayout.VERTICAL
+        text.addView(line(14f, BrowserService.TEXT).apply { this.text = name })
+        if (sub != null) text.addView(line(11.5f, BrowserService.MUTED).apply { this.text = sub })
+        row.addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(12) })
+        if (close != null) {
+            val x = label("×", 18)
+            x.setTextColor(BrowserService.MUTED)
+            x.contentDescription = "Close tab"
+            x.setOnClickListener { close() }
+            row.addView(x, LinearLayout.LayoutParams(dp(40), dp(36)))
+        }
+        row.setOnClickListener { click() }
+        return row
+    }
+
+    /** A menu under the top bar, over a dimmed screen; a tap outside closes it. It's a window of its own over every app. */
+    private fun showMenu(content: View, width: Int, typing: Boolean) {
+        menu?.dismiss()
+        val d = Dialog(ctx)
+        menu = d
+        d.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        d.setContentView(content)
+        d.setCanceledOnTouchOutside(true)
+        val w = d.window!!
+        w.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        w.setBackgroundDrawable(rounded(BrowserService.FIELD, dp(16)))
+        w.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN)
+        val at = IntArray(2)
+        bar.getLocationOnScreen(at)
+        val lp = w.attributes
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.x = at[0] + dp(8)
+        lp.y = at[1] + bar.height - dp(2)
+        lp.width = width
+        lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        lp.dimAmount = 0.3f
+        lp.windowAnimations = android.R.style.Animation_Dialog
+        w.attributes = lp
+        w.setSoftInputMode(if (typing) WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING else WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        d.show()
+        refocus = true // for when the menu is gone
+    }
+
+    private fun line(sp: Float, color: Int) = TextView(ctx).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+        setTextColor(color)
+        isSingleLine = true
+        ellipsize = TextUtils.TruncateAt.END
+    }
+
+    private fun icon(res: Int, color: Int) = ImageView(ctx).apply {
+        setImageResource(res)
+        setColorFilter(color)
+    }
+
+    private fun rounded(color: Int, radius: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = radius.toFloat()
+    }
+
+    private fun pressable(radius: Int): Drawable =
+        RippleDrawable(ColorStateList.valueOf(Color.argb(30, 255, 255, 255)), null, rounded(Color.WHITE, radius))
+
+    private fun label(text: String, sp: Int) = TextView(ctx).apply {
+        this.text = text
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, sp.toFloat())
+        setTextColor(BrowserService.TEXT)
+        gravity = Gravity.CENTER
+    }
+
+    private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
+
+    // The embedded browser. The binding comes back by itself when the browser's process restarts (BIND_AUTO_CREATE);
+    // if Android drops it altogether (onBindingDied), it's made anew.
+
+    private fun bind() {
+        bound = ctx.bindService(Intent(ctx, BrowserService::class.java), this, Context.BIND_AUTO_CREATE or Context.BIND_IMPORTANT)
+    }
+
+    override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+        service = Messenger(binder)
+        attached = false
+        // Known to the browser at once, before there's a surface: "show" from an agent then brings the screen in.
+        val hello = Message.obtain(null, BrowserService.MSG_CLIENT)
+        hello.replyTo = replies
+        try {
+            service?.send(hello)
+        } catch (e: Exception) {
+            Log.e(TAG, "client", e)
+        }
+        attachOrResize()
+    }
+
+    override fun onServiceDisconnected(name: ComponentName) {
+        service = null
+        attached = false
+    }
+
+    override fun onBindingDied(name: ComponentName) {
+        service = null
+        attached = false
+        if (!bound) return
+        ctx.unbindService(this)
+        bound = false
+        if (current === this) Handler(Looper.getMainLooper()).postDelayed({ if (current === this && !bound) bind() }, 500)
+    }
+
+    private fun attachOrResize() {
+        val svc = service ?: return
+        if (surface.width == 0 || surface.height == 0 || surface.display == null) return
+        val m = Message.obtain(null, if (attached) BrowserService.MSG_RESIZE else BrowserService.MSG_ATTACH)
+        val b = m.data
+        b.putInt("width", surface.width)
+        b.putInt("height", surface.height)
+        if (!attached) {
+            b.putBinder("hostToken", surface.hostToken)
+            b.putInt("displayId", surface.display.displayId)
+            m.replyTo = replies
+        }
+        try {
+            svc.send(m)
+        } catch (e: Exception) {
+            Log.e(TAG, "send", e)
+        }
+    }
+
+    private fun onReply(m: Message): Boolean {
+        when (m.what) {
+            BrowserService.MSG_ATTACH -> {
+                @Suppress("DEPRECATION")
+                val pkg = m.data.getParcelable<SurfaceControlViewHost.SurfacePackage>("surface")
+                if (pkg != null) {
+                    surface.setChildSurfacePackage(pkg)
+                    attached = true
+                }
+            }
+            BrowserService.MSG_TABS -> {
+                try {
+                    tabState = JSONObject(m.data.getString("json") ?: "{}")
+                } catch (e: Exception) {
+                    Log.d(TAG, "tabs: $e")
+                }
+                showTabs()
+            }
+            BrowserService.MSG_SUGGESTIONS -> {
+                if (m.data.getInt("seq") == suggestSeq && tabList != null && typed != null) {
+                    try {
+                        showSuggestions(JSONArray(m.data.getString("json")))
+                    } catch (e: Exception) {
+                        Log.d(TAG, "suggestions: $e")
+                    }
+                }
+            }
+            BrowserService.MSG_SHOW -> {
+                closeViewer()
+                select(BROWSER)
+                animateTo(1f)
+            }
+            BrowserService.MSG_BACK_KEY -> if (isOpen) back()
+        }
+        return true
+    }
+
+    private fun send(what: Int, key: String? = null, value: String? = null) {
+        val svc = service ?: return
+        val m = Message.obtain(null, what)
+        if (key != null) m.data.putString(key, value)
+        try {
+            svc.send(m)
+        } catch (e: Exception) {
+            Log.e(TAG, "send", e)
+        }
+    }
+
+    companion object {
+        private const val TAG = "Screen"
+        var current: Screen? = null // for AppWeb and LinkActivity
+            private set
+        private val NAMES = arrayOf("Files", "Artifacts", "Browser", "Desktop", "Devbox", "Terminal")
+        private val ICONS = intArrayOf(R.drawable.ccm_tab_files, R.drawable.ccm_tab_artifacts, R.drawable.ccm_tab_browser,
+            R.drawable.ccm_tab_desktop, R.drawable.ccm_tab_devbox, R.drawable.ccm_tab_terminal)
+        private const val FILES = 0
+        private const val ARTIFACTS = 1
+        private const val BROWSER = 2
+        private const val DESKTOP = 3
+        private const val DEVBOX = 4
+        private const val TERMINAL = 5
+        private const val BAR_DP = 48
+        private const val TITLE_PAD = 6
+        private const val BAR_START = 10
+        private const val TOP_BAND_DP = 56
+        private const val PULL_DP = 110
+
+        private fun tabName(t: JSONObject): String {
+            val title = t.optString("title")
+            val url = t.optString("url")
+            if (title.isNotEmpty() && title != url && !url.endsWith(title)) return title
+            return host(url).ifEmpty { "New tab" }
+        }
+
+        private fun host(url: String?): String = if (url.isNullOrEmpty()) "" else Uri.parse(url).host ?: ""
+    }
+}

@@ -1,0 +1,16 @@
+<resources>
+    <style name="Theme.Otto" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#80D5D4</item>
+        <item name="colorOnPrimary">#003737</item>
+        <item name="colorPrimaryContainer">#004F4F</item>
+        <item name="colorOnPrimaryContainer">#9CF1F0</item>
+        <item name="colorSecondary">#B0CCCB</item>
+        <item name="colorTertiary">#B3C8E8</item>
+        <item name="colorSurface">#0E1514</item>
+        <item name="colorOnSurface">#DDE4E3</item>
+        <item name="colorOnSurfaceVariant">#BEC9C8</item>
+        <item name="android:colorBackground">#0E1514</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

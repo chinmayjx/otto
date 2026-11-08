@@ -1,0 +1,17 @@
+<resources>
+    <!-- Teal fallbacks; on Android 12+ the wallpaper's colors replace them (DynamicColors in MainActivity and PairActivity). -->
+    <style name="Theme.Otto" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#006A6A</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorPrimaryContainer">#9CF1F0</item>
+        <item name="colorOnPrimaryContainer">#002020</item>
+        <item name="colorSecondary">#4A6362</item>
+        <item name="colorTertiary">#4B607C</item>
+        <item name="colorSurface">#F4FBFA</item>
+        <item name="colorOnSurface">#161D1D</item>
+        <item name="colorOnSurfaceVariant">#3F4948</item>
+        <item name="android:colorBackground">#F4FBFA</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

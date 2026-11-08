@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { loadConfig, session, relay, browser, phone, saveShot, desktopShot, OttoError } from './lib.js';
+import { loadConfig, session, relay, browser, phone, saveShot, desktopShot, pairing, pairingLink, OttoError } from './lib.js';
 
 const HELP = `otto: the phone, its browser and the box's desktop, for agents and people
 
@@ -45,6 +45,8 @@ The second screen and status:
   otto show <url>                          open a page in the phone's second screen
   otto close                               close your session's tabs
   otto status                              the phone's links, tabs and sessions
+  otto pair [--send] [--box HOST] [--qr]   the Otto app's pairing link for this box (--send: open it on the
+                                           phone through the device link; --qr: also as a QR code)
   otto artifact ...                        publish and list artifacts (the artifact CLI)
 
 Your session comes from OTTO_SESSION (set by your agent's adapter).`;
@@ -54,7 +56,7 @@ interface Args { _: string[]; [k: string]: any }
 /** What agents used to Playwright's tools tend to type. */
 const ALIASES: Record<string, string> = { navigate: 'open', goto: 'open', go: 'open', fill: 'type', key: 'press', press_key: 'press', shot: 'screenshot', take_screenshot: 'screenshot', evaluate: 'eval', tab: 'tabs', navigate_back: 'back' };
 
-const BOOLEAN = new Set(['new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json']);
+const BOOLEAN = new Set(['send', 'qr', 'new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json']);
 
 function parseArgs(argv: string[]): Args {
   const a: Args = { _: [] };
@@ -179,6 +181,21 @@ async function main(argv: string[]) {
         `session: ${me.id}${s.sessions[me.id] ? ` (group ${s.sessions[me.id].group}, "${s.sessions[me.id].title}")` : ' (no tabs yet)'}`,
         `sessions: ${Object.keys(s.sessions).length}`,
       ].join('\n'));
+      return;
+    }
+
+    case 'pair': {
+      const a2 = parseArgs(argv.slice(1));
+      const link = pairingLink(pairing(a2.box));
+      if (a2.send) {
+        await phone(config, 'launch', { url: link });
+        return out('sent: confirm the pairing on the phone');
+      }
+      out(link);
+      if (a2.qr) {
+        const r = spawnSync('qrencode', ['-t', 'ANSIUTF8', link], { stdio: ['ignore', 'inherit', 'inherit'] });
+        if (r.error) throw new OttoError('qrencode is not installed (apt install qrencode)');
+      }
       return;
     }
 

@@ -1,0 +1,51 @@
+/* Desktop (desktop.js): the VNC desktop made for a phone. */
+:root { --dbar:#1f1e1d; --fg:#ecebe7; --track:#2c2b28; --accent:#d97757; }
+#app.desktop { background:#000; }
+
+#view { position:relative; flex:1; min-height:0; overflow:hidden; background:#111; }
+#target, #target > div { position:absolute !important; inset:0; overflow:hidden !important; background:none !important; display:block !important; }
+#target canvas { position:absolute; left:0; top:0; margin:0 !important; transform-origin:0 0; image-rendering:auto; }
+#touch { position:absolute; inset:0; z-index:2; touch-action:none; }
+#status { position:absolute; inset:0; z-index:3; display:flex; align-items:center; justify-content:center; color:var(--muted); pointer-events:none; }
+#keys { display:none; gap:6px; padding:6px 8px 0; background:var(--dbar); overflow-x:auto; scrollbar-width:none; }
+#app.typing #keys { display:flex; }
+#keys button, #kb { flex:none; height:34px; min-width:44px; padding:0 10px; border:0; border-radius:8px; background:var(--track); color:var(--fg); font:inherit; }
+#keys button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+#bar { display:flex; align-items:center; gap:10px; height:48px; padding:0 10px; background:var(--dbar); }
+#kb, #hover, #zoom { min-width:40px; padding:0; display:flex; align-items:center; justify-content:center; }
+#hover, #zoom { flex:none; height:34px; border:0; border-radius:8px; background:var(--track); color:var(--fg); }
+#app.typing #kb, #app.hovering #hover, #app.whole #zoom { background:var(--accent); color:#fff; }
+/* Hover mode: where the pointer was left, a ring that fades. */
+#ptr { position:absolute; z-index:3; width:26px; height:26px; margin:-13px 0 0 -13px; border:2px solid var(--accent); border-radius:50%; pointer-events:none; opacity:0; transition:opacity .9s; }
+#ptr.on { opacity:1; transition:none; }
+#mini { position:relative; display:none; background:var(--dbar); padding:6px 10px 0; touch-action:none; }
+#app.mini:not(.typing) #mini { display:block; }
+#mini canvas { display:block; width:100%; border-radius:6px; background:#111; }
+#win { position:absolute; border:2px solid var(--accent); border-radius:3px; box-shadow:0 0 0 999px #0005; pointer-events:none; }
+#mini { overflow:hidden; }
+/* Keyboard up: a 2D scroll pad, shaped like the desktop; the thumb is the part in view. */
+#pad { position:absolute; z-index:3; right:12px; bottom:12px; border-radius:12px; background:#1f1e1d73; border:1px solid #ecebe740; touch-action:none; display:none; }
+#app.typing #pad.scrolls { display:block; }
+#padthumb { position:absolute; border-radius:11px; /* the pad's 12px less its 1px border: flush in its corners */ background:#ecebe75c; border:1px solid #ecebe7a0; pointer-events:none; }
+#mode { flex:none; display:flex; align-items:center; gap:6px; height:34px; padding:0 12px 0 10px; border:0; border-radius:8px; background:var(--track); color:var(--fg); font:inherit; font-size:13px; }
+#mode svg { display:none; }
+#app:not(.desk) #mode .phone, #app.desk #mode .monitor { display:block; }
+#app.fits #mini, #app:not(.desk) #mini { display:none !important; } /* nothing to pan sideways; Mobile: never (it would change the size Mobile asks for, and flicker) */
+#ime { position:fixed; left:0; bottom:0; width:1px; height:1px; opacity:0; border:0; padding:0; resize:none; font-size:16px; }
+#down { position:absolute; inset:0; z-index:4; background:var(--dbar); }
+#down:empty { display:none; }
+/* Zoom: Desktop mode only (Mobile is shown whole already). Zoomed out, its icon offers zooming back in (+). */
+#app:not(.desk) #zoom { display:none; }
+#zoom .plus { display:none; }
+#app.whole #zoom .plus { display:block; }
+/* Landscape: the desktop takes the whole height, the controls a strip on the right. No minimap: shown full
+   width it would be taller than the screen, and a 16:9 desktop fitted to the height mostly fits the width. */
+@media (orientation: landscape) {
+  #app.desktop { display:grid; grid-template-columns:1fr auto; grid-template-rows:1fr auto; }
+  #app.desktop #view { grid-column:1; grid-row:1; }
+  #app.desktop #keys { grid-column:1; grid-row:2; padding-bottom:6px; }
+  #app.desktop #mini { display:none !important; }
+  #app.desktop #bar { grid-column:2; grid-row:1 / span 2; flex-direction:column; width:56px; height:auto; padding:10px 0; }
+  #app.desktop #mode { width:40px; padding:0; justify-content:center; }
+  #app.desktop #modelabel { display:none; }
+}

@@ -1,0 +1,15 @@
+/* Terminal (terminal.js): the shared shell, fitted to the screen. */
+#app.terminal { background: var(--bg); }
+#app.terminal .screen { position: relative; flex: 1; min-height: 0; overflow: hidden; background: #1f1e1d; }
+/* No side padding: terminal.js centres the whole columns in the width instead. */
+#app.terminal .xterm { height: 100%; padding: 6px 0 2px; }
+#app.terminal .status { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; color: var(--muted); background: var(--bg); }
+#app.terminal .status[hidden] { display: none; }
+#app.terminal .down { position: absolute; inset: 0; z-index: 4; background: var(--bg); }
+#app.terminal .down:empty { display: none; }
+#app.terminal .keys { display: flex; gap: 6px; padding: 6px 8px; background: var(--bg); overflow-x: auto; scrollbar-width: none; }
+#app.terminal .keys button { flex: none; height: 34px; min-width: 44px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--field); color: var(--text); font: inherit; }
+#app.terminal .keys .kb { min-width: 40px; padding: 0; display: flex; align-items: center; justify-content: center; }
+#app.terminal .keys button[aria-pressed="true"], #app.terminal.typing .kb { background: var(--claude); color: #fff; }
+/* A 0-size field never raises the keyboard (desktop.css gives its own field the same 1px). */
+#app.terminal .xterm-helper-textarea { left: 0; top: 0; width: 1px; height: 1px; font-size: 16px; opacity: 0; }

@@ -1,0 +1,120 @@
+import java.util.Properties
+import javax.inject.Inject
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+// Nothing personal is built in: the box, its ports, tokens and hosts come from pairing (otto pair). The one
+// build-time option is otto.extraLinkHosts: hosts outside *.ts.net whose artifact links the app should open,
+// such as an artifact hub's public domain (Android only lets an app claim the hosts its manifest lists).
+// Set it with -Potto.extraLinkHosts=a.example.com,b.example.com, or in local.properties (not committed).
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val extraLinkHosts: List<String> = ((findProperty("otto.extraLinkHosts") as String?)?.takeIf { it.isNotBlank() }
+    ?: localProps.getProperty("otto.extraLinkHosts") ?: "")
+    .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+android {
+    namespace = "io.github.otto"
+    compileSdk = 35
+    defaultConfig {
+        applicationId = "io.github.otto"
+        minSdk = 31
+        targetSdk = 35
+        versionCode = (findProperty("versionCode") ?: "1").toString().toInt()
+        versionName = (findProperty("versionName") ?: "0.1").toString()
+        buildConfigField("String", "EXTRA_LINK_HOSTS", "\"${extraLinkHosts.joinToString(",")}\"")
+    }
+    buildFeatures { buildConfig = true }
+    // Release signing from the environment (OTTO_KEYSTORE and friends); otherwise the debug key.
+    signingConfigs {
+        create("release") {
+            System.getenv("OTTO_KEYSTORE")?.let { ks ->
+                storeFile = file(ks)
+                storePassword = System.getenv("OTTO_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("OTTO_KEY_ALIAS") ?: "otto"
+                keyPassword = System.getenv("OTTO_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName(if (System.getenv("OTTO_KEYSTORE") != null) "release" else "debug")
+            isMinifyEnabled = false
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = "17" }
+    androidResources {
+        // Keep the web UI's files whatever their names (the default skips some, e.g. ones starting with _).
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
+    }
+}
+
+// The extra link hosts go into the manifest as one more intent filter, generated from the real one.
+if (extraLinkHosts.isNotEmpty()) {
+    val source = file("src/main/AndroidManifest.xml")
+    val generated = layout.buildDirectory.file("generated/otto-manifest/AndroidManifest.xml").get().asFile
+    val hosts = extraLinkHosts.joinToString("\n") { "                <data android:host=\"$it\" />" }
+    val filter = """
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" />
+$hosts
+                <data android:pathPrefix="/a/" />
+                <data android:pathPrefix="/p/" />
+                <data android:pathPrefix="/v/" />
+            </intent-filter>"""
+    val text = source.readText()
+    val marker = "<!-- otto.extraLinkHosts -->"
+    check(marker in text) { "$marker is missing from the manifest" }
+    generated.parentFile.mkdirs()
+    generated.writeText(text.replace(marker, filter.trimStart()))
+    android.sourceSets.getByName("main").manifest.srcFile(generated)
+}
+
+// The web UI (Files, Artifacts, Desktop, Terminal, Devbox) is otto/web, copied into the APK's assets at ide/.
+abstract class SyncWeb : DefaultTask() {
+    @get:InputDirectory
+    abstract val source: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val output: DirectoryProperty
+
+    @get:Inject
+    abstract val files: FileSystemOperations
+
+    @TaskAction
+    fun run() {
+        files.sync {
+            from(source)
+            into(output.dir("ide"))
+            exclude("README.md")
+        }
+    }
+}
+
+val syncWeb = tasks.register<SyncWeb>("syncWeb") {
+    source.set(rootProject.layout.projectDirectory.dir("../web"))
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(syncWeb, SyncWeb::output)
+    }
+}
+
+dependencies {
+    implementation("androidx.webkit:webkit:1.12.1")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.google.android.material:material:1.12.0")
+}
