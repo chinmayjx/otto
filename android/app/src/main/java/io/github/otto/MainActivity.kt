@@ -63,7 +63,7 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
 
         val scroll = ScrollView(this)
-        scroll.clipToPadding = false
+        scroll.clipToPadding = true // the page scrolls under nothing: not the status bar, not the gesture bar
         scroll.setBackgroundColor(color(M.attr.colorSurface))
         val col = column()
         col.setPadding(dp(24), dp(24), dp(24), dp(28))
@@ -279,7 +279,7 @@ class MainActivity : AppCompatActivity() {
         body.addView(label(detail.trim(), 13, muted()), wide())
         if (action != null) {
             space(body, 8)
-            val b = MaterialButton(this, null, if (done) M.attr.materialButtonOutlinedStyle else 0)
+            val b = MaterialButton(this, null, if (done) M.attr.materialButtonOutlinedStyle else M.attr.materialButtonStyle)
             b.text = action
             b.isAllCaps = false
             b.setOnClickListener { onClick() }
