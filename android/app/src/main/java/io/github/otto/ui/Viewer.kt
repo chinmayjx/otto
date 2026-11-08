@@ -132,12 +132,14 @@ private fun ViewerBar(title: String, label: String?, progress: Float?, onLabel: 
                             style = MaterialTheme.typography.labelLarge, color = cs.primary, maxLines = 1, softWrap = false)
                     }
                 }
-                if (clipping != null) IconButton(onClick = onClip) {
-                    Icon(Ic.clipboard, if (clipping) "Close the collector" else "Collect notes and parts for your agent",
+                // A tight group: 40dp targets, 22dp icons.
+                val tight = Modifier.size(40.dp)
+                if (clipping != null) IconButton(onClick = onClip, modifier = tight) {
+                    Icon(Ic.clipboard, if (clipping) "Close the collector" else "Collect notes and parts for your agent", Modifier.size(22.dp),
                         tint = if (clipping) cs.onSurface else cs.onSurfaceVariant)
                 }
-                if (onDownload != null) IconButton(onClick = onDownload) { Icon(Ic.download, "Download") }
-                if (onMore != null) IconButton(onClick = onMore) { Icon(Ic.more, "More") }
+                if (onDownload != null) IconButton(onClick = onDownload, modifier = tight) { Icon(Ic.download, "Download", Modifier.size(22.dp)) }
+                if (onMore != null) IconButton(onClick = onMore, modifier = tight) { Icon(Ic.more, "More", Modifier.size(22.dp)) }
             }
             if (progress != null) {
                 val m = Modifier.fillMaxWidth().height(2.dp).align(Alignment.BottomCenter)
@@ -261,7 +263,7 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
     }
 }
 
-/** Where the reader is in what the viewer shows ("p.4", "§ Heading"), for the collector's notes; null: nowhere. */
+/** Where the reader is in what the viewer shows (a PDF's page, "p.4"), for the collector's notes; null: nowhere. */
 class Place {
     var label by mutableStateOf<String?>(null)
 }

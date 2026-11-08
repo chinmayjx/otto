@@ -136,14 +136,10 @@ fun MarkdownText(text: String, onLink: (String) -> Unit, modifier: Modifier = Mo
             .build()
     }
     val fg = cs.onSurface.toArgb()
-    val place = LocalPlace.current
-    val slack = with(density) { 24.dp.roundToPx() }
     AndroidView(
         factory = { c ->
             ScrollView(c).apply {
                 isFillViewport = true
-                // The heading above the top of what's in view, for the collector's notes.
-                if (place != null) setOnScrollChangeListener { v, _, y, _, _ -> place.label = heading((v as ScrollView).getChildAt(0) as TextView, y + slack) }
                 val pad = with(density) { 18.dp.roundToPx() }
                 addView(TextView(c).apply {
                     setPadding(pad, pad / 2, pad, pad * 3)
@@ -160,30 +156,12 @@ fun MarkdownText(text: String, onLink: (String) -> Unit, modifier: Modifier = Mo
             if (tv.tag != text) {
                 tv.tag = text
                 markwon.setMarkdown(tv, text)
-                if (place != null) tv.post { place.label = heading(tv, v.scrollY + slack) }
             }
         },
         // Clipped to its slot: Compose doesn't clip the views it hosts, and the ScrollView's text, scrolled up,
         // drew over the viewer's bar.
         modifier = modifier.fillMaxSize().clipToBounds(),
     )
-}
-
-/** The last heading that starts above y (the text view's pixels), as a place: "§ Heading". */
-private fun heading(tv: TextView, y: Int): String? {
-    val sp = tv.text as? android.text.Spanned ?: return null
-    val layout = tv.layout ?: return null
-    var best: String? = null
-    var bestAt = -1
-    for (h in sp.getSpans(0, sp.length, io.noties.markwon.core.spans.HeadingSpan::class.java)) {
-        val start = sp.getSpanStart(h)
-        val at = layout.getLineTop(layout.getLineForOffset(start)) + tv.paddingTop
-        if (at <= y && at > bestAt) {
-            bestAt = at
-            best = sp.subSequence(start, sp.getSpanEnd(h)).toString().trim()
-        }
-    }
-    return best?.takeIf { it.isNotEmpty() }?.let { "§ " + if (it.length > 60) it.take(59) + "…" else it }
 }
 
 // --- Text and code ----------------------------------------------------------------------------------------------
