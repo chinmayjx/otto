@@ -186,7 +186,6 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
     val title = cur?.title ?: hint?.title ?: ""
     val behind = cur != null && cur.pinned && cur.version < cur.latest
     val label = if (cur != null && cur.versions.size > 1) "v${cur.version}${if (behind) " (not latest)" else ""} ▾" else null
-    val place = remember { Place() }
     val clip = remember(cur?.artifactId) { cur?.let { ArtifactClip(ctx, it.artifactId) } }
     var clipping by remember { mutableStateOf(false) }
     var area by remember { mutableStateOf<android.graphics.Rect?>(null) } // the body, in the window's pixels
@@ -213,9 +212,7 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
                 error != null -> Centered(error!!)
                 cur == null -> {}
                 else -> androidx.compose.runtime.key(cur.versionId) {
-                    CompositionLocalProvider(LocalPlace provides place) {
-                        ArtifactBody(cur, onProgress = { progress = it })
-                    }
+                    ArtifactBody(cur, onProgress = { progress = it })
                 }
             }
             frozen?.let { bm ->
@@ -230,7 +227,6 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
             AndroidView(
                 factory = { c -> Collector(c, docked = true).also { clip.attach(it) } },
                 update = {
-                    it.place = place.label
                     it.frozen = frozen != null
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -262,13 +258,6 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
         }
     }
 }
-
-/** Where the reader is in what the viewer shows (a PDF's page, "p.4"), for the collector's notes; null: nowhere. */
-class Place {
-    var label by mutableStateOf<String?>(null)
-}
-
-val LocalPlace = staticCompositionLocalOf<Place?> { null }
 
 /** Drafts are written off the main thread, in order. */
 private val draftIo = Executors.newSingleThreadExecutor { Thread(it, "drafts") }

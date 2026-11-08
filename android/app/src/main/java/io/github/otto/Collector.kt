@@ -112,13 +112,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     var pieces: List<Piece> = emptyList()
         private set
 
-    /** Where the reader is (docked): the place button starts a note with it. Null: nowhere in particular. */
-    var place: String? = null
-        set(v) {
-            field = v
-            action("+ " + (v ?: "Note")) { addNote() }
-        }
-
     /** The freeze toggle is on: what's under the collector is frozen. */
     var frozen = false
         set(v) {
@@ -141,7 +134,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     private val status = TextView(ctx)
     private val note = EditText(ctx)
     private val copy = ImageView(ctx)
-    private val placeButton: TextView
     private val capture = ImageView(ctx)
     private val whole = ImageView(ctx)
     private val close = ImageView(ctx)
@@ -201,14 +193,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         icon(capture, R.drawable.ccm_freeze) { onCapture() }
         icon(whole, R.drawable.ccm_whole) { onWhole() }
         whole.contentDescription = if (docked) "Take the whole page in view" else "Take the whole screen"
-        // The place: a small outlined pill.
-        placeButton = button("+ Note", ICON, pill(Color.TRANSPARENT, BrowserService.LINE, dp(16)))
-        placeButton.typeface = Typeface.DEFAULT
-        placeButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-        placeButton.minWidth = 0
-        placeButton.setPadding(dp(12), 0, dp(12), 0)
-        placeButton.visibility = GONE
-        bar.addView(placeButton, LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { marginStart = dp(2) })
         bar.addView(View(ctx), LayoutParams(0, 1, 1f))
         close.setImageResource(R.drawable.ccm_close_box)
         close.setColorFilter(ICON)
@@ -300,14 +284,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         copy.setColorFilter(if (on) BrowserService.ON_ACCENT else OFF_TEXT)
     }
 
-    /** The text button left of capture: [text] runs [run]; null hides it. */
-    fun action(text: String?, run: () -> Unit = {}) {
-        placeButton.visibility = if (text == null) GONE else VISIBLE
-        placeButton.text = text ?: ""
-        placeButton.contentDescription = text
-        placeButton.setOnClickListener { run() }
-    }
-
     /** New chips (and, if one is given, that one scrolled into view). */
     fun piecesChanged(list: List<Piece>, show: Int = -1) {
         pieces = list
@@ -366,17 +342,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     }
 
     val typing get() = note.hasFocus()
-
-    /** A new line in the text, tagged with the place: "[p.4] ". */
-    private fun addNote() {
-        val t = note.text.toString().trimEnd()
-        val tag = place?.let { "[$it] " } ?: ""
-        val add = (if (t.isEmpty()) "" else "\n") + tag
-        note.setText(t + add)
-        note.setSelection(note.text.length)
-        note.focusNow()
-        context.getSystemService(InputMethodManager::class.java).showSoftInput(note, 0)
-    }
 
     /** A piece's chip: its thumbnail, drawn live, and an × that removes it. */
     private fun chip(i: Int): View {
@@ -448,19 +413,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             }
             return true
         }
-    }
-
-    private fun button(text: String, color: Int, bg: GradientDrawable) = TextView(context).apply {
-        this.text = text
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
-        typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        setTextColor(color)
-        gravity = Gravity.CENTER
-        minWidth = dp(72)
-        setPadding(dp(14), 0, dp(14), 0)
-        background = bg
-        isClickable = true
-        isFocusable = false // a tap leaves the text's focus (and the keyboard) where it is until the button acts
     }
 
     /** A pill (or any rounded box) of [fill], with a 1dp [stroke] border. */
