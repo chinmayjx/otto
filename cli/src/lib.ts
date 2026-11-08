@@ -34,17 +34,15 @@ export function loadConfig(): Config {
 }
 
 /**
- * What the phone needs to pair with this box, from the config file and the token files it points to: the relay's
- * links (the box's tailnet name and ports, the two tokens) and the web services' URLs ([phone] hub_url,
+ * What the phone needs to pair with this box, from the config file and the token file it points to: the relay's
+ * tunnel (the box's tailnet name, its ports, the token) and the web services' URLs ([phone] hub_url,
  * artifacts_url, and optionally public_artifacts_url, panel_url).
  */
 export interface Pairing {
   box: string;
-  browserPort: number;
+  port: number;
   pipePort: number;
-  devicePort: number;
-  browserToken: string;
-  deviceToken: string;
+  token: string;
   hub: string;
   artifacts: string;
   publicArtifacts?: string;
@@ -55,9 +53,9 @@ export function pairing(box?: string): Pairing {
   const file = configFile();
   const t = readToml(file);
   const relay = t.relay ?? {}, phone = t.phone ?? {};
-  const token = (f: string, what: string) => {
+  const token = (f: string) => {
     try { return fs.readFileSync(f.replace(/^~(?=\/|$)/, home), 'utf8').trim(); } catch {
-      throw new OttoError(`no ${what} token at ${f} (set phone.${what}_token_file in ${file})`);
+      throw new OttoError(`no token at ${f} (set phone.token_file in ${file})`);
     }
   };
   const need = (v: any, key: string) => {
@@ -70,11 +68,9 @@ export function pairing(box?: string): Pairing {
   if (!host) throw new OttoError(`can't tell the box's tailnet name: set [box] url in ${file}, or pass --box`);
   return {
     box: host,
-    browserPort: relay.browser_port ?? 9401,
+    port: relay.tunnel_port ?? relay.browser_port ?? 9401,
     pipePort: relay.pipe_port ?? 9402,
-    devicePort: relay.device_port ?? 9411,
-    browserToken: token(phone.browser_token_file ?? '~/.config/otto/browser-token', 'browser'),
-    deviceToken: token(phone.device_token_file ?? '~/.config/otto/device-token', 'device'),
+    token: token(phone.token_file ?? phone.browser_token_file ?? '~/.config/otto/token'),
     hub: need(phone.hub_url, '[phone] hub_url'),
     artifacts: need(phone.artifacts_url, '[phone] artifacts_url'),
     publicArtifacts: phone.public_artifacts_url || undefined,
@@ -82,15 +78,13 @@ export function pairing(box?: string): Pairing {
   };
 }
 
-/** The pairing link the Otto app takes: otto://pair?box=…&browser_port=…&… */
+/** The pairing link the Otto app takes: otto://pair?box=…&port=…&pipe_port=…&token=…&hub=…&artifacts=… */
 export function pairingLink(p: Pairing): string {
   const q = new URLSearchParams({
     box: p.box,
-    browser_port: String(p.browserPort),
+    port: String(p.port),
     pipe_port: String(p.pipePort),
-    device_port: String(p.devicePort),
-    browser_token: p.browserToken,
-    device_token: p.deviceToken,
+    token: p.token,
     hub: p.hub,
     artifacts: p.artifacts,
   });

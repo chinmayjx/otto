@@ -8,29 +8,26 @@ import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
-import { FakeBrowserApp, fakeDevice } from './fake-phone.js';
+import { FakePhone } from './fake-phone.js';
 
 const base = 19300 + Math.floor(Math.random() * 600);
-const ports = { browser: base, pipe: base + 1, device: base + 2, local: base + 3 };
+const ports = { tunnel: base, pipe: base + 1, local: base + 3 };
 const api = `http://127.0.0.1:${ports.local}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-relay-test-'));
 let relay: ChildProcess;
-const app = new FakeBrowserApp();
+const app = new FakePhone();
 
 before(async () => {
-  fs.writeFileSync(path.join(dir, 'browser-token'), 'browser-secret\n');
-  fs.writeFileSync(path.join(dir, 'device-token'), 'device-secret\n');
+  fs.writeFileSync(path.join(dir, 'token'), 'phone-secret\n');
   fs.writeFileSync(path.join(dir, 'config.toml'), `
 [relay]
 tailnet_host = "127.0.0.1"
-browser_port = ${ports.browser}
+tunnel_port = ${ports.tunnel}
 pipe_port = ${ports.pipe}
-device_port = ${ports.device}
 local_port = ${ports.local}
 state_file = "${dir}/state.json"
 [phone]
-browser_token_file = "${dir}/browser-token"
-device_token_file = "${dir}/device-token"
+token_file = "${dir}/token"
 `);
   const main = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'main.js');
   relay = spawn(process.execPath, [main], { env: { ...process.env, OTTO_CONFIG: path.join(dir, 'config.toml') }, stdio: ['ignore', 'pipe', 'inherit'] });
@@ -52,16 +49,17 @@ test('without a phone, the browser and the device say so', async () => {
 });
 
 test('a wrong token is refused', async () => {
-  const bad = new FakeBrowserApp();
-  await bad.start('127.0.0.1', ports.browser, ports.pipe, 'nope').catch(() => {});
+  const bad = new FakePhone();
+  await bad.start('127.0.0.1', ports.tunnel, ports.pipe, 'nope').catch(() => {});
   await new Promise(r => setTimeout(r, 200));
   const s = await (await fetch(api + '/status')).json();
   assert.equal(s.browser.phones.length, 0);
+  assert.equal(s.device.connected, false);
   bad.stop();
 });
 
 test('each session sees only its own tabs', async () => {
-  await app.start('127.0.0.1', ports.browser, ports.pipe, 'browser-secret');
+  await app.start('127.0.0.1', ports.tunnel, ports.pipe, 'phone-secret');
   await post('/sessions/alpha?title=' + encodeURIComponent('Alpha work'));
 
   const a = await chromium.connectOverCDP(`${api}/s/alpha`);
@@ -108,18 +106,55 @@ test('show and close reach the phone', async () => {
   assert.equal((await (await fetch(api + '/status')).json()).sessions.beta, undefined);
 });
 
-test('device commands: JSON results and bytes', async () => {
-  const d = await fakeDevice('127.0.0.1', ports.device, 'device-secret');
-  await new Promise(r => setTimeout(r, 100));
+test('device commands over HTTP pipes: JSON, text and bytes', async () => {
+  const s = await (await fetch(api + '/status')).json();
+  assert.deepEqual([s.device.connected, s.device.device, s.device.android], [true, 'Test Phone', '16']);
   const cur = await post('/phone/current', {});
   assert.deepEqual((await cur.json()).result, { package: 'me.test.app', activity: '.Main' });
-  const shot = await post('/phone/screenshot', { scale: 1 });
+  const shot = await post('/phone/screenshot', { scale: 0.5 });
   assert.equal(Buffer.from(await shot.arrayBuffer()).toString(), 'PNGBYTES');
-  assert.deepEqual(JSON.parse(shot.headers.get('x-otto-result')!), { width: 2, height: 1, format: 'png' });
+  assert.deepEqual(JSON.parse(shot.headers.get('x-otto-result')!), { width: 2, height: 1, format: 'png', scale: '0.5' });
+  assert.equal((await (await post('/phone/ui', { all: true })).json()).result, 'Button "OK" all=true');
+  const log = await post('/phone/logcat', { tags: ['A', 'B'], lines: 5 });
+  assert.equal(Buffer.from(await log.arrayBuffer()).toString(), 'log lines tags=A,B\n');
+  assert.deepEqual(JSON.parse(log.headers.get('x-otto-result')!), { fullAccess: true });
+  assert.equal((await (await post('/phone/tap', { x: 1, y: 2 })).json()).result, 'tapped 1,2');
   const bad = await post('/phone/nonsense', {});
   assert.equal(bad.status, 502);
-  assert.match(await bad.text(), /unknown command/);
-  d.destroy();
+  assert.match(await bad.text(), /unknown command nonsense/);
+  const tap = await post('/phone/tap', {});
+  assert.equal(tap.status, 502);
+  assert.match(await tap.text(), /give x and y/);
+  const apk = await fetch(api + '/phone/install?name=t.apk', { method: 'POST', body: Buffer.alloc(1000, 1) });
+  assert.equal((await apk.json()).result, 'Success: t.apk (1000 bytes)');
+  assert.ok(app.deviceRequests.includes('GET /screenshot?scale=0.5'), app.deviceRequests.join(', '));
+});
+
+test('device pipes are kept alive: ten commands, a few pipes', async () => {
+  const before = app.devicePipes;
+  const t0 = Date.now();
+  for (let i = 0; i < 10; i++) assert.equal((await post('/phone/current', {})).status, 200);
+  const ms = Date.now() - t0;
+  assert.ok(app.devicePipes - before <= 2, `${app.devicePipes - before} new pipes`);
+  assert.ok(ms < 1000, `${ms} ms`);
+  // Several at once (reading commands don't queue) open more pipes, kept for later.
+  const all = await Promise.all(Array.from({ length: 4 }, () => post('/phone/info', {})));
+  assert.deepEqual(all.map(r => r.status), [200, 200, 200, 200]);
+});
+
+test('the browser going down leaves the device up; it comes back with its tabs', async () => {
+  const tabs = app.tabs.size;
+  app.browserDown();
+  await new Promise(r => setTimeout(r, 100));
+  let s = await (await fetch(api + '/status')).json();
+  assert.equal(s.browser.phones.length, 0);
+  assert.equal(s.device.connected, true);
+  assert.equal((await post('/show?url=https://example.com/down')).status, 503);
+  assert.equal((await post('/phone/current', {})).status, 200);
+  await app.browserUp();
+  await new Promise(r => setTimeout(r, 100));
+  s = await (await fetch(api + '/status')).json();
+  assert.equal(Object.keys(s.browser.phones[0].tabs).length, tabs);
 });
 
 test('browser commands: open, snapshot refs, click, type, tabs, screenshot', async () => {
@@ -166,15 +201,12 @@ test('the otto CLI, against this relay', async () => {
   assert.ok(fs.existsSync(r.out.trim()), r.out + r.err);
   r = await otto('status');
   assert.match(r.out, /session: delta \(group tg\d+, "Delta task"\)/);
-  const d = await fakeDevice('127.0.0.1', ports.device, 'device-secret');
-  await new Promise(res => setTimeout(res, 100));
   r = await otto('phone', 'current');
   assert.match(r.out, /me\.test\.app/);
   r = await otto('phone', 'screenshot');
   const [file, size] = r.out.trim().split('\n');
   assert.equal(fs.readFileSync(file).toString(), 'PNGBYTES');
   assert.equal(size, '2x1');
-  d.destroy();
   r = await otto('show', 'https://example.com/cli');
   assert.equal(r.code, 0, r.err);
   r = await otto('phone', 'tap');

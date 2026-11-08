@@ -1,8 +1,7 @@
 // The phone's browser, for agent sessions: each session drives tabs of its own, in a tab group of its own.
 //
-// The app (BrowserLink) dials the control port on the box's tailnet address and proves itself with the browser
-// token. Each DevTools connection is a pipe: the relay sends "open <id>", the app connects back to the pipe
-// port, sends "<id>\n", and joins that connection to its DevTools socket.
+// The browser is reached through the phone's tunnel (tunnel.ts): its control lines go over the tunnel's control
+// connection, and each DevTools connection is a "devtools" pipe, joined on the phone to the browser's DevTools socket.
 //
 // The app is a plain browser with tab groups; it knows nothing of agent sessions. The relay keeps which group is
 // whose (Sessions), and the app tells it each live tab's target, tab id and group. A tab's id and group last;
@@ -15,52 +14,41 @@
 //
 // Control lines, app to relay: active | tab <target> <tab> <group|-> | gone <target> | made <req> <target> <group>
 //   | woke <req> <tabs> | fail <req>
-// Relay to app: open <pipe> | newtab <req> <group|-> <title> | wake <req> <group> | idle <group> | close <target>
+// Relay to app: newtab <req> <group|-> <title> | wake <req> <group> | idle <group> | close <target>
 //   | focus <target> | closegroup <group> | show <url>
-import net from 'node:net';
-import crypto from 'node:crypto';
 import { WebSocket, type RawData } from 'ws';
+import crypto from 'node:crypto';
 import type { Sessions } from './sessions.js';
+import type { Phone, Tunnel } from './tunnel.js';
 
 export const NO_PHONE = 'The phone browser is not connected: open the Otto app on the phone (it connects while its handle is on).';
 const OURS = 1e9; // ids of the relay's own DevTools requests
 const DEBUG = !!process.env.OTTO_RELAY_DEBUG;
 
-interface Tab { tab: string; group: string | null }
-
-export interface Phone {
-  sock: net.Socket;
-  app: string;
-  tabs: Map<string, Tab>; // target id -> tab
-  active: number;
-}
-
-type Waiting = { resolve: (v: any) => void; reject: (e: Error) => void };
+type Waiting = { resolve: (v: any) => void; reject: (e: Error) => void; phone: Phone };
 
 export class Browser {
-  private phones = new Set<Phone>();
-  private pipes = new Map<string, (s: net.Socket) => void>();
   private asks = new Map<string, Waiting>();
   private users = new Map<string, number>(); // group -> connections working in it now
 
-  constructor(private sessions: Sessions, private token: string, private log = console.log) {}
-
-  /** The phone that was used last, if any is connected. */
-  phone(): Phone | null {
-    let best: Phone | null = null;
-    for (const p of this.phones) if (!best || p.active > best.active) best = p;
-    return best;
+  constructor(private tunnel: Tunnel, private sessions: Sessions, private log = console.log) {
+    tunnel.on('line', (p: Phone, w: string[]) => this.control(p, w));
+    const drop = (p: Phone) => {
+      for (const [req, a] of this.asks) if (a.phone === p) { this.asks.delete(req); a.reject(new Error('the phone browser went away')); }
+    };
+    tunnel.on('gone', drop);
+    tunnel.on('line', (p: Phone, w: string[]) => { if (w[0] === 'browser' && w[1] === 'down') drop(p); });
   }
 
-  listen(host: string, controlPort: number, pipePort: number) {
-    net.createServer(s => this.accept(s)).listen(controlPort, host, () => this.log(`browser link on ${host}:${controlPort}`));
-    net.createServer(s => this.acceptPipe(s)).listen(pipePort, host);
+  /** The phone whose browser was used last, if any is connected. */
+  phone(): Phone | null {
+    return this.tunnel.phone(p => p.browser);
   }
 
   status() {
     const cur = this.phone();
     return {
-      phones: [...this.phones].map(p => ({ app: p.app, current: p === cur, tabs: Object.fromEntries(p.tabs) })),
+      phones: [...this.tunnel.phones].filter(p => p.browser).map(p => ({ app: p.app, current: p === cur, tabs: Object.fromEntries(p.tabs) })),
       working: Object.fromEntries(this.users),
     };
   }
@@ -68,7 +56,7 @@ export class Browser {
   show(url: string): boolean {
     const p = this.phone();
     if (!p) return false;
-    p.sock.write(`show ${url.replace(/\s/g, '%20')}\n`);
+    this.tunnel.send(p, `show ${url.replace(/\s/g, '%20')}`);
     return true;
   }
 
@@ -76,7 +64,8 @@ export class Browser {
   close(session: string): string | null {
     const g = this.sessions.group(session);
     if (!g) return null;
-    this.phone()?.sock.write(`closegroup ${g}\n`);
+    const p = this.phone();
+    if (p) this.tunnel.send(p, `closegroup ${g}`);
     this.sessions.delete(session);
     return g;
   }
@@ -88,42 +77,10 @@ export class Browser {
     return [...p.tabs].filter(([, t]) => t.group === g).map(([id]) => id);
   }
 
-  // --- The app's control connection.
+  // --- The browser's control lines (the tunnel keeps "active" and "browser" itself).
 
-  private accept(sock: net.Socket) {
-    sock.setKeepAlive(true, 10_000);
-    sock.on('error', () => {});
-    const p: Phone = { sock, app: '?', tabs: new Map(), active: 0 };
-    let ok = false, buf = '';
-    sock.on('data', d => {
-      buf += d;
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!ok) {
-          const [w, app, token] = line.split(' ');
-          if (w !== 'hello' || !same(token, this.token)) {
-            this.log(`browser link: refused ${sock.remoteAddress}`);
-            return void sock.destroy();
-          }
-          ok = true;
-          p.app = app;
-          p.active = Date.now();
-          this.phones.add(p);
-          this.log(`browser link: ${app} connected`);
-          continue;
-        }
-        this.control(p, line);
-      }
-    });
-    sock.on('close', () => { if (this.phones.delete(p)) this.log(`browser link: ${p.app} gone`); });
-  }
-
-  private control(p: Phone, line: string) {
-    const w = line.split(' ');
+  private control(p: Phone, w: string[]) {
     switch (w[0]) {
-      case 'active': p.active = Date.now(); break;
       case 'tab': p.tabs.set(w[1], { tab: w[2], group: w[3] === '-' ? null : w[3] }); break;
       case 'gone': p.tabs.delete(w[1]); break;
       case 'made': case 'woke': case 'fail': {
@@ -139,9 +96,9 @@ export class Browser {
 
   private ask<T>(p: Phone, line: string, what: string): Promise<T> {
     const req = crypto.randomBytes(6).toString('hex');
-    p.sock.write(line.replace('<req>', req) + '\n');
+    this.tunnel.send(p, line.replace('<req>', req));
     return new Promise((resolve, reject) => {
-      this.asks.set(req, { resolve, reject });
+      this.asks.set(req, { resolve, reject, phone: p });
       setTimeout(() => { if (this.asks.delete(req)) reject(new Error(`the phone did not ${what}`)); }, 15_000);
     });
   }
@@ -156,36 +113,6 @@ export class Browser {
   /** Brings a group's tabs back to life (they reload at their pages); how many tabs it has (0: none left). */
   private wake(p: Phone, group: string | undefined): Promise<number> {
     return group ? this.ask<number>(p, `wake <req> ${group}`, 'wake the tabs') : Promise.resolve(0);
-  }
-
-  // --- Pipes to the app's DevTools socket.
-
-  private acceptPipe(s: net.Socket) {
-    s.on('error', () => {});
-    let head = Buffer.alloc(0);
-    const onData = (d: Buffer) => {
-      head = Buffer.concat([head, d]);
-      const nl = head.indexOf(10);
-      if (nl < 0) return;
-      s.off('data', onData);
-      s.pause();
-      const id = head.subarray(0, nl).toString();
-      const resolve = this.pipes.get(id);
-      this.pipes.delete(id);
-      if (!resolve) return void s.destroy();
-      if (head.length > nl + 1) s.unshift(head.subarray(nl + 1));
-      resolve(s);
-    };
-    s.on('data', onData);
-  }
-
-  private openPipe(p: Phone): Promise<net.Socket> {
-    const id = crypto.randomBytes(12).toString('hex');
-    p.sock.write(`open ${id}\n`);
-    return new Promise((resolve, reject) => {
-      this.pipes.set(id, resolve);
-      setTimeout(() => { if (this.pipes.delete(id)) reject(new Error('the phone did not answer')); }, 10_000);
-    });
   }
 
   // --- A session's DevTools connection: its tabs only.
@@ -210,12 +137,12 @@ export class Browser {
       const n = (this.users.get(group) ?? 1) - 1;
       if (n > 0) return void this.users.set(group, n);
       this.users.delete(group);
-      if (this.phones.has(p)) p.sock.write(`idle ${group}\n`); // its tabs may go dormant
+      if (this.tunnel.phones.has(p)) this.tunnel.send(p, `idle ${group}`); // its tabs may go dormant
     };
 
     let up: WebSocket;
     try {
-      const sock = await this.openPipe(p);
+      const sock = await this.tunnel.openPipe(p, 'devtools');
       up = new WebSocket('ws://localhost/devtools/browser', { createConnection: () => sock.resume(), perMessageDeflate: false, maxPayload: 1 << 30 });
       await new Promise((resolve, reject) => { up.once('open', resolve); up.once('error', reject); });
     } catch (e) { leave(); throw e; }
@@ -304,11 +231,11 @@ export class Browser {
             } catch (e: any) { return fail(msg.id, e.message); }
           case 'Target.closeTarget':
             if (!mine(prm.targetId)) return fail(msg.id, 'No such target');
-            p.sock.write(`close ${prm.targetId}\n`);
+            this.tunnel.send(p, `close ${prm.targetId}`);
             return reply(msg.id, { success: true });
           case 'Target.activateTarget':
             if (!mine(prm.targetId)) return fail(msg.id, 'No such target');
-            p.sock.write(`focus ${prm.targetId}\n`);
+            this.tunnel.send(p, `focus ${prm.targetId}`);
             return reply(msg.id, {});
           case 'Target.attachToTarget':
             if (!mine(prm.targetId)) return fail(msg.id, 'No such target');
@@ -336,8 +263,3 @@ export class Browser {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim() || 'Agent';
-
-function same(a: string | undefined, b: string): boolean {
-  if (!a || a.length !== b.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-}

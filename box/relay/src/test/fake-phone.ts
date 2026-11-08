@@ -1,6 +1,7 @@
-// A stand-in for the Otto app, for tests: its browser is a headless Chromium, its tab groups are kept here, and
-// its device agent answers a few commands. Speaks the app's side of both links.
+// A stand-in for the Otto app, for tests: it speaks the app's side of the tunnel. Its browser is a headless
+// Chromium, its tab groups are kept here, and its device API is a tiny HTTP server answering a few routes.
 import net from 'node:net';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,7 +9,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { WebSocket } from 'ws';
 import { chromium } from 'playwright-core';
 
-export class FakeBrowserApp {
+export class FakePhone {
   chrome!: ChildProcess;
   private port = 0;
   private uuid = '';
@@ -21,6 +22,10 @@ export class FakeBrowserApp {
   closedGroups: string[] = [];
   private nextTab = 1;
   private nextGroup = 1;
+  /** Device pipes opened, and device requests served. */
+  devicePipes = 0;
+  deviceRequests: string[] = [];
+  private api = http.createServer((req, res) => this.device(req, res));
 
   async start(relayHost: string, controlPort: number, pipePort: number, token: string) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-fake-chrome-'));
@@ -46,10 +51,9 @@ export class FakeBrowserApp {
 
     this.control = net.connect(controlPort, relayHost);
     await new Promise(r => this.control.once('connect', r));
-    this.control.write(`hello me.test.otto ${token}\n`);
-    // The tabs it has already, in no group.
-    const { result } = await this.send('Target.getTargets');
-    for (const t of result.targetInfos) if (t.type === 'page') this.announce(t.targetId, null);
+    this.control.write(`hello me.test.otto ${token} 2\n`);
+    this.control.write(`info ${JSON.stringify({ device: 'Test Phone', android: '16', app: 'test', versionCode: 1 })}\n`);
+    await this.browserUp();
     let buf = '';
     this.control.on('data', d => {
       buf += d;
@@ -60,6 +64,21 @@ export class FakeBrowserApp {
         this.onLine(line, relayHost, pipePort).catch(e => console.error('fake phone:', e));
       }
     });
+  }
+
+  /** The browser's process came (back) up: its tabs, as it has them (at first, Chromium's, in no group). */
+  async browserUp() {
+    this.control.write('browser up\n');
+    if (!this.tabs.size) {
+      const { result } = await this.send('Target.getTargets');
+      for (const t of result.targetInfos) if (t.type === 'page') this.announce(t.targetId, null);
+    } else {
+      for (const [target, t] of this.tabs) this.control.write(`tab ${target} ${t.tab} ${t.group ?? '-'}\n`);
+    }
+  }
+
+  browserDown() {
+    this.control.write('browser down\n');
   }
 
   private send(method: string, params: any = {}): Promise<any> {
@@ -99,6 +118,14 @@ export class FakeBrowserApp {
         this.shown.push(w[1]);
         break;
       case 'open': {
+        if (w[2] === 'device') {
+          this.devicePipes++;
+          const pipe = net.connect(pipePort, relayHost);
+          pipe.write(`${w[1]}\n`);
+          pipe.on('error', () => {});
+          this.api.emit('connection', pipe);
+          break;
+        }
         // A DevTools pipe: the relay's end, joined to Chromium's (whose browser endpoint has an id in its path,
         // which the app's WebView socket doesn't).
         const pipe = net.connect(pipePort, relayHost);
@@ -122,40 +149,42 @@ export class FakeBrowserApp {
     }
   }
 
+  /** The device API: current, screenshot, ui, logcat, install; anything else is unknown. */
+  private device(req: http.IncomingMessage, res: http.ServerResponse) {
+    const u = new URL(req.url ?? '/', 'http://phone');
+    const chunks: Buffer[] = [];
+    req.on('data', c => chunks.push(c));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      this.deviceRequests.push(`${req.method} ${u.pathname}${u.search}`);
+      const json = (v: unknown) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(v)); };
+      const route = `${req.method} ${u.pathname}`;
+      if (route === 'GET /current') return json({ package: 'me.test.app', activity: '.Main' });
+      if (route === 'GET /info') return json({ device: 'Test Phone', android: '16', screen: '1080x2340' });
+      if (route === 'GET /screenshot') {
+        res.writeHead(200, { 'content-type': 'image/png', 'x-otto-result': JSON.stringify({ width: 2, height: 1, format: 'png', scale: u.searchParams.get('scale') }) });
+        return res.end('PNGBYTES');
+      }
+      if (route === 'GET /ui') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end(`Button "OK" all=${u.searchParams.get('all')}`); }
+      if (route === 'GET /logcat') {
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'x-otto-result': JSON.stringify({ fullAccess: true }) });
+        return res.end(`log lines tags=${u.searchParams.get('tags')}\n`);
+      }
+      if (route === 'POST /tap') {
+        const a = JSON.parse(body.toString() || '{}');
+        if (a.x === undefined) { res.writeHead(400, { 'content-type': 'text/plain' }); return res.end('give x and y, or text, id or desc'); }
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        return res.end(`tapped ${a.x},${a.y}`);
+      }
+      if (route === 'POST /install') { res.writeHead(200, { 'content-type': 'text/plain' }); return res.end(`Success: ${u.searchParams.get('name')} (${body.length} bytes)`); }
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end(`unknown command ${u.pathname.slice(1)}`);
+    });
+  }
+
   stop() {
     this.control?.destroy();
     this.cdp?.close();
     this.chrome?.kill();
   }
-}
-
-/** The device agent's side of its link: answers "current" and "screenshot", fails anything else. */
-export async function fakeDevice(host: string, port: number, token: string): Promise<net.Socket> {
-  const s = net.connect(port, host);
-  await new Promise(r => s.once('connect', r));
-  const write = (head: any, body?: Buffer) => {
-    if (body) head.size = body.length;
-    const h = Buffer.from(JSON.stringify(head));
-    const len = Buffer.alloc(4);
-    len.writeUInt32BE(h.length);
-    s.write(Buffer.concat(body ? [len, h, body] : [len, h]));
-  };
-  write({ hello: 'device-agent', token, device: 'Test Phone', android: '16', version: 'test' });
-  let buf = Buffer.alloc(0);
-  s.on('data', d => {
-    buf = Buffer.concat([buf, d]);
-    while (buf.length >= 4) {
-      const n = buf.readUInt32BE(0);
-      if (buf.length < 4 + n) return;
-      const head = JSON.parse(buf.subarray(4, 4 + n).toString());
-      const size = head.size ?? 0;
-      if (buf.length < 4 + n + size) return;
-      buf = buf.subarray(4 + n + size);
-      if (head.welcome !== undefined || head.ping) continue;
-      if (head.cmd === 'current') write({ id: head.id, ok: true, result: { package: 'me.test.app', activity: '.Main' } });
-      else if (head.cmd === 'screenshot') write({ id: head.id, ok: true, result: { width: 2, height: 1, format: 'png' } }, Buffer.from('PNGBYTES'));
-      else write({ id: head.id, ok: false, error: `unknown command ${head.cmd}` });
-    }
-  });
-  return s;
 }

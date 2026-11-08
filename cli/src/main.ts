@@ -46,7 +46,7 @@ The second screen and status:
   otto close                               close your session's tabs
   otto status                              the phone's links, tabs and sessions
   otto pair [--send] [--box HOST] [--qr]   the Otto app's pairing link for this box (--send: open it on the
-                                           phone through the device link; --qr: also as a QR code)
+                                           phone through its tunnel; --qr: also as a QR code)
   otto artifact ...                        publish and list artifacts (the artifact CLI)
 
 Your session comes from OTTO_SESSION (set by your agent's adapter).`;

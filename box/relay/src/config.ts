@@ -8,15 +8,13 @@ import { parse } from 'smol-toml';
 export interface Config {
   /** The box's tailnet address: where the phone dials in. */
   tailnetHost: string;
-  /** The browser link: control connection and DevTools pipes (the app's BrowserLink). */
-  browserPort: number;
+  /** The phone's tunnel: its control connection, and its pipes (tunnel.ts). */
+  tunnelPort: number;
   pipePort: number;
-  /** The device link (the device agent's connection). */
-  devicePort: number;
   /** The local API: CLI, eyes MCP server, Playwright. */
   localPort: number;
-  browserToken: string;
-  deviceToken: string;
+  /** What the app presents on the tunnel (given to it at pairing). */
+  token: string;
   /** Where the relay keeps which group is whose. */
   stateFile: string;
 }
@@ -34,20 +32,18 @@ export function loadConfig(file = configPath()): Config {
     if (e.code !== 'ENOENT') throw new Error(`${file}: ${e.message}`);
   }
   const relay = t.relay ?? {}, phone = t.phone ?? {};
-  const token = (f: string, what: string) => {
+  const token = (f: string) => {
     try { return fs.readFileSync(expand(f), 'utf8').trim(); } catch {
-      throw new Error(`no ${what} token at ${f} (set phone.${what}_token_file in ${file})`);
+      throw new Error(`no token at ${f} (set phone.token_file in ${file})`);
     }
   };
   return {
     tailnetHost: process.env.OTTO_TAILNET_HOST || relay.tailnet_host || tailnetAddress(),
-    browserPort: relay.browser_port ?? 9401,
+    tunnelPort: relay.tunnel_port ?? relay.browser_port ?? 9401,
     pipePort: relay.pipe_port ?? 9402,
-    devicePort: relay.device_port ?? 9411,
     localPort: relay.local_port ?? 9334,
-    // Until the app pairs with one token, it has one per link (the two apps it was made from).
-    browserToken: token(phone.browser_token_file ?? '~/.config/otto/browser-token', 'browser'),
-    deviceToken: token(phone.device_token_file ?? '~/.config/otto/device-token', 'device'),
+    // One token for the app. Before the tunnel it had one per link; the browser link's carries on.
+    token: token(phone.token_file ?? phone.browser_token_file ?? '~/.config/otto/token'),
     stateFile: expand(relay.state_file ?? '~/.local/state/otto/relay.json'),
   };
 }

@@ -10,6 +10,7 @@
 //                                         replies text, or a PNG
 //   POST /phone/<cmd>                     a device command; JSON args in the body (install: the APK, ?name=)
 //                                         replies JSON {result}, or the bytes with the result in X-Otto-Result
+//                                         (device.ts forwards it to the phone's device HTTP API)
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { Browser, NO_PHONE } from './browser.js';
@@ -96,15 +97,11 @@ export function serve(port: number, browser: Browser, device: Device, sessions: 
 async function phone(cmd: string, u: URL, req: http.IncomingMessage, res: http.ServerResponse, device: Device) {
   const raw = await body(req);
   let args: Record<string, unknown> = {}, apk: Buffer | undefined;
-  if (cmd === 'install') {
-    apk = raw;
-    args = { name: u.searchParams.get('name') ?? 'app.apk' };
-  } else if (raw.length) {
-    args = JSON.parse(raw.toString('utf8'));
-  }
+  if (cmd === 'install') apk = raw;
+  else if (raw.length) args = JSON.parse(raw.toString('utf8'));
   const timeoutMs = Number(u.searchParams.get('timeout')) || (cmd === 'install' ? 300_000 : cmd === 'uninstall' ? 200_000 : 60_000);
   try {
-    const r = await device.run(cmd, args, { body: apk, timeoutMs });
+    const r = await device.run(cmd, args, { body: apk, name: u.searchParams.get('name') ?? 'app.apk', timeoutMs });
     if (r.body) {
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-otto-result': JSON.stringify(r.result ?? null) });
       return res.end(r.body);
