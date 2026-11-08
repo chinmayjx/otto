@@ -208,7 +208,11 @@ private fun markdownBlocks(col: LinearLayout, markwon: Markwon, text: String, fg
             isFillViewport = true // narrower than the screen: the full width, as before
             isHorizontalScrollBarEnabled = false
             addView(tv, FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT))
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            // The blank line a table had around it in the text, now that it's a view of its own.
+            topMargin = pad * 2 / 3
+            bottomMargin = pad * 2 / 3
+        })
     }
     flush(true)
 }
@@ -222,22 +226,34 @@ private class SidewaysScroll(c: android.content.Context) : HorizontalScrollView(
     private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
     private var x0 = 0f
     private var y0 = 0f
+    private var vertical = false // this drag is the page's: the text inside mustn't take it back
 
     override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
         when (e.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
                 x0 = e.x
                 y0 = e.y
+                vertical = false
                 // Nothing to scroll (the table fits): leave the page alone.
                 if (getChildAt(0)?.let { it.width > width } == true) parent.requestDisallowInterceptTouchEvent(true)
             }
-            android.view.MotionEvent.ACTION_MOVE -> {
+            android.view.MotionEvent.ACTION_MOVE -> if (!vertical) {
                 val dx = kotlin.math.abs(e.x - x0)
                 val dy = kotlin.math.abs(e.y - y0)
-                if (dy > slop && dy > dx) parent.requestDisallowInterceptTouchEvent(false)
+                if (dy > slop && dy > dx) {
+                    vertical = true
+                    parent.requestDisallowInterceptTouchEvent(false)
+                }
             }
         }
+        // The page's drag: the scroll mustn't see it either (it takes the gesture back itself once it has moved
+        // sideways past the slop); the page cancels it on its next move.
+        if (vertical && e.actionMasked == android.view.MotionEvent.ACTION_MOVE) return true
         return super.dispatchTouchEvent(e)
+    }
+
+    override fun requestDisallowInterceptTouchEvent(disallow: Boolean) {
+        super.requestDisallowInterceptTouchEvent(disallow && !vertical)
     }
 }
 
