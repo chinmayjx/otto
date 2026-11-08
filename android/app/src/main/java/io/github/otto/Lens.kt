@@ -49,7 +49,7 @@ import kotlin.math.roundToInt
  * It opens frozen, as the long press found the screen; its freeze button (Done while frozen) goes back to the
  * live screen and freezes it again. Freezing takes a screenshot (through the accessibility service, with the panel
  * and handle out of it) and the window grows over the whole screen to show it: drag on it for a selection; drag its corners or edges to
- * adjust it, inside it to move it. Each selection is a chip. Done (the same button), Back or Home unfreeze: the
+ * adjust it, inside it to move it. Each selection is a chip. Done (the same button) or Home unfreeze: the
  * selections are cut out and kept as images, and the live screen is back. Whole screen takes all of it, frozen or
  * live. This can be repeated across apps to gather many parts into one clip.
  *
@@ -609,11 +609,8 @@ class Lens private constructor(base: Context, private val handle: (Boolean) -> U
         override fun dispatchKeyEvent(e: KeyEvent): Boolean {
             if (e.keyCode == KeyEvent.KEYCODE_BACK) {
                 if (e.action != KeyEvent.ACTION_UP || e.isCanceled) return true
-                when {
-                    rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true -> collector.hideKeyboard() // the keyboard goes first
-                    still != null -> unfreeze()
-                    else -> dismiss()
-                }
+                // The keyboard goes first; then one Back closes the lens, frozen or live (the draft stays).
+                if (rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true) collector.hideKeyboard() else dismiss()
                 return true
             }
             return super.dispatchKeyEvent(e)
