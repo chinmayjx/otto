@@ -8,8 +8,8 @@ import java.io.File
 /**
  * Which box this phone is paired with, and how to reach it: what `otto pair` on the box puts in the pairing link,
  * otto://pair?box=…&port=…&pipe_port=…&token=…&hub=…&artifacts=… (optionally also public_artifacts=… and panel=…).
- * Links from before the tunnel name the port browser_port and the token browser_token (and add a device link's
- * device_port and device_token, which are kept only for the old device link while the box may still have it).
+ * Links from before the tunnel name the port browser_port and the token browser_token (their device_port and
+ * device_token, for the old device link, are ignored).
  *
  * Kept in a small JSON file rather than SharedPreferences: the browser's process (":browser") reads it too, and
  * reads it afresh at every connection, so a new pairing reaches both processes without restarting them.
@@ -30,15 +30,11 @@ data class Pairing(
     val publicArtifactsUrl: String = "",
     /** The box's control panel: status, start, stop (optional). */
     val panelUrl: String = "",
-    /** The old device link (a box from before the tunnel); 0 and "" when there's none. */
-    val devicePort: Int = 0,
-    val deviceToken: String = "",
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("box", box).put("port", port).put("pipePort", pipePort).put("token", token)
         .put("hubUrl", hubUrl).put("artifactsUrl", artifactsUrl)
         .put("publicArtifactsUrl", publicArtifactsUrl).put("panelUrl", panelUrl)
-        .put("devicePort", devicePort).put("deviceToken", deviceToken)
 
     /** What the web UI is told (no tokens): see otto/web/config.js. */
     fun webConfig(): JSONObject = JSONObject()
@@ -77,8 +73,6 @@ data class Pairing(
             artifactsUrl = o.optString("artifactsUrl"),
             publicArtifactsUrl = o.optString("publicArtifactsUrl"),
             panelUrl = o.optString("panelUrl"),
-            devicePort = o.optInt("devicePort"),
-            deviceToken = o.optString("deviceToken"),
         )
 
         /** A pairing link, or why it isn't one. */
@@ -103,8 +97,6 @@ data class Pairing(
                 artifactsUrl = url("artifacts", true),
                 publicArtifactsUrl = url("public_artifacts", false),
                 panelUrl = url("panel", false),
-                devicePort = opt("device_port")?.toIntOrNull() ?: 0,
-                deviceToken = opt("device_token").orEmpty(),
             )
         }
     }

@@ -186,7 +186,7 @@ class MainActivity : AppCompatActivity() {
             item("Pair with your box", "Not paired. On the box, run:  otto pair --send\n(or open the link otto pair prints on this phone)",
                 false, "Copy the command") { copy("otto pair --send") }
         } else {
-            val links = if (on) "Browser link: $browser\nDevice link: $device" else "Links: off while the handle is off"
+            val links = if (on) "Tunnel: $device\nBrowser: $browser" else "Tunnel: off while the handle is off"
             item("Paired with ${pairing.box}", "$links\nHub: ${pairing.hubUrl}\nArtifacts: ${pairing.artifactsUrl}", true, "Unpair") {
                 Pairing.clear(this)
                 if (OverlayService.running) OverlayService.send(this, OverlayService.ACTION_RELINK)

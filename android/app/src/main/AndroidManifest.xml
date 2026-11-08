@@ -95,7 +95,7 @@
             <!-- otto.extraLinkHosts -->
         </activity>
 
-        <!-- The handle, the second screen and the device link, while the handle is on. -->
+        <!-- The handle, the second screen and the tunnel to the box, while the handle is on. -->
         <service
             android:name=".OverlayService"
             android:exported="false"
