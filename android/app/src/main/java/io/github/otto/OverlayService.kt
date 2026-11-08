@@ -243,12 +243,12 @@ class OverlayService : Service(), Screen.Host {
     }
 
     /**
-     * The lens: the second screen out of the picture first (at once, no fade); the lens hides the handle while it
-     * takes the screen.
+     * The lens, over whatever is on screen: the second screen too, if it's in (its pages and artifacts can be taken
+     * like any app's). The lens hides the handle while it takes the screen.
      */
     private fun lens() {
         val screen = screen
-        if (screen != null && !screen.isClosed) screen.closeNow() else ScreenActivity.current?.leave()
+        if (screen == null || screen.isClosed) ScreenActivity.current?.leave() // brought up for this touch, not shown
         Lens.open(this, { shown -> right?.visibility = if (shown) View.VISIBLE else View.INVISIBLE }) {}
     }
 

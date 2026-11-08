@@ -35,6 +35,37 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
+ * The field takes the focus (and so the keyboard) only when a finger touches it: never on its own, as its window
+ * opens or another view lets go of the focus. [onDown] runs as the finger comes down on it.
+ */
+@SuppressLint("ClickableViewAccessibility")
+fun EditText.focusOnlyOnTouch(onDown: () -> Unit = {}) {
+    isFocusable = false
+    isFocusableInTouchMode = false
+    setOnTouchListener { _, e ->
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            isFocusable = true
+            isFocusableInTouchMode = true
+            onDown()
+        }
+        false
+    }
+    setOnFocusChangeListener { _, has ->
+        if (!has) {
+            isFocusable = false
+            isFocusableInTouchMode = false
+        }
+    }
+}
+
+/** The focus to a field kept by focusOnlyOnTouch, asked for by a tap elsewhere (a button that starts typing). */
+fun EditText.focusNow() {
+    isFocusable = true
+    isFocusableInTouchMode = true
+    requestFocus()
+}
+
+/**
  * The collector: what goes into a clip (Clips), gathered in one full-width bar. A row of image chips (each with an
  * ×), a text field that grows from one line to four, and one button, Copy. The same component in two places:
  *
@@ -227,10 +258,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             setColor(BrowserService.ACCENT)
             setSize(dp(2), 1)
         }
-        note.setOnTouchListener { _, e ->
-            if (e.actionMasked == MotionEvent.ACTION_DOWN) onNoteTouch()
-            false
-        }
+        note.focusOnlyOnTouch { onNoteTouch() }
         note.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -333,7 +361,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         val add = (if (t.isEmpty()) "" else "\n") + tag
         note.setText(t + add)
         note.setSelection(note.text.length)
-        note.requestFocus()
+        note.focusNow()
         context.getSystemService(InputMethodManager::class.java).showSoftInput(note, 0)
     }
 

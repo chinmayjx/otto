@@ -272,7 +272,7 @@ private fun Crumbs(model: FilesModel) {
         LaunchedEffect(Unit) { focus.requestFocus() }
         Row(verticalAlignment = Alignment.CenterVertically) {
             SearchField(model.filter, "Filter this folder", { model.filter = it },
-                Modifier.weight(1f).padding(start = 12.dp, top = 6.dp, bottom = 6.dp), Modifier.focusRequester(focus))
+                Modifier.weight(1f).padding(start = 12.dp, top = 6.dp, bottom = 6.dp), Modifier.focusRequester(focus), onTouchOnly = false)
             IconButton(onClick = { filtering = false; model.filter = "" }) { Icon(Ic.close, "Close filter") }
         }
         return

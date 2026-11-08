@@ -13,6 +13,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import io.github.otto.BootReceiver
 import io.github.otto.Events
+import io.github.otto.Lens
 import io.github.otto.OverlayService
 import io.github.otto.Tunnel
 import java.util.Locale
@@ -64,10 +65,28 @@ class AgentAccessibility : AccessibilityService() {
             if (cls.startsWith("android.widget.") || cls.startsWith("android.view.") || cls.startsWith("android.app.Dialog")) return
             frontPackage = e.packageName.toString()
             frontClass = cls
+            // The launcher came to the front (Home, or Recents on most phones): the lens goes, as an app would. An
+            // overlay can't see the Home key itself.
+            // Its Recents (most launchers host it) says so in the event's text, and isn't Home.
+            if (Lens.current != null && frontPackage == launcher()) {
+                val said = (e.text.joinToString(" ") + " " + (e.contentDescription ?: "")).lowercase(Locale.ROOT)
+                val recents = "recent" in said || "overview" in said
+                main.postDelayed({ Lens.current?.launcherInFront(recents) }, 250) // after Recents' broadcast, if any
+            }
         }
     }
 
     override fun onInterrupt() {}
+
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private var home: String? = null
+
+    /** The default home app's package. */
+    private fun launcher(): String? = home ?: try {
+        packageManager.resolveActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), 0)?.activityInfo?.packageName
+    } catch (_: Exception) {
+        null
+    }?.also { home = it }
 
     /** Watches for Android's log consent dialog for a few seconds and taps "Allow one-time access". */
     fun allowLogs() {

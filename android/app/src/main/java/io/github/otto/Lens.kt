@@ -80,12 +80,29 @@ class Lens private constructor(base: Context, private val handle: (Boolean) -> U
     private var sent = false
     private var gone = false
 
-    /** Home or Recents while frozen: back to the live screen, where the user is going. */
+    /** Home closes the lens, and so does Recents while frozen (live, switching apps is what it's for). */
     private val systemDialogs = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             val why = i.getStringExtra("reason")
-            if ((why == "homekey" || why == "recentapps") && still != null) unfreeze()
+            if (why == "recentapps") recentsAt = android.os.SystemClock.uptimeMillis()
+            if (why == "homekey" || (why == "recentapps" && still != null)) dismiss()
         }
+    }
+    private val opened = android.os.SystemClock.uptimeMillis()
+    private var recentsAt = 0L // when Recents last said it was coming
+
+    /**
+     * The launcher came to the front (the accessibility service saw it): Home was pressed, which an overlay can't see
+     * itself, or Recents opened ([recents]: the launcher said so, or Recents' broadcast came just before). Home closes
+     * the lens, and so does Recents while frozen; the draft stays. Not in its first moments, while the window it
+     * opened over settles.
+     */
+    fun launcherInFront(recents: Boolean) {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - opened < 700) return
+        // Recents, live: switching apps is what the live lens is for. Frozen, anything that leaves closes it.
+        if ((recents || now - recentsAt < 1500) && still == null) return
+        dismiss()
     }
 
     init {

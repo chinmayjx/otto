@@ -42,6 +42,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -178,10 +184,16 @@ private fun ArtifactCard(a: ArtifactItem, onClick: () -> Unit) {
     }
 }
 
-/** A rounded search field, as the setup screen's fields: search icon, the text, × to clear. */
+/**
+ * A rounded search field, as the setup screen's fields: search icon, the text, × to clear. It takes the focus (and
+ * the keyboard) only when touched, never as its section opens, unless [onTouchOnly] is off for a field the user has
+ * just asked for (Files' filter).
+ */
 @Composable
-fun SearchField(value: String, hint: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, field: Modifier = Modifier) {
+fun SearchField(value: String, hint: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, field: Modifier = Modifier,
+                onTouchOnly: Boolean = true) {
     val cs = MaterialTheme.colorScheme
+    var touched by remember { mutableStateOf(false) }
     Surface(shape = RoundedCornerShape(28.dp), color = cs.surfaceContainerHigh, modifier = modifier.fillMaxWidth().height(48.dp)) {
         Row(Modifier.padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Ic.search, null, Modifier.size(20.dp), tint = cs.onSurfaceVariant)
@@ -190,7 +202,15 @@ fun SearchField(value: String, hint: String, onChange: (String) -> Unit, modifie
                 if (value.isEmpty()) Text(hint, style = MaterialTheme.typography.bodyLarge, color = cs.onSurfaceVariant)
                 BasicTextField(value, onChange, singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = cs.onSurface),
                     cursorBrush = SolidColor(cs.primary), keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    modifier = field.fillMaxWidth())
+                    modifier = field.fillMaxWidth()
+                        .focusProperties { canFocus = touched || !onTouchOnly }
+                        .onFocusChanged { if (!it.hasFocus) touched = false }
+                        .pointerInput(Unit) {
+                            awaitEachGesture {
+                                awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+                                touched = true
+                            }
+                        })
             }
             if (value.isNotEmpty()) IconButton(onClick = { onChange("") }) { Icon(Ic.close, "Clear", Modifier.size(20.dp)) }
             else Spacer(Modifier.width(12.dp))

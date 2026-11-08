@@ -86,7 +86,8 @@ Open Otto. It's a setup screen: the handle's switch at the top, then each thing 
   freezes and goes live: live, the screenshot's window stays, see-through and untouchable. To freeze, the panel fades
   out, the screen is taken as soon as that frame is committed, and it fades back in over the frozen screen. The panel
   takes the focus when its note is touched and gives it back when the app is. Back closes the keyboard, then
-  the lens, frozen or live; × and a tap on the handle close it too. What isn't sent is a draft
+  the lens, frozen or live; ×, a tap on the handle and Home close it too (Home through the accessibility service,
+  which sees the launcher come up; Recents only while frozen). It opens over the second screen too, which stays. What isn't sent is a draft
   (`Drafts`, in `files/drafts/`). The artifact viewer docks the same collector under the artifact.
 - `Clips` sends clips to the relay's box API over pipes the app dials itself (`Tunnel.dial`/`ask`: `dial <req> box`
   on the control connection), with OkHttp on a socket factory whose sockets are those pipes; Coil loads the

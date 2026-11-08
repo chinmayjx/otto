@@ -28,6 +28,7 @@ import android.text.TextWatcher
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.SurfaceControlViewHost
@@ -216,7 +217,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         title.addView(titleText)
         title.addView(icon(R.drawable.ccm_chevron_down, BrowserService.MUTED), LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(5) })
         title.contentDescription = "Switch section"
-        onTap(title) { sectionMenu() }
+        onPress(title) { sectionMenu() }
         bar.addView(title, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
 
         tabBlock.gravity = Gravity.CENTER_VERTICAL
@@ -244,13 +245,13 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabCount.minWidth = dp(18)
         tabBlock.addView(tabCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(17)).apply { marginStart = dp(8) })
         tabBlock.addView(icon(R.drawable.ccm_chevron_down, BrowserService.MUTED), LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(6) })
-        onTap(tabBlock) { if (tab == TERMINAL) terminalMenu() else tabMenu() }
+        onPress(tabBlock) { if (tab == TERMINAL) terminalMenu() else tabMenu() }
         bar.addView(tabBlock, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
         more = icon(R.drawable.ccm_more, BrowserService.TEXT)
         more.scaleType = ImageView.ScaleType.CENTER
         more.background = pressable(dp(20))
         more.contentDescription = "Options"
-        onTap(more) { optionsMenu() }
+        onPress(more) { optionsMenu() }
         bar.addView(more, LinearLayout.LayoutParams(dp(36), dp(40)).apply { marginStart = dp(2) })
         // Files' buttons, on the right: each runs the page's ccmFiles(action). They keep their places (Up and Home dim
         // when they don't apply) so nothing moves under a finger; the page says what applies (AppWeb op "filesBar").
@@ -438,6 +439,92 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             }
             true
         }
+    }
+
+    /**
+     * A top-bar button that opens a menu, the moment the finger comes down, so it can be dragged onto an item and let
+     * go there to pick it (the item under the finger lights up, with a tick as it changes). Let go over nothing it
+     * closes; a plain tap leaves it open, to tap an item as usual. The menu opens on the touch, not on a click, so
+     * the focus moving away from this window while the finger is down (see onTap) doesn't matter; the gesture's
+     * moves still come here, as the menu's window appeared after it began.
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    private fun onPress(v: View, open: () -> Unit) {
+        v.setOnClickListener { open() } // for accessibility
+        v.setOnTouchListener(object : View.OnTouchListener {
+            var hot: View? = null // the item under the finger
+            var entered = false // the finger has been over an item
+            var downX = 0f
+            var downY = 0f
+
+            override fun onTouch(view: View, e: MotionEvent): Boolean {
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        view.drawableHotspotChanged(e.x, e.y)
+                        view.isPressed = true
+                        hot = null
+                        entered = false
+                        downX = e.rawX
+                        downY = e.rawY
+                        open()
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val item = menuItemAt(e.rawX, e.rawY)
+                        if (item !== hot) {
+                            hot?.isPressed = false
+                            hot = item
+                            if (item != null) {
+                                entered = true
+                                item.isPressed = true
+                                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                            }
+                        }
+                        item?.let { at(it, e.rawX, e.rawY) }
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        view.isPressed = false
+                        hot?.isPressed = false
+                        hot = null
+                        val item = menuItemAt(e.rawX, e.rawY)
+                        val moved = max(abs(e.rawX - downX), abs(e.rawY - downY)) > slop
+                        when {
+                            item != null -> item.performClick()
+                            entered || moved -> menu?.dismiss() // dragged off, onto nothing
+                            else -> {} // a tap: the menu stays, to tap an item
+                        }
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        view.isPressed = false
+                        hot?.isPressed = false
+                        hot = null
+                    }
+                }
+                return true
+            }
+
+            private fun at(item: View, x: Float, y: Float) {
+                val loc = IntArray(2)
+                item.getLocationOnScreen(loc)
+                item.drawableHotspotChanged(x - loc[0], y - loc[1])
+            }
+        })
+    }
+
+    /** The open menu's item (a row, not a field) under a point on the screen, if any. */
+    private fun menuItemAt(x: Float, y: Float): View? {
+        val d = menu ?: return null
+        if (!d.isShowing) return null
+        val root = d.window?.decorView ?: return null
+        val loc = IntArray(2)
+        fun find(v: View): View? {
+            if (v.visibility != View.VISIBLE) return null
+            v.getLocationOnScreen(loc)
+            if (x < loc[0] || y < loc[1] || x >= loc[0] + v.width || y >= loc[1] + v.height) return null
+            if (v.isClickable && v !is EditText && v !== root) return v // the outermost: the row, not its ×
+            if (v is ViewGroup) for (i in v.childCount - 1 downTo 0) find(v.getChildAt(i))?.let { return it }
+            return null
+        }
+        return find(root)
     }
 
     private fun filesButton(res: Int, label: String, action: String): ImageView {
@@ -660,6 +747,11 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!tracking) return false
+                // A press that opened a menu (onPress) is dragging onto its items, not pulling to reload.
+                if (!pulling && menu?.isShowing == true) {
+                    tracking = false
+                    return false
+                }
                 val dx = e.x - downX
                 val dy = e.y - downY
                 if (pulling) {
@@ -998,6 +1090,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         address.setHintTextColor(BrowserService.MUTED)
         address.hint = "Search or type a URL"
         address.setSelectAllOnFocus(true)
+        address.focusOnlyOnTouch() // the menu opens without the keyboard
         address.imeOptions = EditorInfo.IME_ACTION_GO
         address.inputType = EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_URI
         address.setPadding(dp(14), 0, dp(14), 0)
@@ -1046,7 +1139,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         plus.setOnClickListener {
             send(BrowserService.MSG_NEW)
             address.setText("")
-            address.requestFocus()
+            address.focusNow()
             ctx.getSystemService(InputMethodManager::class.java).showSoftInput(address, 0)
         }
         head.addView(plus, LinearLayout.LayoutParams(dp(40), dp(36)))
