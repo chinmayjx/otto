@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon layer: the same mark in one colour (Android tints it). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:strokeWidth="4.34" android:strokeLineCap="round" android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+        android:pathData="M81.01,57.8 A27.28,27.28 0 0 1 75.79,70.42 M70.42,75.79 A27.28,27.28 0 0 1 57.8,81.01 M50.2,81.01 A27.28,27.28 0 0 1 37.58,75.79 M32.21,70.42 A27.28,27.28 0 0 1 26.99,57.8 M26.99,50.2 A27.28,27.28 0 0 1 32.21,37.58 M37.58,32.21 A27.28,27.28 0 0 1 50.2,26.99 M57.8,26.99 A27.28,27.28 0 0 1 70.42,32.21 M75.79,37.58 A27.28,27.28 0 0 1 81.01,50.2 M42.22,45.32 L65.78,45.32 M49.04,45.32 L49.04,63.92 M58.96,45.32 L58.96,63.92" />
+</vector>
