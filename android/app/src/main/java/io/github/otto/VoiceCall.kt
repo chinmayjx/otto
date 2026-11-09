@@ -37,7 +37,7 @@ import kotlin.math.sqrt
  * reports what it sees (listening, speaking, a Codex turn running, errors) as events, read by long poll through the
  * tunnel's box API, like clips (Clips.client).
  *
- * What the orb shows is read from here each frame: [boxState], [working], [connected], [muted], and the levels of
+ * What the pill shows is read from here each frame: [boxState], [working], [connected], [muted], and the levels of
  * the microphone ([micLevel]) and of the voice ([outLevel]), 0 to 1. WebRTC work runs on one thread of its own.
  */
 class VoiceCall(private val ctx: Context, private val events: Listener) {
@@ -146,7 +146,7 @@ class VoiceCall(private val ctx: Context, private val events: Listener) {
         val pc = factory.createPeerConnection(config, observer) ?: throw IOException("WebRTC: no peer connection")
         this.pc = pc
         pc.addTrack(mic, listOf("otto"))
-        // OpenAI's events come on this channel too; the box's events are enough for the orb, so it's only opened.
+        // OpenAI's events come on this channel too; the box's events are enough for the pill, so it's only opened.
         channel = pc.createDataChannel("oai-events", DataChannel.Init())
 
         val offer = Sdp().also { pc.createOffer(it, MediaConstraints()) }.await()

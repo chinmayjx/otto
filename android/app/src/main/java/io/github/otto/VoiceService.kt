@@ -18,23 +18,23 @@ import android.os.Looper
 import android.widget.Toast
 
 /**
- * The assistant: a live voice call with Codex on the box (VoiceCall), with its orb over every app (VoiceOrb). A
+ * The assistant: a live voice call with Codex on the box (VoiceCall), with its pill over every app (VoicePill). A
  * foreground service of the microphone type, so the call goes on while other apps are in front and with the screen
  * off. Started from the handle's tray, through VoiceActivity (a microphone service has to be started from something
  * the user sees, and that's where Android asks for the microphone the first time). One call at a time; ending it
- * (the orb's ×, or the notification's End) lets go of everything: the call on the box, WebRTC, the microphone, the
- * orb and the service.
+ * (the pill's ×, or the notification's End) lets go of everything: the call on the box, WebRTC, the microphone, the
+ * pill and the service.
  */
 class VoiceService : Service() {
     private val main = Handler(Looper.getMainLooper())
-    private var orb: VoiceOrb? = null
+    private var pill: VoicePill? = null
     private var call: VoiceCall? = null
 
     override fun onCreate() {
         super.onCreate()
         running = true
         startForeground(ID, notification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        orb = VoiceOrb(this, ::tapped, ::end).also { it.show() }
+        pill = VoicePill(this, ::tapped, ::end).also { it.show() }
         Events.add(this, "assistant on")
         begin()
     }
@@ -45,24 +45,24 @@ class VoiceService : Service() {
     }
 
     private fun begin() {
-        val orb = orb ?: return
-        orb.error = null
+        val pill = pill ?: return
+        pill.error = null
         call = VoiceCall(this, object : VoiceCall.Listener {
-            override fun note(text: String) = main.post { orb.note(text) }.let {}
+            override fun note(text: String) = main.post { pill.note(text) }.let {}
             override fun failed(message: String) = main.post {
                 if (call == null) return@post
                 call = null
-                orb.call = null
-                orb.error = message
+                pill.call = null
+                pill.error = message
                 Toast.makeText(this@VoiceService, "Assistant: $message", Toast.LENGTH_LONG).show()
             }.let {}
         }).also {
-            orb.call = it
+            pill.call = it
             it.start()
         }
     }
 
-    /** The orb tapped: mute or unmute; after an error, try again. */
+    /** The pill tapped: mute or unmute; after an error, try again. */
     private fun tapped() {
         val c = call
         if (c == null) begin() else c.mute(!c.muted)
@@ -78,8 +78,8 @@ class VoiceService : Service() {
         running = false
         call?.end()
         call = null
-        orb?.dismiss()
-        orb = null
+        pill?.dismiss()
+        pill = null
         Events.add(this, "assistant off")
         super.onDestroy()
     }
@@ -110,7 +110,7 @@ class VoiceService : Service() {
         var running = false
             private set
 
-        /** From the tray: a call, unless there's one on already (its orb is on screen). */
+        /** From the tray: a call, unless there's one on already (its pill is on screen). */
         fun start(ctx: Context) {
             if (running) return Toast.makeText(ctx, "The assistant is already on", Toast.LENGTH_SHORT).show()
             ctx.startActivity(Intent(ctx, VoiceActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
