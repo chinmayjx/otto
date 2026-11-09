@@ -209,12 +209,12 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       const v: Record<string, unknown> = { ...(c.channels[VOICE] ?? {}), provider };
       if (a.model) v.model = a.model;
       if (a.voice) v.voice = a.voice;
+      // The key stays when switching to android, so switching back needs none.
       if (provider === 'openai-realtime' && (!v.apiKey || a.key)) {
         const key = await readToken('OpenAI API key (not shown): ');
         if (!/^sk-[\w-]{20,}$/.test(key)) throw new OttoError('that doesn\'t look like an OpenAI API key (sk-…)');
         v.apiKey = key;
       }
-      if (provider === 'android') delete v.apiKey;
       // Only one bot is the assistant: the voice leaves any other bot.
       let files: string[] = [];
       try { files = fs.readdirSync(configDir()).filter(f => f.endsWith('.json')); } catch {}
