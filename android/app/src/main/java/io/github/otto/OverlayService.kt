@@ -250,8 +250,8 @@ class OverlayService : Service(), Screen.Host {
                         }
                         handle.removeCallbacks(longPress)
                         if (pressed) {
+                            // Cancelled: Android handed the finger to the tray, which carries on with it.
                             if (e.actionMasked == MotionEvent.ACTION_UP) Tray.current?.release(e.rawX, e.rawY)
-                            else Tray.current?.dismiss()
                             if (screen.isClosed) ScreenActivity.current?.leave() // brought up for this touch, not shown
                             return true
                         }

@@ -36,7 +36,9 @@ import kotlin.math.roundToInt
  * outside, to close it), as the second screen's menus do (Screen.onPress).
  *
  * The handle's touch listener keeps the gesture (Android sends the moves to the window the finger came down on) and
- * passes them here: [hover] and [release]. [closed] runs once the slab has rolled back into the handle.
+ * passes them here: [hover] and [release]. Android may instead hand the rest of that gesture to the tray, which has
+ * just opened under the finger (it comes as a new touch): until the finger lifts, the tray takes it as the same
+ * gesture rather than a tap that closes it. [closed] runs once the slab has rolled back into the handle.
  */
 class Tray(private val ctx: Context, private val items: List<Item>, private val edge: Int, private val closed: () -> Unit) {
     class Item(val icon: Int, val label: String, val run: () -> Unit)
@@ -90,6 +92,16 @@ class Tray(private val ctx: Context, private val items: List<Item>, private val 
         // Room for a name wider than its cell left of the slab, and for the slab's shadow below it.
         root.setPadding(dp(TIP_ROOM), 0, 0, dp(SHADOW))
         root.setOnTouchListener { _, e ->
+            if (opening) {
+                // The finger that opened the tray, handed over to it.
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_MOVE, MotionEvent.ACTION_DOWN -> hover(e.rawX, e.rawY)
+                    MotionEvent.ACTION_UP -> release(e.rawX, e.rawY)
+                    MotionEvent.ACTION_CANCEL -> opening = false
+                    MotionEvent.ACTION_OUTSIDE -> { opening = false; dismiss() } // a new touch elsewhere
+                }
+                return@setOnTouchListener true
+            }
             // A tap elsewhere, or on the tray but off its items, with the tray left open.
             if (e.actionMasked == MotionEvent.ACTION_OUTSIDE || e.actionMasked == MotionEvent.ACTION_DOWN) dismiss()
             true
@@ -127,8 +139,12 @@ class Tray(private val ctx: Context, private val items: List<Item>, private val 
         if (i >= 0) root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
     }
 
+    /** The finger that opened the tray is still down. */
+    private var opening = true
+
     /** The finger lifted: on an item, it's picked; anywhere else, the tray stays, to tap. */
     fun release(x: Float, y: Float) {
+        opening = false
         val i = itemAt(x, y)
         if (i >= 0) pick(i)
         else if (hot >= 0) { hot = -1; light(-1) }
