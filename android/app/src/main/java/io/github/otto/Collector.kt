@@ -74,6 +74,10 @@ fun EditText.focusNow() {
  * - docked under the artifact viewer (ui/Viewer, in an AndroidView), with a capture button that freezes the
  *   viewer to take a part of it, and a place button that starts a note tagged with where the reader is ("p.4").
  *
+ * In both, a mic dictates into the note (Dictation): each phrase's text goes in at the cursor (at the end until the
+ * note has been touched) as the box writes it down, with the phrase in progress shown faintly above the note. Copy
+ * while dictating lets the last phrase in first.
+ *
  * It holds no clip logic of its own: its host says what the chips are (Piece), and what Copy, ×, capture and the
  * action button (the place, or the lens's "Whole screen") do.
  */
@@ -137,7 +141,13 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     private val capture = ImageView(ctx)
     private val whole = ImageView(ctx)
     private val close = ImageView(ctx)
+    private val mic = ImageView(ctx)
+    private val heard = TextView(ctx)
     private var busy = false
+    private var dictation: Dictation? = null
+    /** The user has put the cursor somewhere: dictation goes there, not at the end. */
+    private var placed = false
+    private var copyAfter = false
 
     init {
         orientation = VERTICAL
@@ -193,6 +203,11 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         icon(capture, R.drawable.ccm_freeze) { onCapture() }
         icon(whole, R.drawable.ccm_whole) { onWhole() }
         whole.contentDescription = if (docked) "Take the whole page in view" else "Take the whole screen"
+        mic.setImageResource(R.drawable.ccm_mic)
+        mic.scaleType = ImageView.ScaleType.CENTER
+        mic.setOnClickListener { if (dictation == null) dictate() else dictation?.stop() }
+        bar.addView(mic, LayoutParams(dp(BUTTON), dp(BUTTON)).apply { marginEnd = dp(4) })
+        micShown()
         bar.addView(View(ctx), LayoutParams(0, 1, 1f))
         close.setImageResource(R.drawable.ccm_close_box)
         close.setColorFilter(ICON)
@@ -200,6 +215,7 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         close.background = round(false) // just the ripple
         close.contentDescription = "Close"
         close.setOnClickListener {
+            dictation?.cancel()
             hideKeyboard()
             onClose()
         }
@@ -220,6 +236,19 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             rightMargin = dp(14)
         })
 
+        // The phrase being dictated, until its final text goes into the note.
+        heard.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        heard.setTextColor(PLACEHOLDER)
+        heard.setTypeface(heard.typeface, Typeface.ITALIC)
+        heard.maxLines = 2
+        heard.ellipsize = TextUtils.TruncateAt.START
+        heard.visibility = GONE
+        addView(heard, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(4)
+            leftMargin = dp(16)
+            rightMargin = dp(16)
+        })
+
         // The note: one full-width rounded strip that grows to four lines, its caret in the accent.
         note.setHintTextColor(PLACEHOLDER)
         note.setTextColor(BrowserService.TEXT)
@@ -237,7 +266,10 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             setColor(BrowserService.ACCENT)
             setSize(dp(2), 1)
         }
-        note.focusOnlyOnTouch { onNoteTouch() }
+        note.focusOnlyOnTouch {
+            placed = true
+            onNoteTouch()
+        }
         note.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -255,6 +287,11 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         copy.scaleType = ImageView.ScaleType.CENTER
         copy.contentDescription = "Copy"
         copy.setOnClickListener {
+            dictation?.let {
+                copyAfter = true // once the last phrase is in
+                it.stop()
+                return@setOnClickListener
+            }
             if (busy || !ready()) return@setOnClickListener
             hideKeyboard()
             onCopy()
@@ -268,6 +305,64 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         })
         frozen = false
         piecesChanged(emptyList())
+    }
+
+    // --- Dictation ---------------------------------------------------------------------------------------------
+
+    private fun dictate() {
+        status.visibility = GONE
+        val d = Dictation(context, object : Dictation.Listener {
+            override fun draft(text: String) {
+                heard.text = text
+                heard.visibility = if (text.isBlank()) GONE else VISIBLE
+            }
+
+            override fun final(text: String) {
+                heard.visibility = GONE
+                insert(text)
+            }
+
+            override fun ended(error: String?) {
+                dictation = null
+                heard.visibility = GONE
+                micShown()
+                if (error != null) {
+                    copyAfter = false
+                    status.text = error
+                    status.visibility = VISIBLE
+                } else if (copyAfter) {
+                    copyAfter = false
+                    copy.performClick()
+                }
+            }
+        })
+        dictation = d
+        micShown()
+        d.start()
+    }
+
+    /** A phrase into the note, at the cursor, spaced from the words around it; the cursor then after it. */
+    private fun insert(text: String) {
+        val e = note.text ?: return
+        val at = if (placed) note.selectionEnd.coerceIn(0, e.length) else e.length
+        val before = if (at > 0 && !e[at - 1].isWhitespace()) " " else ""
+        val after = if (at < e.length && !e[at].isWhitespace()) " " else ""
+        e.insert(at, before + text + after)
+        note.setSelection(at + before.length + text.length)
+        placed = true
+    }
+
+    /** The mic's look: on (a soft fill and the accent) while dictating. */
+    private fun micShown() {
+        val on = dictation != null
+        mic.setColorFilter(if (on) BrowserService.ACCENT else ICON)
+        mic.background = round(on)
+        mic.contentDescription = if (on) "Stop dictating" else "Dictate"
+    }
+
+    override fun onDetachedFromWindow() {
+        dictation?.cancel()
+        super.onDetachedFromWindow()
     }
 
     /** Something to send: text, or an image. */

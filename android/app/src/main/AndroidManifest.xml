@@ -129,6 +129,11 @@
             android:name=".VoiceService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+        <!-- Dictation (the collector's mic): a microphone service only while it records, so the lens gets the mic. -->
+        <service
+            android:name=".DictationService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
         <activity
             android:name=".VoiceActivity"
             android:exported="false"
