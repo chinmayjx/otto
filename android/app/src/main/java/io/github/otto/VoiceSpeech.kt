@@ -144,7 +144,11 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
             .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
-            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L))
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L)
+            // One session that keeps listening, with a result at each pause (onSegmentResults), rather than a
+            // session per sentence: restarting between sentences loses what's said meanwhile, and beeps.
+            .putExtra(RecognizerIntent.EXTRA_SEGMENTED_SESSION, RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS)
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, SESSION_MS))
     }
 
     private fun rest() {
@@ -157,16 +161,30 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         override fun onResults(results: Bundle?) {
             listening = false
             micLevel = 0f
+            take(results)
+            main.post { listen() }
+        }
+
+        // A segmented session: a piece at each pause, and the session goes on.
+        override fun onSegmentResults(segmentResults: Bundle) { take(segmentResults) }
+
+        override fun onEndOfSegmentedSession() {
+            listening = false
+            micLevel = 0f
+            main.post { listen() }
+        }
+
+        private fun take(results: Bundle?) {
             val texts = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val score = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)?.firstOrNull() ?: -1f
             val text = texts?.firstOrNull()?.trim().orEmpty()
+            Log.i(TAG, "heard ${text.split(' ').size} words (confidence $score)")
             if (worth(text, score) && !muted) {
                 if (said.isNotEmpty()) said.append(' ')
                 said.append(text)
                 main.removeCallbacks(flush)
                 main.postDelayed(flush, HOLD_MS)
             }
-            main.post { listen() }
         }
 
         override fun onError(error: Int) {
@@ -256,6 +274,7 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
     companion object {
         private const val TAG = "VoiceSpeech"
         private const val HOLD_MS = 2000L
+        private const val SESSION_MS = 10 * 60_000L // a segmented session's length; another starts after it
         private const val MIN_CONFIDENCE = 0.35f
         private val BEEPS = intArrayOf(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.STREAM_SYSTEM,
             android.media.AudioManager.STREAM_NOTIFICATION)
