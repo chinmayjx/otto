@@ -4,6 +4,7 @@ import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import http from 'node:http';
 import path from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -344,4 +345,25 @@ test('the box API passes the voice server\'s WebSockets through, and says so whe
   assert.deepEqual(got, ['/voice/transcribe bytes 9600', '/voice/transcribe text 15']);
   c.close();
   voice.close();
+});
+
+test('the box API passes /schedules… on to otto-bots, as it does /voice/…', async () => {
+  const bots = http.createServer((req, res) => res.end(`${req.method} ${req.url}`));
+  await new Promise<void>(r => bots.listen(ports.voice, '127.0.0.1', r));
+  const get = async (p: string, method = 'GET') => {
+    const s = await app.dial();
+    return new Promise<{ status: number; text: string }>((resolve, reject) => {
+      const req = http.request({ method, path: p, host: 'otto-relay', createConnection: () => s } as any, res => {
+        let text = '';
+        res.on('data', d => { text += d; });
+        res.on('end', () => resolve({ status: res.statusCode!, text }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  };
+  assert.equal((await get('/schedules')).text, 'GET /schedules');
+  assert.equal((await get('/schedules/gym/run', 'POST')).text, 'POST /schedules/gym/run');
+  assert.equal((await get('/schedulesx')).status, 404);
+  bots.close();
 });

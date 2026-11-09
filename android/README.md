@@ -94,7 +94,8 @@ Open Otto. It's a setup screen: the handle's switch at the top, then each thing 
   (`Drafts`, in `files/drafts/`). The artifact viewer docks the same collector under the artifact.
 - `Clips` sends clips to the relay's box API over pipes the app dials itself (`Tunnel.dial`/`ask`: `dial <req> box`
   on the control connection), with OkHttp on a socket factory whose sockets are those pipes; Coil loads the
-  Clipboard section's images the same way. Plain HTTP is allowed for that one name, `otto-relay`
+  Clipboard section's images the same way, and the Schedules section (`ui/Schedules`) reads the box's schedules
+  (`/schedules…`, passed on to otto-bots). Plain HTTP is allowed for that one name, `otto-relay`
   (`res/xml/network_security.xml`), which only ever travels a pipe.
 - `Tunnel` (main process) keeps the one control connection to the box's relay and opens a pipe per stream the relay
   asks for: `device` pipes it serves itself (`device/DeviceApi`: HTTP/1.1, kept alive, one route per command);

@@ -41,11 +41,55 @@ path.
 `otto bot list` shows the bots, whether each is running and paired; `otto bot logs <name> [--follow]` its log;
 `otto bot rm <name>` removes one. The service also logs to the journal (`journalctl -u otto-bots`).
 
+## Messages from anywhere on the box: `otto send`, and channels' logs
+
+Any session or script on the box can message you on a bot's channel, not only the bot itself:
+
+```sh
+otto send telegram "The build is green."           # as the bot that has Telegram (the assistant's, if several)
+otto send telegram --file report.pdf --caption "Weekly review"
+otto send otto_voice "Your 6 o'clock is in ten minutes."   # spoken on a call, else a phone notification
+otto send notify "Done."                           # a phone notification
+otto send telegram --bot other "…"                 # when several bots have Telegram
+```
+
+It goes through otto-bots (`POST /send` on its local server), which holds the tokens. Nothing goes into the bot's
+conversation: each channel keeps its own log of everything sent and received on it, and who did it (`bot otto`,
+`schedule morning (run r…)`, `session …`, `user`), in `~/.local/state/otto/channels/<channel>.jsonl`.
+`otto channel log telegram [--since 2h]` reads it; the bots are told to look there when you reply to a message they
+don't remember sending.
+
+## Schedules
+
+A schedule is a prompt run at a time: when it comes due, otto-bots starts a fresh headless session (Claude Code,
+`claude -p` in permission mode `auto`; or Codex, `codex exec`) with that prompt, in `~/code` or its own folder. The
+run sees nothing but its prompt; it reaches you, if it wants to, with `otto send`, and saying nothing is fine. Times
+are in `[schedules] timezone` (default Asia/Kolkata).
+
+```sh
+otto schedule add morning --at 08:00 --every weekday --prompt "Look at my calendar for today and ..."
+otto schedule add rent --cron "0 10 1 * *" --prompt-file rent.md
+otto schedule add mom --once "2026-11-10 18:00" --prompt 'Remind the user on Telegram to call Mom: otto send telegram "..."'
+otto schedule list | show <name> | edit <name> --at 07:30 | pause <name> | resume <name> | rm <name>
+otto schedule run <name>                 # now
+otto schedule runs [<name>]              # recent runs: status, transcript
+otto schedule runs <name> <run>          # what that run did
+```
+
+Usually you ask your assistant ("every weekday at 8, tell me what's on my calendar") and it runs these; the Otto
+app's Schedules section lists them, with their runs, Run now and Pause. Each schedule is
+`~/.config/otto/schedules/<name>.json`; its runs are in `~/.local/state/otto/schedules/<name>/` (`runs.jsonl`, and
+each run's output as `<run>.log`), and each run's session is an ordinary one (its transcript path is in the run),
+which can be read or resumed. A run whose schedule's last run is still going is skipped; one past its timeout (30
+min by default) is stopped; a time missed by more than 5 minutes (the box was off) is recorded as missed, not run
+late; three failed runs in a row bring one phone notification.
+
 ## The assistant: Otto's voice
 
 One bot can have the `otto_voice` channel; that bot is your assistant. On the phone, long-press the handle (or swipe it
 in and pick Assistant): a call starts, with a pill over every app (tap to mute, × to end; a long press on the handle
-hangs up too). What the assistant says when no call
+hangs up too). Muting mid-sentence counts what you said so far as said; a call left muted for 10 minutes is hung up
+(the next call carries on from the saved transcript). What the assistant says when no call
 is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
 
 ```sh

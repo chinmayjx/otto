@@ -23,9 +23,14 @@ artifacts_url = "https://my-hub.tailnet-name.ts.net:8444"   # the artifact hub, 
 [desktop]
 # display = ":1"   # the VNC desktop otto desktop screenshot captures
 
-# The assistant's voice server (box/bots), which the relay passes the app's /voice/... requests to.
+# otto-bots' local server (box/bots): the assistant's voice, which the relay passes the app's /voice/... and
+# /schedules... requests to, and what otto send, otto channel and otto schedule call.
 [voice]
 port = 9336
 # Dictation (the collector's mic) uses OpenAI through the assistant's sign-in; when that can't start, Deepgram, with
 # the key in this file (DEEPGRAM_API_KEY=... or the key alone).
 # deepgram_key_file = "~/.secrets/deepgram/api.env"
+
+[schedules]
+# Schedules' times (otto schedule) are in this time zone; the box itself may run on UTC.
+timezone = "Asia/Kolkata"
