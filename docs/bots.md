@@ -89,8 +89,10 @@ late; three failed runs in a row bring one phone notification.
 One bot can have the `otto_voice` channel; that bot is your assistant. On the phone, long-press the handle (or swipe it
 in and pick Assistant): a call starts, with a pill over every app (tap to mute, × to end; a long press on the handle
 hangs up too). Muting mid-sentence counts what you said so far as said; a call left muted for 10 minutes is hung up
-(the next call carries on from the saved transcript). What the assistant says when no call
-is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
+(the next call carries on from the saved transcript). With OpenAI's voice, a horn or a cough doesn't cut it off: only
+about 5 s of you talking over it does (`--barge-in S`; 0 lets any sound stop it), or a stop word on its own ("wait",
+"stop", "hold on", "ruko", "bas", "ek minute"); anything shorter you say meanwhile is answered once it's done. What
+the assistant says when no call is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
 
 ```sh
 otto bot voice mybot                              # OpenAI's realtime voice: asks for an API key on stdin

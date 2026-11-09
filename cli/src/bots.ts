@@ -169,7 +169,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
         return [n, kinds.map(k => {
           if (k !== VOICE) return k;
           const v = c.channels[k];
-          const via = v.auth === 'codex' ? ', codex' : '';
+          const via = (v.auth === 'codex' ? ', codex' : '') + (v.provider === 'android' ? '' : `, barge-in ${v.bargeIn ?? 5} s`);
           return `voice (${v.provider ?? 'openai-realtime'}${via}): assistant`;
         }).join(', ') || '(no channels)',
           s?.handle ?? '', s ? 'running' : 'stopped', paired ? 'paired' : 'unpaired',
@@ -200,7 +200,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
     }
 
     case 'voice': {
-      if (!name) throw new OttoError('missing a name: otto bot voice <name> [--provider openai-realtime|android] [--auth api-key|codex] [--model M] [--voice V] [--key] | --off');
+      if (!name) throw new OttoError('missing a name: otto bot voice <name> [--provider openai-realtime|android] [--auth api-key|codex] [--model M] [--voice V] [--barge-in S] [--key] | --off');
       const c = config(name);
       if (a.off) {
         if (!c.channels[VOICE]) return out(`${name} has no voice.`);
@@ -217,6 +217,11 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       const v: Record<string, unknown> = { ...(c.channels[VOICE] ?? {}), provider };
       if (a.model) v.model = a.model;
       if (a.voice) v.voice = a.voice;
+      if (a['barge-in'] !== undefined) {
+        const s = Number(a['barge-in']);
+        if (!Number.isFinite(s) || s < 0 || s > 30) throw new OttoError('--barge-in takes seconds, 0 to 30 (0: any sound stops the voice)');
+        v.bargeIn = s;
+      }
       if (a.auth) v.auth = a.auth;
       if (a.key) v.auth = 'api-key'; // an explicit key means use the key, even after --auth codex was set before
       // The key stays when switching to android or to the Codex sign-in, so switching back needs none.
@@ -244,7 +249,9 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       const how = provider === 'android' ? 'the phone\'s own speech'
         : v.auth === 'codex' ? `OpenAI's realtime voice via the Codex sign-in (${v.model ?? 'gpt-realtime-2.1'})`
         : `OpenAI's realtime voice (${v.model ?? 'gpt-realtime-2.1'})`;
-      return out(`${name} is your assistant, with ${how}. `
+      const barge = provider === 'android' ? '' : Number(v.bargeIn ?? 5)
+        ? ` Talking over it stops it after ${Number(v.bargeIn ?? 5)} s, or at once with "wait".` : ' Any sound stops it mid-sentence.';
+      return out(`${name} is your assistant, with ${how}.${barge} `
         + `On the phone: long-press the handle › Assistant.${running ? '' : `\n${NOT_RUNNING} try it.`}`);
     }
 

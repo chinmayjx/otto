@@ -14,11 +14,34 @@
 // once ("sent"), so the voice says it's on it and stays free. Otto's replies come back on the channel whenever they're
 // ready; each is spoken word for word at the next gap (the user not talking, the voice not mid-answer), with the
 // voice's tools off for it.
+//
+// Talking over the voice: OpenAI stops it at the first sound its turn detection takes for speech, a car horn
+// included; on a WebRTC call it clears the voice's audio then even with interrupt_response off. So the box decides
+// instead (bargeIn seconds, 5 unless set; 0 leaves it to OpenAI). While the voice talks, turn detection is off and
+// the box commits what the microphone heard every PIECE_MS, each piece transcribed on its own. Pieces with words in
+// a row add up: bargeIn seconds of them stop the voice, and so does a stop word on its own ("wait", "ruko"). Shorter
+// speech meanwhile is kept and answered once the voice is done; pieces with no words, filler, or a stray word or two
+// (a horn heard as "thank you") are taken out of the conversation so they're never answered.
 import WebSocket from 'ws';
+import { filler } from './android.js';
 import { Call, type CallHost, speakable } from './call.js';
 import { codexAccessToken, mintRealtimeKey } from './codex-auth.js';
 
 const API = 'https://api.openai.com/v1/realtime';
+
+/** While the voice talks, what the microphone heard is committed and transcribed in pieces this long. */
+const PIECE_MS = 1000;
+/** After the voice, how long turn detection gets to notice the user still talking before an answer is asked for. */
+const SETTLE_MS = 800;
+/** Said on its own, these stop the voice at once. */
+const STOP_WORDS = new Set(['wait', 'stop', 'hold on', 'ruko', 'ruk', 'ruko ruko', 'bas', 'bas bas', 'ek minute', 'ek min',
+  'wait wait', 'stop stop', 'रुको', 'रुक', 'बस', 'एक मिनट']);
+
+/** Whether a line is only a stop word (case, punctuation and a polite "please" or "Otto" aside). */
+export function stopWord(text: string): boolean {
+  const words = text.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').split(/\s+/).filter(w => w && w !== 'please' && w !== 'otto');
+  return words.length > 0 && words.length <= 2 && STOP_WORDS.has(words.join(' '));
+}
 
 export const PROMPT = `You are the voice of Otto, the user's personal assistant. You are only Otto's ears and mouth. Otto's brain is a separate agent on the user's computer: it has their files, phone, apps, accounts, notes, calendar, and every earlier conversation with the user. You have none of that; of earlier calls you have only what was said on them, at the start of this conversation, already dealt with: use it for follow-ups ("where were we?"), never answer it again.
 
@@ -59,6 +82,8 @@ export interface OpenAIOptions {
   instructions?: string;
   turnDetection?: Record<string, unknown>;
   noiseReduction?: Record<string, unknown> | null;
+  /** Seconds of the user's speech that stop the voice mid-sentence; 0 lets OpenAI stop it at any sound. */
+  bargeIn?: number;
 }
 
 export class OpenAICall extends Call {
@@ -74,11 +99,36 @@ export class OpenAICall extends Call {
   private asked: string | null = null; // Otto's message just sent to be said, until the voice starts on it
   private gapTimer: NodeJS.Timeout | null = null;
   private usage = { audioIn: 0, audioOut: 0, textIn: 0, textOut: 0 };
+  /** Talking over the voice (bargeIn > 0): the box answers turns and decides when the voice stops. */
+  private readonly barge: number;
+  private readonly turns: Record<string, unknown>; // the turn detection the call starts with
+  private deaf = false; // turn detection off while the voice talks; the box listens in pieces
+  private pieceTimer: NodeJS.Timeout | null = null;
+  private pieces = new Map<string, number>(); // pieces committed while the voice talks, by item: when
+  private run: { since: number; last: number } | null = null; // pieces with words in a row
+  private maybe: string | null = null; // a stray word or two, kept only if more speech follows
+  private tail = false; // the last piece, committed as turn detection comes back on
+  private midTurn = false; // the user talked the voice down and is likely still talking: their turn's end answers
+  private settleUntil = 0; // turn detection just came back on: a moment for it to hear the user still talking
+  private answered = new Set<string>(); // user items an answer has been asked for
+  private owed = false; // an answer is due once the voice is free
+  private answering = false; // the answer just asked for, until it starts
+  private item = ''; // the voice's answer being said
+  private itemSince = 0; // when its audio started
 
   constructor(host: CallHost, private o: OpenAIOptions) {
     super(host);
     this.model = o.model || 'gpt-realtime-2.1';
+    this.barge = Math.max(0, Number(o.bargeIn ?? 5)) || 0;
+    // Semantic turn detection waits for a finished thought rather than any pause; it can be changed in the
+    // channel's config (turnDetection). With bargeIn, OpenAI neither answers nor stops the voice by itself: the box
+    // does both.
+    this.turns = { ...(o.turnDetection ?? { type: 'semantic_vad', eagerness: 'auto' }),
+      ...(this.barge ? { interrupt_response: false, create_response: false } : {}) };
   }
+
+  /** The voice talks, or is about to. */
+  private get talking() { return this.voiceSpeaking || this.responding; }
 
   async begin(body: any): Promise<Record<string, unknown>> {
     const sdp = body?.sdp;
@@ -86,11 +136,10 @@ export class OpenAICall extends Call {
     const session = {
       type: 'realtime', model: this.model, instructions: this.o.instructions || PROMPT,
       audio: {
-        // Semantic turn detection waits for a finished thought rather than any pause; noise reduction for a phone
-        // on its loudspeaker. Both can be changed in the channel's config (turnDetection, noiseReduction).
+        // Noise reduction for a phone on its loudspeaker; it can be changed in the channel's config (noiseReduction).
         input: {
           transcription: { model: 'gpt-4o-mini-transcribe' },
-          turn_detection: this.o.turnDetection ?? { type: 'semantic_vad', eagerness: 'auto' },
+          turn_detection: this.turns,
           noise_reduction: this.o.noiseReduction === undefined ? { type: 'far_field' } : this.o.noiseReduction,
         },
         output: { voice: this.o.voice || 'marin' },
@@ -180,40 +229,62 @@ export class OpenAICall extends Call {
         this.userSpeaking = false;
         this.later(900); // the voice's own answer usually starts in this time; Otto's words wait for it
         break;
+      case 'input_audio_buffer.committed':
+        if (!this.barge) break;
+        // A piece heard while the voice talks: decided once its words are in. Otherwise a turn, answered now.
+        if (this.deaf || this.tail) { this.tail = false; this.pieces.set(e.item_id, Date.now()); }
+        else {
+          this.midTurn = false;
+          if (!this.answered.has(e.item_id)) this.answer();
+        }
+        break;
       case 'conversation.item.added': case 'conversation.item.created':
         if (e.item?.type === 'message' && e.item.role === 'user' && e.item.content?.some((c: any) => c.type === 'input_audio')) {
           this.transcript.hold(e.item.id, 'user');
         }
         break;
       case 'conversation.item.input_audio_transcription.completed':
-        this.transcript.fill(e.item_id, String(e.transcript ?? ''));
+        this.heardOver(e.item_id, String(e.transcript ?? ''));
         break;
       case 'conversation.item.input_audio_transcription.failed':
-        this.transcript.fill(e.item_id, '');
+        this.heardOver(e.item_id, '');
         break;
       case 'response.created':
         this.responding = true;
+        this.answering = false;
         this.asked = null;
+        if (this.barge) this.deafen(true);
+        break;
+      case 'response.output_item.added':
+        if (e.item?.type === 'message') this.item = e.item.id;
         break;
       case 'response.output_audio_transcript.done':
         this.transcript.add(this.relaying ? 'otto' : 'voice', String(e.transcript ?? ''));
         break;
       case 'output_audio_buffer.started':
         this.voiceSpeaking = true;
+        this.itemSince = Date.now();
         break;
       case 'output_audio_buffer.stopped': case 'output_audio_buffer.cleared':
         this.voiceSpeaking = false;
-        this.later(300);
+        this.free();
         break;
       case 'response.done':
         this.responding = false;
         this.relaying = false;
         this.count(e.response?.usage);
         void this.tools((e.response?.output ?? []).filter((i: any) => i.type === 'function_call'));
-        this.later(300);
+        this.free();
         break;
       case 'error':
+        if (e.error?.code === 'input_audio_buffer_commit_empty') { this.tail = false; break; } // a piece with no audio
         this.log(`OpenAI: ${e.error?.code ?? ''} ${redact(String(e.error?.message ?? '')).slice(0, 200)}`);
+        if (this.answering && e.error?.code === 'conversation_already_has_active_response') {
+          // An answer was asked for just as another began: it's asked for again once that one is done.
+          this.answering = false;
+          this.owed = true;
+          this.responding = true;
+        }
         if (this.asked !== null) {
           // Refused before it started. Most often the voice had just begun an answer of its own: Otto's message
           // goes back to the front, for the gap after that answer (its response.done). Otherwise there's no
@@ -243,6 +314,7 @@ export class OpenAICall extends Call {
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id,
         output: ok ? "Sent to Otto. The answer comes later as a message; tell the user you're on it." : `There is no tool ${c.name}.` } });
     }
+    this.responding = true;
     this.send({ type: 'response.create' });
     if (!asks.length) return;
     await this.transcript.settled(1500);
@@ -263,17 +335,108 @@ export class OpenAICall extends Call {
     if (!on || !this.userSpeaking) return;
     this.userSpeaking = false;
     this.send({ type: 'input_audio_buffer.commit' });
-    if (!this.responding) this.send({ type: 'response.create' });
+    if (!this.barge && !this.responding) this.send({ type: 'response.create' });
     this.log('muted mid-sentence: taken as said');
     this.update();
   }
 
-  /** The user tapped the pill while the voice talks: stop it now. */
-  interrupt() {
-    if (!this.responding && !this.voiceSpeaking) return;
+  /** Stops the voice now: what it had yet to say is cut from its answer, so it knows where it was stopped. */
+  interrupt(why = 'interrupted') {
+    if (!this.talking) return;
     this.send({ type: 'response.cancel' });
     this.send({ type: 'output_audio_buffer.clear' });
-    this.log('interrupted');
+    if (this.item && this.voiceSpeaking) {
+      this.send({ type: 'conversation.item.truncate', item_id: this.item, content_index: 0, audio_end_ms: Math.max(0, Date.now() - this.itemSince) });
+    }
+    this.log(why);
+  }
+
+  /** A piece's words are in, or a turn's. A piece heard while the voice talks: a stop word on its own stops it;
+   * pieces with words in a row stop it once they add up to bargeIn seconds, and are answered once it's done; a
+   * piece with no words is dropped, and so is a stray word or two that nothing follows. */
+  private heardOver(id: string, text: string) {
+    const at = this.pieces.get(id);
+    this.pieces.delete(id);
+    if (!this.barge || at === undefined || this.answered.has(id)) return this.transcript.fill(id, text);
+    const words = text.trim() && !filler(text) ? text.trim().split(/\s+/).length : 0;
+    const follows = this.run && at - this.run.last <= PIECE_MS * 1.6;
+    if (!words) {
+      this.drop(id);
+      if (this.maybe) { this.drop(this.maybe); this.maybe = null; this.run = null; } // a stray word, then quiet
+      return this.free();
+    }
+    if (!follows && stopWord(text)) {
+      this.transcript.fill(id, text);
+      this.answered.add(id); // stopping is the answer
+      this.run = null;
+      return this.interrupt('stop word: stopped');
+    }
+    this.transcript.fill(id, text);
+    if (!follows) {
+      this.run = { since: at - PIECE_MS, last: at };
+      if (words <= 2) { if (this.maybe) this.drop(this.maybe); this.maybe = id; return; }
+    } else this.run!.last = at;
+    this.maybe = null;
+    this.owed = true;
+    if (this.run!.last - this.run!.since >= this.barge * 1000 && this.talking) {
+      this.run = null;
+      this.midTurn = true;
+      this.interrupt(`talked over for ${this.barge} s: stopped`);
+    } else this.free();
+  }
+
+  /** A piece that's only noise: out of the transcript and the conversation. */
+  private drop(id: string) {
+    this.transcript.fill(id, '');
+    this.send({ type: 'conversation.item.delete', item_id: id });
+  }
+
+  /** Asks the voice to answer what the user has said, now or once it's free. */
+  private answer() {
+    if (this.talking || this.answering) { this.owed = true; return; }
+    this.owed = false;
+    this.answering = true;
+    this.responding = true;
+    for (const id of this.pieces.keys()) this.answered.add(id);
+    this.send({ type: 'response.create' });
+  }
+
+  /** The voice may be free: turn detection back on, an answer that's owed (after a moment, in case the user is
+   * still talking), then Otto's words. */
+  private free() {
+    if (this.talking || this.answering) return;
+    if (this.deaf) {
+      this.deafen(false);
+      setTimeout(() => this.free(), SETTLE_MS + 50);
+      return;
+    }
+    if (Date.now() < this.settleUntil) return; // free() comes again after it
+    if (this.midTurn) {
+      if (this.userSpeaking) return; // the end of their turn answers it all
+      this.midTurn = false;
+    }
+    if (this.maybe) { this.drop(this.maybe); this.maybe = null; }
+    if (this.owed && !this.userSpeaking && !this.pieces.size) return this.answer();
+    this.later(300);
+  }
+
+  /** While the voice talks, OpenAI's turn detection is off (it would stop the voice at any sound) and the box
+   * commits what the microphone heard in pieces; after, it's back on, with what's left committed as a last piece. */
+  private deafen(on: boolean) {
+    if (on === this.deaf) return;
+    this.deaf = on;
+    if (this.pieceTimer) clearInterval(this.pieceTimer);
+    this.pieceTimer = null;
+    if (on) {
+      this.run = null;
+      this.send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: null } } } });
+      this.pieceTimer = setInterval(() => { if (!this.mutedSince) this.send({ type: 'input_audio_buffer.commit' }); }, PIECE_MS);
+      this.pieceTimer.unref(); // the call's end clears it; a test or a closing process needn't wait for it
+    } else {
+      this.settleUntil = Date.now() + SETTLE_MS;
+      if (!this.mutedSince) { this.tail = true; this.send({ type: 'input_audio_buffer.commit' }); }
+      this.send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: this.turns } } } });
+    }
   }
 
   say(text: string) {
@@ -291,7 +454,7 @@ export class OpenAICall extends Call {
 
   private speakNext() {
     if (!this.queue.length || !this.up || this.stopping) return;
-    if (this.userSpeaking || this.responding || this.voiceSpeaking) return; // the events that end these look again
+    if (this.userSpeaking || this.responding || this.voiceSpeaking || this.answering || this.owed) return; // the events that end these look again
     const text = this.queue.shift()!;
     this.responding = true;
     this.relaying = true;
@@ -312,6 +475,7 @@ export class OpenAICall extends Call {
 
   protected async end(): Promise<string[]> {
     if (this.gapTimer) clearTimeout(this.gapTimer);
+    if (this.pieceTimer) clearInterval(this.pieceTimer);
     const ws = this.ws;
     this.ws = null;
     if (this.callId) await this.hangUp();
