@@ -20,7 +20,9 @@ import kotlin.math.sin
  * A call with the assistant through the phone's own speech (box/bots' otto_voice channel with the "android"
  * provider): Android's speech recognizer listens in a loop and what it hears goes to the box, and the assistant's
  * words come back as events, said with text-to-speech. While it speaks, the recognizer rests, so it doesn't hear
- * itself (a tap on the pill stops it).
+ * itself; instead the microphone is opened as for a call while it speaks (BargeIn, with the phone's echo
+ * canceller, the phone's audio in call mode so its own voice is the canceller's reference), and the user talking
+ * over it stops it and hands back to the recognizer. A tap on the pill stops it too.
  *
  * Not every scrap goes: a result the recognizer isn't sure of, or a single word that isn't an answer ("so",
  * a cough heard as "the"), is dropped; and pieces are held for a moment and joined, so a pause doesn't cut a
@@ -48,9 +50,13 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
     private var poll: VoiceEvents? = null
     private val said = StringBuilder() // heard, waiting a moment for the rest of the sentence
     private val flush = Runnable { send() }
+    private var barge: BargeIn? = null
+    private val audio = ctx.getSystemService(android.media.AudioManager::class.java)
+    private var oldMode = android.media.AudioManager.MODE_NORMAL
 
     override fun start() {
         main.post {
+            callAudio()
             tts = TextToSpeech(ctx) { status ->
                 Log.i(TAG, "text-to-speech: $status")
                 main.post {
@@ -60,7 +66,8 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
                     waiting.clear()
                 }
             }.apply {
-                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
+                // On the call's path, so the echo canceller hears it as the far end and takes it out.
+                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
                 setOnUtteranceProgressListener(progress)
             }
@@ -89,7 +96,7 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
 
     override fun mute(on: Boolean) {
         muted = on
-        main.post { if (on) rest() else listen() }
+        main.post { if (on) { rest(); stopBarge() } else listen() }
     }
 
     override fun end() {
@@ -107,10 +114,22 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
             tts?.stop()
             tts?.shutdown()
             tts = null
+            stopBarge()
             micLevel = 0f
             speaking = false
             main.removeCallbacks(flush)
+            audio.clearCommunicationDevice()
+            audio.mode = oldMode
         }
+    }
+
+    /** The phone in call mode, on the loudspeaker unless a headset is in: what makes its echo canceller work. */
+    private fun callAudio() {
+        oldMode = audio.mode
+        audio.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+        val devices = audio.availableCommunicationDevices
+        val headset = devices.firstOrNull { it.type in HEADSETS }
+        (headset ?: devices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER })?.let { audio.setCommunicationDevice(it) }
     }
 
     private fun fail(message: String) {
@@ -209,16 +228,24 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         speaking = true
         rest()
         t.speak(text, TextToSpeech.QUEUE_ADD, null, "otto-${System.nanoTime()}")
+        if (barge == null && !muted) barge = BargeIn { main.post { if (speaking) { Log.i(TAG, "barge-in"); hush() } } }
     }
 
     /** A tap on the pill while it talks: stop, and listen. */
-    override fun interrupt() {
-        main.post {
-            tts?.stop()
-            pending = 0
-            speaking = false
-            listen()
-        }
+    override fun interrupt() { main.post { hush() } }
+
+    /** Stops talking and listens (the microphone a moment later, once the barge-in listener has let go of it). */
+    private fun hush() {
+        tts?.stop()
+        pending = 0
+        speaking = false
+        stopBarge()
+        main.postDelayed({ listen() }, 150)
+    }
+
+    private fun stopBarge() {
+        barge?.stop()
+        barge = null
     }
 
     private val progress = object : UtteranceProgressListener() {
@@ -232,13 +259,16 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         pending = (pending - 1).coerceAtLeast(0)
         if (pending > 0) return
         speaking = false
-        listen()
+        stopBarge()
+        main.postDelayed({ listen() }, 150)
     }
 
     companion object {
         private const val TAG = "VoiceSpeech"
         private const val HOLD_MS = 1500L
         private const val MIN_CONFIDENCE = 0.35f
+        private val HEADSETS = setOf(android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO, android.media.AudioDeviceInfo.TYPE_BLE_HEADSET, android.media.AudioDeviceInfo.TYPE_USB_HEADSET)
         /** One-word results that are answers, not noise. */
         private val ANSWERS = setOf("yes", "no", "yeah", "yep", "nope", "ok", "okay", "stop", "wait", "thanks", "sure", "cancel", "continue", "done")
     }
