@@ -82,7 +82,14 @@ class Commands(private val ctx: Context) {
         "uninstall" -> Reply(Installer.await(Installer.uninstall(ctx, a.getString("package"))))
         "logcat" -> logcat(a)
         "events" -> Reply(Events.text(ctx))
+        "notify" -> Reply(notify(a))
         else -> throw Unknown(cmd)
+    }
+
+    /** A notification from the assistant: {title?, text}. */
+    private fun notify(a: JSONObject): String {
+        io.github.otto.Notifications.message(ctx, a.optString("title").ifEmpty { "Otto" }, a.getString("text"))
+        return "shown"
     }
 
     /** Actions return once the screen has settled, so the next screenshot or tree shows the result. */

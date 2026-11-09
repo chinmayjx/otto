@@ -6,7 +6,6 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.util.Log
-import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -31,29 +30,22 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
- * One live voice call with Codex on the box (otto/box/voice). The phone makes a WebRTC call with its microphone and
- * hands the offer to the box, which starts a Codex realtime session with it and hands back OpenAI's answer: from
- * then on the audio goes straight between the phone and OpenAI, and WebRTC plays the voice as it comes. The box
- * reports what it sees (listening, speaking, a Codex turn running, errors) as events, read by long poll through the
- * tunnel's box API, like clips (Clips.client).
+ * One live voice call with the assistant's realtime voice (box/bots' otto_voice channel). The phone makes a WebRTC
+ * call with its microphone and hands the offer to the box, which creates the call with OpenAI and hands back the
+ * answer: from then on the audio goes straight between the phone and OpenAI, and WebRTC plays the voice as it comes.
+ * The box joins the call on its side and reports what it sees (listening, thinking, speaking, errors) as events,
+ * read by long poll through the tunnel's box API, like clips (Clips.client).
  *
  * What the pill shows is read from here each frame: [boxState], [working], [connected], [muted], and the levels of
  * the microphone ([micLevel]) and of the voice ([outLevel]), 0 to 1. WebRTC work runs on one thread of its own.
  */
-class VoiceCall(private val ctx: Context, private val events: Listener) {
-    interface Listener {
-        /** Something the user should see in a few words (what Codex is doing, a caption). */
-        fun note(text: String) {}
-        /** The call can't go on: [message] says why. Everything is already let go of. */
-        fun failed(message: String)
-    }
-
-    @Volatile var boxState = "connecting"; private set
-    @Volatile var working = false; private set
-    @Volatile var connected = false; private set
-    @Volatile var micLevel = 0f; private set
-    @Volatile var outLevel = 0f; private set
-    @Volatile var muted = false; private set
+class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener) : VoiceLink {
+    @Volatile override var boxState = "connecting"; private set
+    override val working get() = boxState == "thinking"
+    @Volatile override var connected = false; private set
+    @Volatile override var micLevel = 0f; private set
+    @Volatile override var outLevel = 0f; private set
+    @Volatile override var muted = false; private set
     @Volatile var ended = false; private set
 
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "voice") }
@@ -68,10 +60,10 @@ class VoiceCall(private val ctx: Context, private val events: Listener) {
     private var focus: AudioFocusRequest? = null
     private var oldMode = AudioManager.MODE_NORMAL
     private var session: String? = null
-    private var poll: Call? = null
+    private var poll: VoiceEvents? = null
     private val gathered = CountDownLatch(1)
 
-    fun start() = worker.execute {
+    override fun start() = worker.execute {
         try {
             connect()
         } catch (e: Exception) {
@@ -81,7 +73,7 @@ class VoiceCall(private val ctx: Context, private val events: Listener) {
     }
 
     /** Mute: the microphone's track is turned off, so nothing it hears is sent. */
-    fun mute(on: Boolean) {
+    override fun mute(on: Boolean) {
         muted = on
         worker.execute {
             mic?.setEnabled(!on)
@@ -90,7 +82,7 @@ class VoiceCall(private val ctx: Context, private val events: Listener) {
     }
 
     /** Ends the call here and on the box. */
-    fun end() {
+    override fun end() {
         if (ended) return
         ended = true
         poll?.cancel()
@@ -164,7 +156,11 @@ class VoiceCall(private val ctx: Context, private val events: Listener) {
         session = o.getString("id")
         if (ended) return // end() is queued behind this, and stops it on the box too
         Sdp().also { pc.setRemoteDescription(it, SessionDescription(SessionDescription.Type.ANSWER, o.getString("sdp"))) }.await()
-        Thread({ pollLoop(o.getString("id")) }, "voice-events").start()
+        val events = VoiceEvents(o.getString("id"), { ended }, ::fail) { e ->
+            if (e.optString("type") == "state") boxState = e.optString("state")
+        }
+        poll = events
+        Thread(events::run, "voice-events").start()
         levels()
     }
 
@@ -203,42 +199,6 @@ class VoiceCall(private val ctx: Context, private val events: Listener) {
     }
 
     // --- While it's on ------------------------------------------------------------------------------------------
-
-    /** The box's events, by long poll, until the call ends. A few misses in a row (the tunnel down) end it. */
-    private fun pollLoop(id: String) {
-        var after = 0
-        var misses = 0
-        while (!ended) {
-            try {
-                val call = http.newCall(Request.Builder().url("${Clips.BASE}/voice/sessions/$id/events?after=$after").build())
-                poll = call
-                val r = call.execute()
-                val text = r.use { it.body?.string() ?: "" }
-                if (r.code == 404) return fail("The box no longer has this call")
-                if (!r.isSuccessful) throw IOException(text.trim())
-                misses = 0
-                val o = JSONObject(text)
-                val list = o.getJSONArray("events")
-                for (i in 0 until list.length()) {
-                    val e = list.getJSONObject(i)
-                    after = e.getInt("n")
-                    when (e.optString("type")) {
-                        "state" -> {
-                            boxState = e.optString("state")
-                            working = e.optBoolean("working")
-                        }
-                        "activity" -> events.note(e.optString("text"))
-                        "error" -> return fail(e.optString("message").ifEmpty { "The call failed" })
-                    }
-                }
-                if (o.optString("state") == "ended") return fail("The call ended on the box")
-            } catch (e: IOException) {
-                if (ended) return
-                if (++misses >= 3) return fail("Lost the box: ${e.message}")
-                Thread.sleep(1000L * misses)
-            }
-        }
-    }
 
     /** The voice's level, from WebRTC's stats, ten times a second. */
     private fun levels() {

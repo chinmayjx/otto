@@ -113,7 +113,7 @@ Box API (`box/relay/src/clips.ts`; the same routes, read-only, are on the local 
 | `GET /clips/<id>` | one clip (with `dir`, its folder on the box) |
 | `GET /clips/<id>/<n>.png`, `/clips/<id>/thumb.jpg` | its images, its thumbnail |
 | `DELETE /clips/<id>` | |
-| `/voice/…` | passed on to the voice adapter (`box/voice`, on 127.0.0.1): `POST /voice/sessions` (the phone's WebRTC offer, answered with Codex's), `GET /voice/sessions/<id>/events?after=N` (long poll), `POST /voice/sessions/<id>/stop` |
+| `/voice/…` | passed on to the assistant's voice server (`box/bots`, `channels/voice/server.ts`, on 127.0.0.1): `GET /voice/assistant`, `POST /voice/sessions` (a call: the phone's WebRTC offer, answered with OpenAI's, or none for the phone's own speech), `GET /voice/sessions/<id>/events?after=N` (long poll), `POST /voice/sessions/<id>/heard` and `/stop`. See [bots](bots.md) |
 
 **Clips** are what the user collects on the phone for an agent (the lens, or the artifact viewer's collector): kept in `~/.local/state/otto/clips/<id>/` (`relay.clips_dir`) as `clip.json` (`id`, `created`, `text`, `images` with their sizes, and a `source`: `{kind: "screen", app, label}` or `{kind: "artifact", id, version, title, url, notes: [{where, text}]}`) and `1.png`, `2.png`, …. An id is 6 characters of Crockford base32 in lowercase (no i, l, o or u). The newest 200 are kept, and none older than 30 days. On the phone, Copy puts "Look at my Otto clip <id>: run `otto clip <id>`" on the clipboard; a clip without images isn't sent at all, its text goes on the clipboard as it is.
 

@@ -1,11 +1,14 @@
 # Bots
 
-A bot is a chat on your phone that is one long-running agent conversation on the box. Write to it as you would to a
+A bot is one long-running agent conversation on the box, which you reach through its channels: a Telegram chat, and
+on one bot, your assistant, a voice call from the Otto app. Write to it as you would to a
 person; the agent (Claude Code, in `~/code` by default, permission mode `auto`) works on the box and answers in the
 chat, with files when it makes them and artifact links for anything long. A message sent while it works goes into
 the turn in progress. Only one account, the owner, can use a bot; it ignores everyone else.
 
-Telegram is the only channel so far.
+Every message reaches the agent tagged with its channel (`<message channel="telegram">…</message>`), and the agent
+replies with `send_message(channel, text)`, following that channel's rules: Markdown for Telegram, plain speakable
+sentences for the voice.
 
 ## Setup
 
@@ -37,3 +40,27 @@ path.
 
 `otto bot list` shows the bots, whether each is running and paired; `otto bot logs <name> [--follow]` its log;
 `otto bot rm <name>` removes one. The service also logs to the journal (`journalctl -u otto-bots`).
+
+## The assistant: Otto's voice
+
+One bot can have the `otto_voice` channel; that bot is your assistant. On the phone, long-press the handle and pick
+Assistant: a call starts, with a pill over every app (tap to mute, × to end). What the assistant says when no call
+is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
+
+```sh
+otto bot voice mybot                              # OpenAI's realtime voice: asks for an API key on stdin
+otto bot voice mybot --provider android           # the phone's own speech recognizer and text-to-speech (free)
+otto bot voice mybot --model gpt-realtime-2.1 --voice marin
+otto bot voice mybot --off
+```
+
+- **openai-realtime**: a realtime voice model is on the call (audio goes straight between the phone and OpenAI; the
+  box creates the call with the key and joins it on a side connection). It handles small talk itself and hands
+  everything else to the bot with its `ask_brain` tool, fire and forget: the bot gets everything said on the call
+  since the last hand-off, and its replies are spoken word for word at the next gap. The voice remembers nothing
+  between calls; it asks the bot. About $0.02–0.04 a minute with the mini model.
+- **android**: no voice model in between; every sentence the phone hears goes to the bot, and its replies are read
+  out by the phone.
+
+The voice server's port is `[voice] port` in `~/.config/otto/config.toml` (9336); the relay passes the app's
+`/voice/…` requests to it. Notifications go through the relay's local API (`[relay] local_port`).

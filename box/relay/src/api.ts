@@ -15,8 +15,8 @@
 //                                         clips from the phone (clips.ts)
 //
 // The box API, served to the app on the pipes it dials itself (tunnel.ts "dial ... box"), never on a port: the
-// clip routes, with POST /clips for uploads (clips.ts), and /voice/…, passed on as it is to the voice adapter
-// (box/voice) on 127.0.0.1, which answers 503 here when it isn't running.
+// clip routes, with POST /clips for uploads (clips.ts), and /voice/…, passed on as it is to the assistant's voice
+// server (box/bots, channels/voice) on 127.0.0.1, which answers 503 here when it isn't running.
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { Browser, NO_PHONE } from './browser.js';
@@ -135,7 +135,7 @@ function voice(req: http.IncomingMessage, res: http.ServerResponse, port: number
   up.on('error', (e: any) => {
     if (res.headersSent) return void res.destroy();
     res.writeHead(503, { 'content-type': 'text/plain' });
-    res.end(e.code === 'ECONNREFUSED' ? 'voice: the voice adapter (otto-voice) is not running\n' : `voice: ${e.message}\n`);
+    res.end(e.code === 'ECONNREFUSED' ? 'voice: the bots service (otto-bots) is not running\n' : `voice: ${e.message}\n`);
   });
   // The phone giving up on a long poll ends ours too.
   res.on('close', () => { if (!res.writableFinished) up.destroy() });

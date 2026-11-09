@@ -57,7 +57,7 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
     private enum class Anchor { LEFT, MIDDLE, RIGHT }
 
     /** The call it shows, read each frame; null while there's none (after an error). */
-    var call: VoiceCall? = null
+    var call: VoiceLink? = null
     /** Set after a failure: the pill says so, with a retry. */
     var error: String? = null
         set(v) {
@@ -183,8 +183,8 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
     private fun lookNow(): Look {
         val c = call
         return when {
-            error != null || c == null -> Look.ERROR
-            !c.connected || c.boxState == "connecting" -> Look.CONNECTING
+            error != null -> Look.ERROR
+            c == null || !c.connected || c.boxState == "connecting" -> Look.CONNECTING
             c.muted -> Look.MUTED
             c.outLevel > 0.08f || c.boxState == "speaking" -> Look.SPEAKING
             c.working -> Look.THINKING

@@ -61,6 +61,9 @@ Bots (chat bots, each one long-running agent conversation on this box; the otto-
   otto bot add <name> --channel telegram [--cwd DIR] [--model M] [--permission-mode MODE]
                                            the token from @BotFather is read from stdin or a prompt; then pair
   otto bot pair <name> [--reset]           the link (and code) that makes your account the bot's owner
+  otto bot voice <name> [--provider openai-realtime|android] [--model M] [--voice V] [--key] | --off
+                                          make the bot your assistant: the Otto app's voice calls reach it
+                                          (openai-realtime asks for an API key on stdin, never as an argument)
   otto bot list
   otto bot logs <name> [--lines N] [--follow]
   otto bot rm <name>
@@ -72,7 +75,7 @@ interface Args { _: string[]; [k: string]: any }
 /** What agents used to Playwright's tools tend to type. */
 const ALIASES: Record<string, string> = { navigate: 'open', goto: 'open', go: 'open', fill: 'type', key: 'press', press_key: 'press', shot: 'screenshot', take_screenshot: 'screenshot', evaluate: 'eval', tab: 'tabs', navigate_back: 'back' };
 
-const BOOLEAN = new Set(['send', 'qr', 'new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json', 'reset', 'follow']);
+const BOOLEAN = new Set(['send', 'qr', 'new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json', 'reset', 'follow', 'off', 'key']);
 
 function parseArgs(argv: string[]): Args {
   const a: Args = { _: [] };

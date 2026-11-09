@@ -33,8 +33,10 @@ import com.google.android.material.R as M
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.color.MaterialColors
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.materialswitch.MaterialSwitch
 import io.github.otto.device.AgentAccessibility
+import org.json.JSONObject
 
 /**
  * Otto's own screen, and only for setup: the switch for the handle (which turns Otto, and its links to the box, on
@@ -148,6 +150,62 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         resumed = true
         ticker.post(tick)
+        fetchAssistant()
+    }
+
+    // --- The assistant: which bot on the box answers the tray's Assistant --------------------------------------
+
+    @Volatile private var assistant: JSONObject? = null
+    @Volatile private var assistantError: String? = null
+
+    /** Asks the box, in the background; render() shows what came back. */
+    private fun fetchAssistant() {
+        if (!OverlayService.running || Pairing.load(this) == null) return
+        Thread {
+            try {
+                assistant = VoiceLink.assistant()
+                assistantError = null
+            } catch (e: Exception) {
+                assistantError = e.message ?: "can't reach the box"
+            }
+            runOnUiThread { render() }
+        }.start()
+    }
+
+    private fun assistantItem() {
+        val a = assistant
+        if (a == null) {
+            assistantError?.let { item("Assistant", "Couldn't ask the box: $it", false, "Try again") { fetchAssistant() } }
+            return
+        }
+        val bots = a.optJSONArray("bots")?.let { l -> (0 until l.length()).map { l.getString(it) } } ?: emptyList()
+        if (a.isNull("bot")) {
+            item("Assistant", "None yet. Give a bot a voice on the box:\n  otto bot voice <bot>\nthen long-press the handle › Assistant.",
+                false, "Copy the command") { copy("otto bot voice ${bots.firstOrNull() ?: "<bot>"}") }
+            return
+        }
+        val how = if (a.optString("provider") == "android") "this phone's own speech" else "a realtime voice (OpenAI)"
+        item("Assistant: ${a.optString("bot")}", "${a.optString("agent")}, through $how. Long-press the handle › Assistant to talk; " +
+            "what it says with no call on comes as a notification.", true, if (bots.size > 1) "Change" else null) { pickAssistant(bots, a.optString("bot")) }
+    }
+
+    private fun pickAssistant(bots: List<String>, now: String) {
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Which bot is your assistant?")
+            .setSingleChoiceItems(bots.toTypedArray(), bots.indexOf(now)) { d, i ->
+                d.dismiss()
+                val bot = bots[i]
+                if (bot == now) return@setSingleChoiceItems
+                Thread {
+                    val err = try { VoiceLink.post("/voice/assistant", JSONObject().put("bot", bot)); null } catch (e: Exception) { e.message }
+                    runOnUiThread {
+                        Toast.makeText(this, err?.let { "Couldn't change it: $it" } ?: "$bot is your assistant", Toast.LENGTH_LONG).show()
+                        Handler(Looper.getMainLooper()).postDelayed({ fetchAssistant() }, 1500)
+                    }
+                }.start()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     override fun onPause() {
@@ -191,6 +249,7 @@ class MainActivity : AppCompatActivity() {
                 render()
             }
         }
+        assistantItem()
         val overlay = Settings.canDrawOverlays(this)
         item("Draw over other apps", if (overlay) "Allowed." else "Needed for the handle and the second screen.", overlay,
             if (overlay) null else "Allow") { openSettings(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, true) }

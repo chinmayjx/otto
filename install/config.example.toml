@@ -22,3 +22,7 @@ artifacts_url = "https://my-hub.tailnet-name.ts.net:8444"   # the artifact hub, 
 
 [desktop]
 # display = ":1"   # the VNC desktop otto desktop screenshot captures
+
+# The assistant's voice server (box/bots), which the relay passes the app's /voice/... requests to.
+[voice]
+port = 9336

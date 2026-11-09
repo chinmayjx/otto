@@ -36,6 +36,30 @@ object Notifications {
             .build()
     }
 
+    private const val MESSAGES = "assistant"
+    private var next = 100
+
+    /**
+     * Something the assistant said with no call on (the box's device command "notify"): a notification that pops
+     * up, its whole text when expanded. Throws when notifications are off, so the assistant knows it wasn't seen.
+     */
+    fun message(ctx: Context, title: String, text: String) {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        if (!nm.areNotificationsEnabled()) throw IllegalStateException("notifications are off for Otto on the phone")
+        if (nm.getNotificationChannel(MESSAGES) == null) {
+            nm.createNotificationChannel(NotificationChannel(MESSAGES, "Assistant", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "What your assistant says when no call is on"
+            })
+        }
+        nm.notify(next++, Notification.Builder(ctx, MESSAGES)
+            .setSmallIcon(R.drawable.ccm_mic)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .build())
+    }
+
     fun startForeground(service: Service) {
         service.startForeground(ID, build(service), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
     }

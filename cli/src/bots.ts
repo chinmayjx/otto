@@ -18,6 +18,17 @@ const configFile = (name: string) => path.join(configDir(), `${name}.json`);
 const stateDir = (name: string) => path.join(stateRoot(), name);
 const NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
 const CHANNELS = ['telegram'];
+const VOICE = 'otto_voice';
+const VOICE_PROVIDERS = ['openai-realtime', 'android'];
+
+/** A config in either shape (box/bots/src/config.ts), in the current one: channels by kind. */
+function normalize(c: any): any {
+  if (c && typeof c.channel === 'string') {
+    const { channel, token, owner, ...rest } = c;
+    return { ...rest, channels: { ...(c.channels ?? {}), [channel]: { token, ...(owner !== undefined ? { owner } : {}) } } };
+  }
+  return c;
+}
 
 type Out = (s: string) => void;
 
@@ -29,7 +40,7 @@ function readJson(file: string): any {
 
 function config(name: string): any {
   if (!NAME.test(name)) throw new OttoError(`a bot's name is letters, digits, - and _ (got "${name}")`);
-  const c = readJson(configFile(name));
+  const c = normalize(readJson(configFile(name)));
   if (!c) throw new OttoError(`no bot "${name}" (otto bot list)`);
   return c;
 }
@@ -133,7 +144,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       const token = await readToken('Bot token from @BotFather (not shown): ');
       if (!token) throw new OttoError('no token');
       const username = await telegramMe(token);
-      const c: Record<string, unknown> = { channel, token };
+      const c: Record<string, unknown> = { channels: { [channel]: { token } } };
       if (a.cwd) c.cwd = path.resolve(expand(a.cwd));
       if (a.model) c.model = a.model;
       if (a['permission-mode']) c.permissionMode = a['permission-mode'];
@@ -150,9 +161,12 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       if (!files.length) return out('no bots (otto bot add <name> --channel telegram)');
       const rows = files.map(f => {
         const n = f.replace(/\.json$/, '');
-        const c = readJson(path.join(configDir(), f)) ?? {};
+        const c = normalize(readJson(path.join(configDir(), f))) ?? {};
         const s = status(n);
-        return [n, c.channel ?? '?', s?.handle ?? '', s ? 'running' : 'stopped', c.owner ? 'paired' : 'unpaired',
+        const kinds = Object.keys(c.channels ?? {});
+        const paired = kinds.every(k => k === VOICE || c.channels[k].owner);
+        return [n, kinds.map(k => (k === VOICE ? `voice (${c.channels[k].provider ?? 'openai-realtime'}): assistant` : k)).join(', '),
+          s?.handle ?? '', s ? 'running' : 'stopped', paired ? 'paired' : 'unpaired',
           c.session ? `session ${String(c.session).slice(0, 8)}` : 'new session', (c.cwd ?? '~/code').replace(home, '~')];
       });
       const widths = rows[0].map((_, i) => Math.max(...rows.map(r => r[i].length)));
@@ -170,11 +184,55 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
     case 'pair': {
       if (!name) throw new OttoError('missing a name: otto bot pair <name> [--reset]');
       const c = config(name);
-      if (c.owner && !a.reset) return out(`${name} is paired (owner ${c.owner}). otto bot pair ${name} --reset pairs another account; the current one loses access.`);
-      if (c.owner) { delete c.owner; save(name, c); }
+      const tg = c.channels?.telegram;
+      if (!tg) return out(`${name} has no channel to pair (the voice needs none: only your paired phone reaches it).`);
+      if (tg.owner && !a.reset) return out(`${name} is paired (owner ${tg.owner}). otto bot pair ${name} --reset pairs another account; the current one loses access.`);
+      if (tg.owner) { delete tg.owner; save(name, c); }
       if (!reload()) return out(`${NOT_RUNNING} run otto bot pair ${name} again.`);
       const s = await waitFor(name, true);
       return s ? printPairing(out, name, s) : out(`No pairing code yet: see otto bot logs ${name}.`);
+    }
+
+    case 'voice': {
+      if (!name) throw new OttoError('missing a name: otto bot voice <name> [--provider openai-realtime|android] [--model M] [--voice V] | --off');
+      const c = config(name);
+      if (a.off) {
+        if (!c.channels[VOICE]) return out(`${name} has no voice.`);
+        if (Object.keys(c.channels).length === 1) throw new OttoError(`the voice is ${name}'s only channel: otto bot rm ${name} instead`);
+        delete c.channels[VOICE];
+        save(name, c);
+        reload();
+        return out(`${name} has no voice now; no bot is your assistant.`);
+      }
+      const provider = a.provider ?? c.channels[VOICE]?.provider ?? 'openai-realtime';
+      if (!VOICE_PROVIDERS.includes(provider)) throw new OttoError(`unknown voice provider "${provider}" (known: ${VOICE_PROVIDERS.join(', ')})`);
+      const v: Record<string, unknown> = { ...(c.channels[VOICE] ?? {}), provider };
+      if (a.model) v.model = a.model;
+      if (a.voice) v.voice = a.voice;
+      if (provider === 'openai-realtime' && (!v.apiKey || a.key)) {
+        const key = await readToken('OpenAI API key (not shown): ');
+        if (!/^sk-[\w-]{20,}$/.test(key)) throw new OttoError('that doesn\'t look like an OpenAI API key (sk-…)');
+        v.apiKey = key;
+      }
+      if (provider === 'android') delete v.apiKey;
+      // Only one bot is the assistant: the voice leaves any other bot.
+      let files: string[] = [];
+      try { files = fs.readdirSync(configDir()).filter(f => f.endsWith('.json')); } catch {}
+      for (const f of files) {
+        const other = f.replace(/\.json$/, '');
+        if (other === name) continue;
+        const o = normalize(readJson(path.join(configDir(), f)));
+        if (!o?.channels?.[VOICE]) continue;
+        delete o.channels[VOICE];
+        if (Object.keys(o.channels).length) save(other, o);
+        else fs.rmSync(configFile(other));
+        out(`${other} is no longer your assistant.`);
+      }
+      c.channels[VOICE] = v;
+      save(name, c);
+      const running = reload();
+      return out(`${name} is your assistant, with ${provider === 'android' ? 'the phone\'s own speech' : `OpenAI's realtime voice (${v.model ?? 'gpt-realtime-2.1-mini'})`}. `
+        + `On the phone: long-press the handle › Assistant.${running ? '' : `\n${NOT_RUNNING} try it.`}`);
     }
 
     case 'logs': case 'log': {

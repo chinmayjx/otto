@@ -19,7 +19,7 @@ export interface Config {
   stateFile: string;
   /** Where clips from the phone are kept (clips.ts). */
   clipsDir: string;
-  /** The voice adapter (box/voice), on this machine: the box API passes /voice/… on to it. */
+  /** The assistant's voice server (box/bots), on this machine: the box API passes /voice/… on to it. */
   voicePort: number;
 }
 

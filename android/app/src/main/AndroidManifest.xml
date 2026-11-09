@@ -23,6 +23,12 @@
     <!-- Granted once over adb: adb shell pm grant io.github.otto android.permission.READ_LOGS -->
     <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
 
+    <!-- The assistant's phone-speech mode (VoiceSpeech) has to see the speech engines. -->
+    <queries>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="false"
