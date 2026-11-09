@@ -50,8 +50,10 @@ export async function telegram(token: string, method: string, body: unknown, sig
 }
 
 export class Telegram implements Channel {
+  readonly kind = 'telegram';
   readonly label = 'Telegram';
   readonly formatting = FORMATTING;
+  readonly owned = true;
   handle: string | null = null;
   private abort = new AbortController();
   private log: (m: string) => void;

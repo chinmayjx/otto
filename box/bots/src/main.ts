@@ -1,20 +1,34 @@
 #!/usr/bin/env node
-// otto-bots: runs every bot configured in ~/.config/otto/bots/ (config.ts), each one a chat channel to one
-// long-running agent conversation (core.ts). On SIGHUP it reads the configs again: new bots start, removed ones
+// otto-bots: runs every bot configured in ~/.config/otto/bots/ (config.ts), each one long-running agent conversation
+// (core.ts) with its channels: Telegram, and on one bot, the user's assistant, Otto's voice (channels/voice), whose
+// server for the phone this also runs (on [voice] port of ~/.config/otto/config.toml, OTTO_CONFIG). On SIGHUP it reads the configs again: new bots start, removed ones
 // stop, and changed ones restart (the `otto bot` commands send it after a change). Each bot logs to the journal
 // and to its own log file, which `otto bot logs` reads.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import { parse } from 'smol-toml';
 import type { Channel } from './channel.js';
 import { Telegram } from './channels/telegram.js';
-import { type BotConfig, loadAll, pidFile, stateDir, stateRoot, update } from './config.js';
+import { Voice } from './channels/voice/index.js';
+import { notify, serveVoice } from './channels/voice/server.js';
+import { type BotConfig, configFile, load, loadAll, pidFile, save, stateDir, stateRoot, update, VOICE } from './config.js';
 import { Bot } from './core.js';
 import type { Provider } from './provider.js';
 import { claude } from './providers/claude.js';
 
-const CHANNELS: Record<string, (token: string, log: (m: string) => void) => Channel> = {
-  telegram: (token, log) => new Telegram(token, log),
+// Otto's own config: the voice server's port, and the relay's local API (for phone notifications).
+let otto: Record<string, any> = {};
+try { otto = parse(fs.readFileSync(process.env.OTTO_CONFIG || path.join(os.homedir(), '.config/otto/config.toml'), 'utf8')); } catch (e: any) {
+  if (e.code !== 'ENOENT') console.error(`config: ${e.message}`);
+}
+const VOICE_PORT: number = otto.voice?.port ?? 9336;
+const RELAY_PORT: number = otto.relay?.local_port ?? 9334;
+
+const CHANNELS: Record<string, (c: BotConfig['channels'][string], log: (m: string) => void) => Channel> = {
+  telegram: (c, log) => new Telegram(String(c.token), log),
+  [VOICE]: (c, log) => new Voice(c, { notify: text => notify(RELAY_PORT, text), log }),
 };
 const PROVIDERS: Record<string, Provider> = { claude };
 const TOOLS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tools.js');
@@ -36,20 +50,40 @@ function logger(name: string): (m: string) => void {
 /** What, when it changes, means a restart: everything but the session, which the bot writes as it goes. */
 const shape = (c: BotConfig) => JSON.stringify({ ...c, session: undefined });
 
-interface Running { bot: Bot | null; config: BotConfig; retry: NodeJS.Timeout | null }
+interface Running { bot: Bot | null; config: BotConfig; retry: NodeJS.Timeout | null; voice: Voice | null }
 const bots = new Map<string, Running>();
+
+/** The bot with the voice channel, if one is running with it. */
+function assistant() {
+  for (const [name, r] of bots) if (r.voice) return { bot: name, agent: PROVIDERS[r.config.agent ?? 'claude']?.label ?? '?', voice: r.voice };
+  return null;
+}
 
 function run(name: string, config: BotConfig) {
   const log = logger(name);
-  const r: Running = { bot: null, config, retry: null };
+  const r: Running = { bot: null, config, retry: null, voice: null };
   bots.set(name, r);
-  const channel = CHANNELS[config.channel];
   const provider = PROVIDERS[config.agent ?? 'claude'];
-  if (!channel) return log(`unknown channel "${config.channel}" (known: ${Object.keys(CHANNELS).join(', ')})`);
   if (!provider) return log(`unknown agent "${config.agent}" (known: ${Object.keys(PROVIDERS).join(', ')})`);
+  const channels: Channel[] = [];
+  for (const [kind, c] of Object.entries(config.channels)) {
+    const make = CHANNELS[kind];
+    if (!make) { log(`unknown channel "${kind}" (known: ${Object.keys(CHANNELS).join(', ')})`); continue; }
+    if (kind === VOICE) {
+      const other = assistant();
+      if (other) { log(`not taking the voice channel: ${other.bot} has it (only one bot can be the assistant)`); continue; }
+    }
+    try {
+      const ch = make(c, log);
+      channels.push(ch);
+      if (ch instanceof Voice) r.voice = ch;
+    } catch (e: any) {
+      log(`${kind}: ${e.message}`);
+    }
+  }
+  if (!channels.length) return log('no channel to run');
   const bot = new Bot({
-    name, config, provider,
-    channel: channel(config.token, log),
+    name, config, provider, channels,
     stateDir: stateDir(name),
     tools: { command: process.execPath, args: [TOOLS] },
     save: patch => (r.config = update(name, patch)),
@@ -83,7 +117,27 @@ function reload() {
   if (!configs.size) console.log('no bots configured (otto bot add <name>)');
 }
 
+/** Makes a bot the assistant: the voice channel's config moves to it from the bot that has it. */
+async function assign(name: string) {
+  const configs = loadAll();
+  const to = configs.get(name);
+  if (!to) throw new Error(`no bot "${name}"`);
+  if (to.channels[VOICE]) return;
+  const from = [...configs].find(([, c]) => c.channels[VOICE]);
+  if (!from) throw new Error('no bot has a voice yet: set one up on the box with otto bot voice <name>');
+  const [fromName, fromConfig] = from;
+  const voice = fromConfig.channels[VOICE];
+  const rest = { ...fromConfig.channels };
+  delete rest[VOICE];
+  save(name, { ...load(name), channels: { ...load(name).channels, [VOICE]: voice } });
+  if (Object.keys(rest).length) save(fromName, { ...load(fromName), channels: rest });
+  else fs.rmSync(configFile(fromName)); // a bot that was only a voice: nothing left of it
+  console.log(`the assistant is now ${name} (was ${fromName})`);
+  reload();
+}
+
 fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+serveVoice(VOICE_PORT, { assistant, bots: () => [...loadAll(() => {}).keys()], assign, log: m => console.log(m) });
 fs.writeFileSync(pidFile(), String(process.pid));
 process.on('SIGHUP', () => { console.log('reloading'); reload(); });
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {

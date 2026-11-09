@@ -14,6 +14,7 @@ import { Bot } from '../core.js';
 import type { Agent, AgentEvents, AgentOptions, Provider } from '../provider.js';
 
 class FakeChannel implements Channel {
+  constructor(public kind = 'fake', public owned = true) {}
   label = 'Fake';
   formatting = 'Markdown shows as is.';
   handle = '@fake_bot';
@@ -40,20 +41,30 @@ class FakeAgent implements Agent {
   stop() { this.running = false; }
 }
 
-function setup(config: Partial<BotConfig> = {}) {
+function setup({ owner, voice, ...config }: Partial<BotConfig> & { owner?: Id; voice?: boolean } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-bots-test-'));
   const channel = new FakeChannel();
+  const speaker = new FakeChannel('speaker', false);
   let agent!: FakeAgent;
   const provider: Provider = { label: 'Agent', toolName: t => `x_${t}`, create: (o, e) => (agent = new FakeAgent(o, e)) };
-  let file: BotConfig = { channel: 'fake', token: 't', ...config };
+  let file: BotConfig = { channels: { fake: { token: 't', ...(owner !== undefined ? { owner } : {}) }, ...(voice ? { speaker: {} } : {}) }, ...config };
   const logs: string[] = [];
   const bot = new Bot({
-    name: 'test', config: file, channel, provider, stateDir: dir, tools: { command: 'node', args: [] },
-    save: patch => (file = { ...file, ...patch }), log: m => logs.push(m), typingEvery: 20,
+    name: 'test', config: file, channels: voice ? [channel, speaker] : [channel], provider, stateDir: dir, tools: { command: 'node', args: [] },
+    save: patch => {
+      const channels = { ...file.channels };
+      for (const [k, v] of Object.entries(patch.channels ?? {})) channels[k] = { ...channels[k], ...v };
+      return (file = { ...file, ...patch, channels });
+    },
+    log: m => logs.push(m), typingEvery: 20,
   });
-  const msg = (text: string, from: Id = 42, attachments: Incoming['attachments'] = []) => bot.onMessage({ chat: 7, from, text, attachments });
-  return { dir, channel, bot, msg, logs, agent: () => agent, file: () => file };
+  const msg = (text: string, from: Id = 42, attachments: Incoming['attachments'] = []) => bot.onMessage('fake', { chat: 7, from, text, attachments });
+  const said = (text: string, record = false) => bot.onMessage('speaker', { chat: 'user', from: 'user', text, attachments: [], record });
+  return { dir, channel, speaker, bot, msg, said, logs, agent: () => agent, file: () => file };
 }
+
+/** A message as the agent gets it. */
+const w = (text: string, kind = 'fake') => `<message channel="${kind}">\n${text}\n</message>`;
 
 const status = (dir: string) => JSON.parse(fs.readFileSync(path.join(dir, 'status.json'), 'utf8'));
 
@@ -83,14 +94,14 @@ test('an unowned bot pairs with whoever sends its code, and then answers only th
   await t.msg('hello', 1);
   assert.equal(t.channel.sent.length, 0);
   await t.msg(`/start ${s.pair.code}`, 42);
-  assert.equal(t.file().owner, 42);
+  assert.equal(t.file().channels.fake.owner, 42);
   assert.match(t.channel.texts()[0]!, /^Paired/);
   assert.equal(status(t.dir).pair, null);
 
   await t.msg('from someone else', 1);
   assert.equal(t.agent().writes.length, 0);
   await t.msg('from the owner');
-  assert.deepEqual(t.agent().writes, ['from the owner']);
+  assert.deepEqual(t.agent().writes, [w('from the owner')]);
   t.bot.stop();
 });
 
@@ -98,7 +109,8 @@ test('the instructions name the tools the agent\'s way, and the tools get the so
   const t = setup({ owner: 42, cwd: '/tmp' });
   const o = t.agent().options;
   assert.match(o.instructions, /x_send_message/);
-  assert.match(o.instructions, /a Fake bot/);
+  assert.match(o.instructions, /- fake \(Fake\): Markdown shows as is/);
+  assert.equal(o.tools.env.OTTO_BOT_CHANNELS, '[{"kind":"fake","label":"Fake"}]');
   assert.equal(o.tools.env.OTTO_BOT_SOCKET, path.join(t.dir, 'tools.sock'));
   assert.equal(o.cwd, '/tmp');
   assert.equal(o.permissionMode, 'auto');
@@ -110,7 +122,7 @@ test('a turn that replies ends quietly; a message during a turn steers it', asyn
   await t.bot.start();
   await t.msg('first');
   await t.msg('and also');
-  assert.deepEqual(t.agent().writes, ['first', 'and also']);
+  assert.deepEqual(t.agent().writes, [w('first'), w('and also')]);
   assert.equal(t.agent().starts, 1);
   await new Promise(r => setTimeout(r, 50));
   assert.ok(t.channel.typings >= 2, 'typing while busy');
@@ -132,7 +144,7 @@ test('a turn that sends nothing is reminded once, then the user gets a notice', 
   await t.msg('hi');
   t.agent().events.result({ error: false, text: '' });
   assert.equal(t.agent().writes.length, 2);
-  assert.match(t.agent().writes[1], /From the bot, not the user/);
+  assert.match(t.agent().writes[1], /From the bot, not the user: you ended your turn without replying on fake/);
   t.agent().events.result({ error: false, text: 'I said it in plain text' });
   assert.deepEqual(t.channel.texts(), ["⚠️ Otto didn't reply.\nIts last words: I said it in plain text"]);
   t.bot.stop();
@@ -183,16 +195,17 @@ test('attachments are saved and their paths handed to the agent', async () => {
   const att = (kind: 'photo' | 'file', name: string) => ({ kind, name, download: async (dir: string) => path.join(dir, name) });
   await t.msg('look', 42, [att('photo', 'p.jpg'), att('file', 'a.pdf')]);
   const w = t.agent().writes[0];
-  assert.match(w, /^look\n\n\[The user sent a photo, saved at .*files\/p\.jpg\. Look at it with the Read tool\.\]/);
-  assert.match(w, /\[The user sent a file, saved at .*files\/a\.pdf\.\]$/);
+  assert.match(w, /^<message channel="fake">\nlook\n\n\[The user sent a photo, saved at .*files\/p\.jpg\. Look at it with the Read tool\.\]/);
+  assert.match(w, /\[The user sent a file, saved at .*files\/a\.pdf\.\]\n<\/message>$/);
   t.bot.stop();
 });
 
-test('the socket: refused before a chat, bad requests, files; only this user can open it', async () => {
+test('the socket: to the owner before they write, bad requests, files; only this user can open it', async () => {
   const t = setup({ owner: 42 });
   await t.bot.start();
   assert.equal((fs.statSync(path.join(t.dir, 'tools.sock')).mode & 0o777), 0o600);
-  assert.deepEqual(await tool(t.dir, { kind: 'message', text: 'x' }), { status: 400, text: 'no chat yet' });
+  assert.deepEqual(await tool(t.dir, { kind: 'message', text: 'x' }), { status: 200, text: 'sent' });
+  assert.deepEqual(t.channel.sent.at(-1), { chat: 42, text: 'x' });
   await t.msg('hi');
   assert.equal((await tool(t.dir, { kind: 'nope' })).status, 400);
   assert.equal((await tool(t.dir, { kind: 'file', path: '/tmp/a.png' })).status, 200);
@@ -205,7 +218,7 @@ test('the tools server speaks MCP and forwards calls to the socket', async () =>
   await t.bot.start();
   await t.msg('hi');
   const tools = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'tools.js');
-  const p = spawn(process.execPath, [tools], { env: { ...process.env, OTTO_BOT_SOCKET: path.join(t.dir, 'tools.sock'), OTTO_BOT_CHANNEL: 'Fake' } });
+  const p = spawn(process.execPath, [tools], { env: { ...process.env, OTTO_BOT_SOCKET: path.join(t.dir, 'tools.sock'), OTTO_BOT_CHANNELS: '[{"kind":"fake","label":"Fake"}]' } });
   const replies: any[] = [];
   let buf = '';
   p.stdout.on('data', d => { buf += d; let n; while ((n = buf.indexOf('\n')) >= 0) { replies.push(JSON.parse(buf.slice(0, n))); buf = buf.slice(n + 1); } });
@@ -221,10 +234,47 @@ test('the tools server speaks MCP and forwards calls to the socket', async () =>
   const by = (id: number) => replies.find(r => r.id === id);
   assert.equal(by(1).result.serverInfo.name, 'otto-bot');
   assert.deepEqual(by(2).result.tools.map((x: any) => x.name), ['send_message', 'send_file']);
-  assert.match(by(2).result.tools[0].description, /on Fake/);
+  assert.match(by(2).result.tools[0].description, /fake \(Fake\)/);
+  assert.deepEqual(by(2).result.tools[0].inputSchema.required, ['text'], 'one channel: no need to name it');
   assert.equal(by(3).result.content[0].text, 'sent');
   assert.ok(t.channel.texts().includes('from the tool'));
   assert.equal(by(4).result.isError, undefined, 'the fake channel takes any path; Telegram checks it');
   assert.equal(by(5).error.code, -32601);
+  t.bot.stop();
+});
+
+test('two channels: messages tagged, replies by channel, each channel answered, records ride along', async () => {
+  const t = setup({ owner: 42, voice: true });
+  await t.bot.start();
+  assert.match(t.agent().options.instructions, /- speaker \(Fake\)/);
+  assert.equal(t.speaker.commands.length, 0, 'commands only where they can be typed');
+  assert.equal(status(t.dir).owned, true, 'the unowned channel needs no pairing');
+
+  await t.said('small talk', true);
+  assert.equal(t.agent().writes.length, 0, 'a record starts no turn');
+  await t.said('/new');
+  assert.deepEqual(t.agent().writes, [`${w('small talk', 'speaker')}\n\n${w('/new', 'speaker')}`], 'no commands on a voice');
+  await t.msg('and on chat');
+  assert.equal(t.agent().writes[1], w('and on chat'));
+
+  assert.equal((await tool(t.dir, { kind: 'message', text: 'which?' })).text, 'name the channel: fake or speaker');
+  assert.equal((await tool(t.dir, { kind: 'message', channel: 'nope', text: 'x' })).status, 400);
+  assert.equal((await tool(t.dir, { kind: 'message', channel: 'speaker', text: 'heard you' })).status, 200);
+  assert.deepEqual(t.speaker.texts(), ['heard you']);
+  t.agent().events.result({ error: false, text: '' });
+  assert.match(t.agent().writes.at(-1)!, /without replying on fake, and/, 'reminded about the channel left unanswered only');
+  t.agent().events.result({ error: false, text: '' });
+  assert.deepEqual(t.channel.texts(), ["⚠️ Otto didn't reply."]);
+  assert.deepEqual(t.speaker.texts(), ['heard you']);
+  await new Promise(r => setTimeout(r, 30));
+  t.bot.stop();
+});
+
+test('a telegram reply goes to the owner even before they write after a restart', async () => {
+  const t = setup({ owner: 42, voice: true });
+  await t.bot.start();
+  await t.said('send it to my chat');
+  assert.equal((await tool(t.dir, { kind: 'message', channel: 'fake', text: 'here' })).status, 200);
+  assert.deepEqual(t.channel.sent.at(-1), { chat: 42, text: 'here' });
   t.bot.stop();
 });

@@ -1,9 +1,10 @@
-// A bot: one channel, one agent conversation, one owner. The core decides who may talk to the bot (pairing, then
-// the owner only), handles its commands, and passes every other message to the agent: while a turn runs it steers
-// that turn, while the agent is idle it starts one. The agent answers only through the bot's tools (tools.ts), which
-// reach the core over a unix socket only this user can open; a turn that ends without sending the user anything is
-// reminded once, then the user gets a notice. Channel- and agent-neutral: those are behind channel.ts and
-// provider.ts.
+// A bot: one agent conversation, reached through one or more channels (Telegram, Otto's voice). The core decides who
+// may talk to the bot (on a channel anyone can find, pairing, then the owner only), handles its commands, and passes
+// every other message to the agent, tagged with its channel: while a turn runs it steers that turn, while the agent
+// is idle it starts one. The agent answers only through the bot's tools (tools.ts), naming the channel, which reach
+// the core over a unix socket only this user can open. A turn that got a message on a channel and sent nothing back
+// there is reminded once, then the user gets a notice on it. Channel- and agent-neutral: those are behind channel.ts
+// and provider.ts.
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -17,7 +18,8 @@ import type { Agent, Provider } from './provider.js';
 export interface BotOptions {
   name: string;
   config: BotConfig;
-  channel: Channel;
+  /** The bot's channels, one of each kind. */
+  channels: Channel[];
   provider: Provider;
   /** Where the bot keeps its socket, the files the user sends, and its status for the CLI. */
   stateDir: string;
@@ -36,28 +38,39 @@ const COMMANDS = [
   { command: 'status', description: 'Session and state' },
 ];
 
-const REMINDER = '[From the bot, not the user: you ended your turn without sending the user anything, and they see '
-  + 'only what you send with send_message. Reply to them now with send_message.]';
+const reminder = (kinds: string[]) => `[From the bot, not the user: you ended your turn without replying on ${kinds.join(' and ')}, `
+  + 'and the user sees only what you send with send_message. Reply to them there now with send_message.]';
 
-function instructions(channel: Channel, tool: (t: string) => string): string {
+/** One channel of the bot, and where its replies go. */
+interface Link {
+  channel: Channel;
+  /** The chat the owner last wrote from (a private chat's id is the owner's own, so that's the default). */
+  chat: Id | null;
+  pairCode: string | null;
+}
+
+function instructions(links: Link[], tool: (t: string) => string): string {
+  const kinds = links.map(l => l.channel.kind);
   return [
-    `You are talking with the user through a ${channel.label} bot on their phone.`,
+    `You are the user's assistant. They reach you from their phone, through ${links.length > 1 ? 'these channels' : 'this channel'}, all one conversation with you:`,
+    ...links.map(l => `- ${l.channel.kind} (${l.channel.label}): ${l.channel.formatting}`),
+    `Each message from the user comes wrapped as <message channel="${kinds[0]}">…</message>, naming its channel.`,
     `The user sees only what you send with the send_message and send_file tools (${tool('send_message')},`,
-    `${tool('send_file')}); your plain text is not shown. Every message from the user needs at least one send_message`,
-    'back. For work that takes more than a moment, send a short heads-up first, then the result. New messages from',
-    'the user can arrive while you work: take them into account as you go. Attach files you make with send_file.',
-    'Keep messages short and easy to read on a phone: plain sentences, short lists.',
-    channel.formatting,
+    `${tool('send_file')}), on the channel you name; your plain text is not shown. Every message from the user needs at`,
+    'least one send_message back on the channel it came from. For work that takes more than a moment, send a short',
+    'heads-up first, then the result. New messages can arrive while you work, from any channel: take them into account',
+    'as you go. Attach files you make with send_file. Keep messages short and easy to read on a phone: plain',
+    'sentences, short lists.',
     'For anything long or visual (a report, a table, a plan, a page), publish an artifact with `otto artifact publish`',
     'and send a short summary and its link.',
-  ].join(' ');
+  ].join('\n');
 }
 
 export class Bot {
   readonly name: string;
   config: BotConfig;
   readonly cwd: string;
-  private channel: Channel;
+  private links = new Map<string, Link>();
   private agent: Agent;
   private dir: string;
   private socket: string;
@@ -66,30 +79,39 @@ export class Bot {
   private opts: BotOptions;
   private agentLabel: string;
 
-  private pairCode: string | null = null;
-  private chat: Id | null = null; // where the agent's messages go: the owner's chat
   private busy = false; // a turn is in progress
-  private sent = false; // the turn in progress has sent the user something
+  private asked = new Set<string>(); // the channels the turn in progress got messages from
+  private answered = new Set<string>(); // the channels it has sent something on
   private reminded = false; // the turn in progress was reminded to reply
+  private last: string; // the channel of the latest message
+  private records: string[] = []; // for the record, in front of the next message
   private typing: NodeJS.Timeout | null = null;
 
   constructor(o: BotOptions) {
     this.opts = o;
     this.name = o.name;
     this.config = o.config;
-    this.channel = o.channel;
+    for (const channel of o.channels) {
+      const owner = o.config.channels[channel.kind]?.owner;
+      this.links.set(channel.kind, { channel, chat: channel.owned ? owner ?? null : 'user', pairCode: null });
+    }
+    this.last = o.channels[0].kind;
     this.dir = o.stateDir;
     this.socket = path.join(o.stateDir, 'tools.sock');
     this.log = o.log;
     this.cwd = o.config.cwd || path.join(os.homedir(), 'code');
     this.agentLabel = o.provider.label;
+    const links = [...this.links.values()];
     this.agent = o.provider.create({
       cwd: this.cwd,
       session: () => this.config.session,
       permissionMode: o.config.permissionMode || 'auto',
       model: o.config.model,
-      instructions: instructions(o.channel, t => o.provider.toolName(t)),
-      tools: { ...o.tools, env: { OTTO_BOT_SOCKET: this.socket, OTTO_BOT_CHANNEL: o.channel.label } },
+      instructions: instructions(links, t => o.provider.toolName(t)),
+      tools: { ...o.tools, env: {
+        OTTO_BOT_SOCKET: this.socket,
+        OTTO_BOT_CHANNELS: JSON.stringify(links.map(l => ({ kind: l.channel.kind, label: l.channel.label }))),
+      } },
       // The agent's `otto` commands (the phone's browser, …) get a session of their own.
       env: { OTTO_SESSION: `bot-${o.name}`, OTTO_SESSION_TITLE: `${o.name} bot` },
     }, {
@@ -98,28 +120,36 @@ export class Bot {
       result: r => this.ended(r),
       exit: (code, err) => {
         const was = this.busy;
+        const kinds = [...this.asked];
         this.finish();
         this.log(`${this.agentLabel} exited (${code})${was ? ' mid-turn' : ''}`);
-        if (was && code !== null && code !== 143) this.say(`⚠️ ${this.agentLabel} stopped (exit ${code}).\n${err.slice(-1500)}`);
+        if (was && code !== null && code !== 143) this.say(`⚠️ ${this.agentLabel} stopped (exit ${code}).\n${err.slice(-1500)}`, kinds);
       },
     });
   }
 
+  /** The channels' kinds. */
+  get kinds(): string[] { return [...this.links.keys()]; }
+
   async start(): Promise<void> {
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     await this.listen();
-    await this.channel.start(m => this.onMessage(m).catch(e => this.log(`message: ${e.stack ?? e}`)));
-    await this.channel.setCommands(COMMANDS).catch(e => this.log(`commands: ${e.message}`));
-    if (!this.config.owner) {
-      this.pairCode = randomBytes(4).toString('hex');
-      this.log(`unowned: send "/start ${this.pairCode}" to ${this.channel.handle ?? 'the bot'} to claim it`);
+    for (const [kind, l] of this.links) {
+      await l.channel.start(m => this.onMessage(kind, m).catch(e => this.log(`message: ${e.stack ?? e}`)));
+      if (!l.channel.owned) continue;
+      await l.channel.setCommands(COMMANDS).catch(e => this.log(`commands: ${e.message}`));
+      if (!this.config.channels[kind]?.owner) {
+        l.pairCode = randomBytes(4).toString('hex');
+        this.log(`${kind} unowned: send "/start ${l.pairCode}" to ${l.channel.handle ?? 'the bot'} to claim it`);
+      }
     }
     this.writeStatus();
-    this.log(`${this.channel.label} ${this.channel.handle ?? ''}: polling; folder ${this.cwd}; session ${this.config.session || '(new)'}`);
+    const on = [...this.links.values()].map(l => `${l.channel.label}${l.channel.handle ? ` ${l.channel.handle}` : ''}`).join(', ');
+    this.log(`${on}: up; folder ${this.cwd}; session ${this.config.session || '(new)'}`);
   }
 
   stop(): void {
-    this.channel.stop();
+    for (const l of this.links.values()) l.channel.stop();
     this.agent.stop();
     this.finish();
     this.server?.close();
@@ -129,41 +159,54 @@ export class Bot {
     fs.rmSync(path.join(this.dir, 'status.json'), { force: true });
   }
 
-  /** What the CLI shows: the bot's name on the channel, and while unowned, its pairing code and link. */
+  /** What the CLI shows: each channel's name for the bot, and while one is unowned, its pairing code and link. */
   private writeStatus() {
-    const pair = this.pairCode ? { code: this.pairCode, link: this.channel.pairLink(this.pairCode) } : null;
-    writePrivate(path.join(this.dir, 'status.json'), JSON.stringify({ handle: this.channel.handle, pid: process.pid, owned: !!this.config.owner, pair }, null, 2));
+    const channels = [...this.links].map(([kind, l]) => ({
+      kind, handle: l.channel.handle, owned: !l.channel.owned || !!this.config.channels[kind]?.owner,
+      pair: l.pairCode ? { code: l.pairCode, link: l.channel.pairLink(l.pairCode) } : null,
+    }));
+    const first = channels.find(c => c.pair) ?? channels[0];
+    writePrivate(path.join(this.dir, 'status.json'), JSON.stringify({
+      handle: first.handle, pid: process.pid, owned: channels.every(c => c.owned), pair: first.pair, channels,
+    }, null, 2));
   }
 
   // --- Messages ----------------------------------------------------------------------------------------------------
 
-  async onMessage(m: Incoming): Promise<void> {
+  async onMessage(kind: string, m: Incoming): Promise<void> {
+    const l = this.links.get(kind);
+    if (!l) return;
+    const ch = l.channel;
     const text = m.text.replace(/^(\/\w+)@\w+/, '$1'); // "/new@some_bot", as group chats send commands
-    if (!this.config.owner) {
-      if (this.pairCode && text === `/start ${this.pairCode}`) {
-        this.config = this.opts.save({ owner: m.from });
-        this.pairCode = null;
-        this.writeStatus();
-        this.log(`paired with ${m.from}`);
-        await this.channel.send(m.chat, `Paired. This bot is a ${this.agentLabel} conversation on your box: just write.`);
+    if (ch.owned) {
+      const owner = this.config.channels[kind]?.owner;
+      if (!owner) {
+        if (l.pairCode && text === `/start ${l.pairCode}`) {
+          this.config = this.opts.save({ channels: { [kind]: { owner: m.from } } });
+          l.pairCode = null;
+          this.writeStatus();
+          this.log(`${kind} paired with ${m.from}`);
+          await ch.send(m.chat, `Paired. This bot is a ${this.agentLabel} conversation on your box: just write.`);
+        }
+        return;
       }
-      return;
-    }
-    if (String(m.from) !== String(this.config.owner)) return; // anyone else: silence
+      if (String(m.from) !== String(owner)) return; // anyone else: silence
 
-    if (text === '/new' || text === '/stop') {
-      const was = this.agent.running;
-      this.agent.stop();
-      this.finish();
-      if (text === '/new') {
-        this.config = this.opts.save({ session: null });
-        return this.channel.send(m.chat, '🆕 New conversation.');
+      if (text === '/new' || text === '/stop') {
+        const was = this.agent.running;
+        this.agent.stop();
+        this.finish();
+        if (text === '/new') {
+          this.config = this.opts.save({ session: null });
+          this.records = [];
+          return ch.send(m.chat, '🆕 New conversation.');
+        }
+        return ch.send(m.chat, was ? '⏹ Stopped.' : 'Nothing running.');
       }
-      return this.channel.send(m.chat, was ? '⏹ Stopped.' : 'Nothing running.');
-    }
-    if (text === '/status') {
-      const state = this.busy ? 'Working' : this.agent.running ? 'Idle' : 'Not running';
-      return this.channel.send(m.chat, `Session: ${this.config.session || '(new)'}\nFolder: ${this.cwd}\n${state}`);
+      if (text === '/status') {
+        const state = this.busy ? 'Working' : this.agent.running ? 'Idle' : 'Not running';
+        return ch.send(m.chat, `Session: ${this.config.session || '(new)'}\nFolder: ${this.cwd}\n${state}`);
+      }
     }
 
     let prompt = m.text;
@@ -174,23 +217,36 @@ export class Bot {
         : `\n\n[The user sent a file, saved at ${saved}.]`;
     }
     if (!prompt.trim()) return;
-    this.chat = m.chat;
+    l.chat = m.chat;
+    const wrapped = `<message channel="${kind}">\n${prompt}\n</message>`;
+    if (m.record) {
+      this.records.push(wrapped);
+      return;
+    }
+    this.last = kind;
     if (!this.busy) this.begin(); // otherwise it steers the turn in progress
-    this.agent.write(prompt);
+    this.asked.add(kind);
+    this.ping();
+    this.agent.write([...this.records.splice(0), wrapped].join('\n\n'));
   }
 
   // --- Turns -------------------------------------------------------------------------------------------------------
 
   private begin() {
     this.busy = true;
-    this.sent = false;
+    this.asked.clear();
+    this.answered.clear();
     this.reminded = false;
     if (this.typing) clearInterval(this.typing);
-    const chat = this.chat;
-    if (chat === null) return;
-    const ping = () => { this.channel.typing(chat).catch(() => {}); };
-    ping();
-    this.typing = setInterval(ping, this.opts.typingEvery ?? 4500);
+    this.typing = setInterval(() => this.ping(), this.opts.typingEvery ?? 4500);
+  }
+
+  /** The typing indicator, on each channel the turn has a message from (or the latest, for a turn of its own). */
+  private ping() {
+    for (const kind of this.asked.size ? this.asked : [this.last]) {
+      const l = this.links.get(kind);
+      if (l?.chat != null) l.channel.typing(l.chat).catch(() => {});
+    }
   }
 
   private finish() {
@@ -199,30 +255,48 @@ export class Bot {
     this.typing = null;
   }
 
-  /** The end of a turn. One that sent the user nothing is reminded once, then the user gets a notice. */
+  /** The end of a turn. One that left a channel unanswered is reminded once, then the user gets a notice there. */
   private ended(r: { error: boolean; text: string }) {
+    const asked = this.asked.size ? [...this.asked] : [this.last];
     if (r.error) {
       this.finish();
-      return this.say(`⚠️ ${(r.text || `${this.agentLabel} failed`).slice(-1500)}`);
+      return this.say(`⚠️ ${(r.text || `${this.agentLabel} failed`).slice(-1500)}`, asked);
     }
-    if (this.sent) return this.finish();
+    // A turn of its own (no message started it) only has to have said something somewhere.
+    const missing = this.asked.size ? asked.filter(k => !this.answered.has(k)) : this.answered.size ? [] : asked;
+    if (!missing.length) return this.finish();
     if (!this.reminded) {
       this.reminded = true;
-      return this.agent.write(REMINDER);
+      return this.agent.write(reminder(missing));
     }
     this.finish();
     const last = r.text.trim();
-    this.say(`⚠️ Otto didn't reply.${last ? `\nIts last words: ${last.slice(0, 1500)}` : ''}`);
+    this.say(`⚠️ Otto didn't reply.${last ? `\nIts last words: ${last.slice(0, 1500)}` : ''}`, missing);
   }
 
-  private say(text: string) {
-    if (this.chat !== null) this.channel.send(this.chat, text).catch(e => this.log(`send: ${e.message}`));
+  private say(text: string, kinds: string[] = [this.last]) {
+    for (const kind of kinds) {
+      const l = this.links.get(kind);
+      if (l?.chat != null) l.channel.send(l.chat, text).catch(e => this.log(`send on ${kind}: ${e.message}`));
+    }
   }
 
   // --- The tools' socket -------------------------------------------------------------------------------------------
 
-  // The tools' requests (tools.ts): {kind: "message", text} or {kind: "file", path, caption?}, sent to the owner's
-  // chat. The socket is this user's alone (0600, in a 0700 folder).
+  /** The channel a tool call names, or the one it means when it names none. */
+  private target(kind: unknown): Link {
+    if (typeof kind === 'string' && kind) {
+      const l = this.links.get(kind);
+      if (!l) throw new Error(`no channel "${kind}" (this bot has ${this.kinds.join(', ')})`);
+      return l;
+    }
+    if (this.links.size === 1) return [...this.links.values()][0];
+    if (this.asked.size === 1) return this.links.get([...this.asked][0])!;
+    throw new Error(`name the channel: ${this.kinds.join(' or ')}`);
+  }
+
+  // The tools' requests (tools.ts): {kind: "message", channel, text} or {kind: "file", channel, path, caption?}, sent
+  // to the owner's chat on that channel. The socket is this user's alone (0600, in a 0700 folder).
   private listen(): Promise<void> {
     fs.rmSync(this.socket, { force: true });
     const server = http.createServer((req, res) => {
@@ -231,11 +305,12 @@ export class Bot {
       req.on('end', async () => {
         try {
           const m = JSON.parse(body);
-          if (this.chat === null) throw new Error('no chat yet');
-          if (m.kind === 'message') await this.channel.send(this.chat, String(m.text ?? ''));
-          else if (m.kind === 'file') await this.channel.sendFile(this.chat, String(m.path ?? ''), m.caption);
+          const l = this.target(m.channel);
+          if (l.chat === null) throw new Error('no chat yet');
+          if (m.kind === 'message') await l.channel.send(l.chat, String(m.text ?? ''));
+          else if (m.kind === 'file') await l.channel.sendFile(l.chat, String(m.path ?? ''), m.caption);
           else throw new Error('unknown kind');
-          this.sent = true;
+          this.answered.add(l.channel.kind);
           res.writeHead(200).end('sent');
         } catch (e: any) {
           res.writeHead(400).end(e.message);
