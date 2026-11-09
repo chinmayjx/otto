@@ -9,8 +9,6 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import org.json.JSONObject
 import kotlin.math.abs
@@ -20,10 +18,9 @@ import kotlin.math.sin
  * A call with the assistant through the phone's own speech (box/bots' otto_voice channel with the "android"
  * provider): Android's speech recognizer listens in a loop and what it hears goes to the box, and the assistant's
  * words come back as events, said with text-to-speech. While it speaks, the recognizer rests, so it doesn't hear
- * itself; instead a microphone of its own listens while it speaks (BargeIn), and the user talking over it, clearly
- * louder than the phone's own voice coming back, stops it and hands back to the recognizer. The speech plays as
- * normal media, at full quality (the call path would give the echo canceller its reference, but sounds like a
- * phone call). A tap on the pill stops it too.
+ * itself; instead a microphone of its own listens while it speaks (BargeIn), through an echo canceller fed with
+ * what the phone is playing (Speaker renders the speech and plays it itself, as normal media, at full quality), and
+ * the user talking over it stops it and hands back to the recognizer. A tap on the pill stops it too.
  *
  * Not every scrap goes: a result the recognizer isn't sure of, or a single word that isn't an answer ("so",
  * a cough heard as "the"), is dropped; and pieces are held for a moment and joined, so a pause doesn't cut a
@@ -43,33 +40,19 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
     private val main = Handler(Looper.getMainLooper())
     private var recognizer: SpeechRecognizer? = null
     private var listening = false
-    private var tts: TextToSpeech? = null
-    private var ttsReady = false
-    private val waiting = ArrayList<String>() // words that came before text-to-speech was ready
-    private var pending = 0 // utterances queued or being said
+    private var speaker: Speaker? = null
     private var session: String? = null
     private var poll: VoiceEvents? = null
     private val said = StringBuilder() // heard, waiting a moment for the rest of the sentence
     private val flush = Runnable { send() }
     private var barge: BargeIn? = null
+    private var echo: BargeIn.State? = null // the echo canceller, learned once per call
     private val audio = ctx.getSystemService(android.media.AudioManager::class.java)
     private var hushed = false // the recognizer's beeps' streams are muted
 
     override fun start() {
         main.post {
-            tts = TextToSpeech(ctx) { status ->
-                Log.i(TAG, "text-to-speech: $status")
-                main.post {
-                    ttsReady = status == TextToSpeech.SUCCESS
-                    if (!ttsReady) return@post fail("Text-to-speech isn't available on this phone")
-                    waiting.forEach(::say)
-                    waiting.clear()
-                }
-            }.apply {
-                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                setOnUtteranceProgressListener(progress)
-            }
+            speaker = Speaker(ctx, { on -> main.post { spoke(on) } }, { m -> main.post { fail(m) } })
         }
         Thread({
             try {
@@ -110,10 +93,12 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         main.post {
             recognizer?.destroy()
             recognizer = null
-            tts?.stop()
-            tts?.shutdown()
-            tts = null
+            speaker?.close()
+            speaker = null
             stopBarge()
+            // The listener lets go of the canceller within a frame or two.
+            echo?.let { e -> main.postDelayed({ e.close() }, 500) }
+            echo = null
             quiet(false)
             micLevel = 0f
             speaking = false
@@ -228,15 +213,28 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
     // --- Speaking (main thread) ----------------------------------------------------------------------------------
 
     private fun say(text: String) {
+        val s = speaker ?: return
         if (ended) return
-        val t = tts
-        if (t == null || !ttsReady) { waiting.add(text); return }
-        pending++
-        speaking = true
         rest()
         quiet(false)
-        t.speak(text, TextToSpeech.QUEUE_ADD, null, "otto-${System.nanoTime()}")
-        if (barge == null && !muted) barge = BargeIn { main.post { if (speaking) { Log.i(TAG, "barge-in"); hush() } } }
+        s.say(text)
+    }
+
+    /** The speaker started or finished: listen over it for the user (BargeIn), or go back to the recognizer. */
+    private fun spoke(on: Boolean) {
+        if (ended) return
+        if (on) {
+            speaking = true
+            rest()
+            val state = echo ?: BargeIn.State().also { echo = it }
+            if (barge == null && !muted) barge = BargeIn(state, { speaker?.reference(it) ?: it.fill(0) }) {
+                main.post { if (speaking) { Log.i(TAG, "barge-in"); hush() } }
+            }
+        } else {
+            speaking = false
+            stopBarge()
+            main.postDelayed({ listen() }, 150)
+        }
     }
 
     /** A tap on the pill while it talks: stop, and listen. */
@@ -244,8 +242,7 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
 
     /** Stops talking and listens (the microphone a moment later, once the barge-in listener has let go of it). */
     private fun hush() {
-        tts?.stop()
-        pending = 0
+        speaker?.stop()
         speaking = false
         stopBarge()
         main.postDelayed({ listen() }, 150)
@@ -254,21 +251,6 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
     private fun stopBarge() {
         barge?.stop()
         barge = null
-    }
-
-    private val progress = object : UtteranceProgressListener() {
-        override fun onStart(utteranceId: String?) {}
-        override fun onDone(utteranceId: String?) = main.post { done() }.let {}
-        @Deprecated("Deprecated in Java")
-        override fun onError(utteranceId: String?) = main.post { done() }.let {}
-    }
-
-    private fun done() {
-        pending = (pending - 1).coerceAtLeast(0)
-        if (pending > 0) return
-        speaking = false
-        stopBarge()
-        main.postDelayed({ listen() }, 150)
     }
 
     companion object {

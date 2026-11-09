@@ -1,0 +1,1 @@
+speexdsp from https://github.com/xiph/speexdsp at 7a15878: the echo canceller (mdf.c) and preprocessor, with Kiss FFT, float build. BSD licence (COPYING).

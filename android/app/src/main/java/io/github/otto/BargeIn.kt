@@ -4,22 +4,29 @@ import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
-import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import kotlin.math.max
 import kotlin.math.sqrt
 
 /**
- * Listens while the phone talks (VoiceSpeech's text-to-speech), for the user talking over it. The microphone is
- * opened as for a call (VOICE_COMMUNICATION, with the noise suppressor, and the echo canceller where the phone
- * applies one to media too). The phone's own voice still comes back, so it's measured first: from when sound
- * starts, for 0.6 s, its loudest is the echo's level. After that, only sound well above it, held for a quarter of
- * a second, counts as the user. Then [heard] runs, once, on this thread.
+ * Listens while the phone talks (Speaker), for the user talking over it. The microphone, with as little processing
+ * as the phone allows (VOICE_RECOGNITION), goes through an echo canceller (Echo) fed with what the phone is
+ * playing at that moment ([reference]), which takes the phone's own voice out; what's left is the room and the
+ * user. The canceller needs a moment to learn the echo, so nothing counts until it's taking most of it out (the
+ * average of what's left, against what came in, under [WORKING]). Then sound it can't take out, clearly above the
+ * room and held for a quarter of a second, counts as the user: [heard] runs, once, on this thread. If it never
+ * learns the echo, the user can't talk over it, but the phone never stops itself.
  *
- * [level] is the microphone's loudness for the pill, 0 to 1.
+ * [level] is the microphone's loudness (after the echo is taken out) for the pill, 0 to 1.
  */
-class BargeIn(private val heard: () -> Unit) {
+class BargeIn(private val state: State, private val reference: (ShortArray) -> Unit, private val heard: () -> Unit) {
+    /** What's learned of the echo, kept for the whole call: after the first reply or so, the next ones start ready. */
+    class State : AutoCloseable {
+        internal val echo = Echo(FRAME, TAIL, RATE)
+        @Volatile internal var ratio = 1.0 // what's left of the phone's voice, on average (1: nothing taken out yet)
+        override fun close() = echo.close()
+    }
+
     @Volatile var level = 0f; private set
     @Volatile private var running = true
     private val thread = Thread(::run, "barge-in").apply { start() }
@@ -33,61 +40,73 @@ class BargeIn(private val heard: () -> Unit) {
     private fun run() {
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val rec = try {
-            AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, RATE, AudioFormat.CHANNEL_IN_MONO,
+            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE, AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, max(min, FRAME * 8))
         } catch (e: Exception) {
             Log.w(TAG, "no microphone: $e")
             return
         }
-        val aec = if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(rec.audioSessionId)?.apply { enabled = true } else null
-        val ns = if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(rec.audioSessionId)?.apply { enabled = true } else null
+        val echo = state.echo
         try {
             rec.startRecording()
-            Log.i(TAG, "listening over the voice (echo canceller ${aec?.enabled ?: "none"})")
-            val buf = ShortArray(FRAME)
+            val mic = ShortArray(FRAME)
+            val ref = ShortArray(FRAME)
+            val out = ShortArray(FRAME)
             var frames = 0
-            var echo = 0.0 // the loudest the phone's own voice came through, while learning
-            var peak = 0.0 // the loudest after that, for the log
-            var loud = 0 // frames in a row above the bar
+            var loud = 0 // frames in a row that count as the user
+            var micSum = 0.0
+            var outSum = 0.0 // for the log: how much the canceller took out
+            var ratio = state.ratio
+            var armed = ratio < WORKING
             while (running) {
-                val n = rec.read(buf, 0, FRAME)
-                if (n <= 0) continue
-                var sum = 0.0
-                for (i in 0 until n) sum += buf[i].toDouble() * buf[i]
-                val rms = sqrt(sum / n) / 32768.0
-                level = minOf(1.0, sqrt(rms) * 2.2).toFloat()
-                if (frames == 0 && rms < START) continue // the speech hasn't reached the speaker yet
+                val n = rec.read(mic, 0, FRAME)
+                if (n < FRAME) continue
+                reference(ref)
+                echo.process(mic, ref, out)
+                val before = rms(mic)
+                val after = rms(out)
+                micSum += before
+                outSum += after
+                level = minOf(1.0, sqrt(after) * 2.2).toFloat()
                 frames++
-                if (frames <= LEARN) { echo = max(echo, rms); continue }
-                val bar = max(FLOOR, echo * FACTOR)
-                peak = max(peak, rms)
-                loud = if (rms > bar) loud + 1 else 0
+                if (rms(ref) > 0.01 && before > 0.005) ratio = ratio * 0.97 + (after / before) * 0.03
+                if (!armed && ratio < WORKING) {
+                    armed = true
+                    Log.i(TAG, "the echo is learned after %d ms (%.0f%% of it left)".format(frames * 20, ratio * 100))
+                }
+                if (frames % 50 == 0) Log.d(TAG, "%.1f s: mic %.3f, with the echo out %.3f, left %.0f%%".format(frames / 50.0, before, after, ratio * 100))
+                loud = if (armed && after > BAR && after > before * USER) loud + 1 else 0
                 if (loud >= HOLD) {
-                    Log.i(TAG, "user talked over it (rms %.3f, echo %.3f)".format(rms, echo))
+                    Log.i(TAG, "user talked over it (%.3f with the echo out, %.3f before)".format(after, before))
                     if (running) heard()
                     break
                 }
             }
-            Log.i(TAG, "done: echo %.3f, loudest after %.3f".format(echo, peak))
+            state.ratio = ratio
+            if (frames > 0) Log.i(TAG, "done: mic %.3f on average, %.3f with the echo out, over %d ms".format(micSum / frames, outSum / frames, frames * 20))
         } catch (e: Exception) {
             Log.w(TAG, "listening: $e")
         } finally {
             level = 0f
             try { rec.stop() } catch (_: Exception) {}
             rec.release()
-            aec?.release()
-            ns?.release()
         }
+    }
+
+    private fun rms(s: ShortArray): Double {
+        var sum = 0.0
+        for (v in s) sum += v.toDouble() * v
+        return sqrt(sum / s.size) / 32768.0
     }
 
     companion object {
         private const val TAG = "BargeIn"
-        private const val RATE = 16000
-        private const val FRAME = 320 // 20 ms
-        private const val START = 0.008 // the speech has started coming back
-        private const val LEARN = 30 // its first 600 ms: the echo's level
+        internal const val RATE = Speaker.REF_RATE
+        internal const val FRAME = 320 // 20 ms
+        internal const val TAIL = 8192 // an echo up to 512 ms late (the playback and recording paths' delay included)
+        private const val WORKING = 0.4 // the canceller is taking out most of the echo
+        private const val USER = 0.6 // most of the sound got through the canceller: not the phone's own voice
         private const val HOLD = 12 // 240 ms above the bar
-        private const val FLOOR = 0.04 // never below this, however quiet the echo
-        private const val FACTOR = 2.5 // how much louder than the echo the user has to be
+        private const val BAR = 0.035 // the user's voice, with the echo out
     }
 }
