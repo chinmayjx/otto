@@ -20,10 +20,9 @@ import kotlin.math.sin
  * A call with the assistant through the phone's own speech (box/bots' otto_voice channel with the "android"
  * provider): Android's speech recognizer listens in a loop and what it hears goes to the box, and the assistant's
  * words come back as events, said with text-to-speech. While it speaks, the recognizer rests, so it doesn't hear
- * itself; instead a microphone of its own listens while it speaks (BargeIn), and the user talking over it, clearly
- * louder than the phone's own voice coming back, stops it and hands back to the recognizer. The speech plays as
- * normal media, at full quality (the call path would give the echo canceller its reference, but sounds like a
- * phone call). A tap on the pill stops it too.
+ * itself; instead the microphone is opened as for a call while it speaks (BargeIn, with the phone's echo
+ * canceller, the phone's audio in call mode so its own voice is the canceller's reference), and the user talking
+ * over it stops it and hands back to the recognizer. A tap on the pill stops it too.
  *
  * Not every scrap goes: a result the recognizer isn't sure of, or a single word that isn't an answer ("so",
  * a cough heard as "the"), is dropped; and pieces are held for a moment and joined, so a pause doesn't cut a
@@ -53,10 +52,11 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
     private val flush = Runnable { send() }
     private var barge: BargeIn? = null
     private val audio = ctx.getSystemService(android.media.AudioManager::class.java)
-    private var hushed = false // the recognizer's beeps' streams are muted
+    private var oldMode = android.media.AudioManager.MODE_NORMAL
 
     override fun start() {
         main.post {
+            callAudio()
             tts = TextToSpeech(ctx) { status ->
                 Log.i(TAG, "text-to-speech: $status")
                 main.post {
@@ -66,7 +66,8 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
                     waiting.clear()
                 }
             }.apply {
-                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
+                // On the call's path, so the echo canceller hears it as the far end and takes it out.
+                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
                 setOnUtteranceProgressListener(progress)
             }
@@ -114,28 +115,21 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
             tts?.shutdown()
             tts = null
             stopBarge()
-            quiet(false)
             micLevel = 0f
             speaking = false
             main.removeCallbacks(flush)
+            audio.clearCommunicationDevice()
+            audio.mode = oldMode
         }
     }
 
-    /**
-     * The recognizer beeps each time it starts and stops, and it restarts after every sentence: while it listens,
-     * the streams the beeps play on are muted. Never while Otto speaks (its voice is on the media stream), and
-     * always undone when the call ends.
-     */
-    private fun quiet(on: Boolean) {
-        if (on == hushed) return
-        hushed = on
-        for (s in BEEPS) {
-            try {
-                audio.adjustStreamVolume(s, if (on) android.media.AudioManager.ADJUST_MUTE else android.media.AudioManager.ADJUST_UNMUTE, 0)
-            } catch (e: SecurityException) {
-                Log.w(TAG, "mute $s: $e") // the notification stream can need Do Not Disturb access
-            }
-        }
+    /** The phone in call mode, on the loudspeaker unless a headset is in: what makes its echo canceller work. */
+    private fun callAudio() {
+        oldMode = audio.mode
+        audio.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+        val devices = audio.availableCommunicationDevices
+        val headset = devices.firstOrNull { it.type in HEADSETS }
+        (headset ?: devices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER })?.let { audio.setCommunicationDevice(it) }
     }
 
     private fun fail(message: String) {
@@ -154,7 +148,6 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
             recognizer = it
         }
         listening = true
-        quiet(true)
         r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
@@ -234,7 +227,6 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         pending++
         speaking = true
         rest()
-        quiet(false)
         t.speak(text, TextToSpeech.QUEUE_ADD, null, "otto-${System.nanoTime()}")
         if (barge == null && !muted) barge = BargeIn { main.post { if (speaking) { Log.i(TAG, "barge-in"); hush() } } }
     }
@@ -273,10 +265,10 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
 
     companion object {
         private const val TAG = "VoiceSpeech"
-        private const val HOLD_MS = 2000L
+        private const val HOLD_MS = 1500L
         private const val MIN_CONFIDENCE = 0.35f
-        private val BEEPS = intArrayOf(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.STREAM_SYSTEM,
-            android.media.AudioManager.STREAM_NOTIFICATION)
+        private val HEADSETS = setOf(android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO, android.media.AudioDeviceInfo.TYPE_BLE_HEADSET, android.media.AudioDeviceInfo.TYPE_USB_HEADSET)
         /** One-word results that are answers, not noise. */
         private val ANSWERS = setOf("yes", "no", "yeah", "yep", "nope", "ok", "okay", "stop", "wait", "thanks", "sure", "cancel", "continue", "done")
     }
