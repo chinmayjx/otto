@@ -28,7 +28,7 @@ import kotlin.math.roundToInt
 
 /**
  * Keeps the second screen at hand over every app: a handle on the right edge (an overlay window, so it stays
- * above the screen too; a tap fades the screen in and out, a long press opens the lens), and the screen itself
+ * above the screen too; a tap fades the screen in and out, a long press opens its tray: the lens, the assistant), and the screen itself
  * (Screen), which lives here and is shown in ScreenActivity while it's in. A foreground service, so Android keeps all of it, the browser's tabs
  * included, while other apps are in front.
  *
@@ -159,8 +159,9 @@ class OverlayService : Service(), Screen.Host {
 
     /**
      * The one handle, on the right edge, over the screen too: a tap or a swipe across it fades the screen in, the
-     * next fades it out. A drag up or down moves it along the edge. A long press opens the lens (Lens); with the
-     * lens open, a tap closes it.
+     * next fades it out. A drag up or down moves it along the edge. A long press opens the tray (Tray) beside it,
+     * and the same finger slides onto the lens (Lens) or the assistant (VoiceService) and lifts there to pick one.
+     * With the lens or the tray open, a tap closes it.
      */
     @SuppressLint("ClickableViewAccessibility")
     private fun addRightHandle() {
@@ -177,21 +178,21 @@ class OverlayService : Service(), Screen.Host {
             var startY = 0
             var moving = false // a drag up or down, not a tap
             var swiped = false // a swipe across, which toggles the screen as a tap does
-            var pressed = false // held still long enough: the lens, and nothing else for this touch
-            var closing = false // a touch while the lens is open: it closes the lens, and does nothing else
+            var pressed = false // held still long enough: the tray, and nothing else for this touch
+            var closing = false // a touch while the lens or the tray is open: it closes it, and does nothing else
             val longPress = Runnable {
                 pressed = true
                 pill.animate().scaleX(1f).scaleY(1f).setDuration(90)
                 handle.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                 holding = false
-                lens()
+                tray(downY)
             }
 
             override fun onTouch(v: View, e: MotionEvent): Boolean {
                 val screen = screen ?: return false
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        closing = Lens.current != null
+                        closing = Lens.current != null || Tray.current != null
                         if (closing) return true
                         downX = e.rawX
                         downY = e.rawY
@@ -207,7 +208,11 @@ class OverlayService : Service(), Screen.Host {
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        if (pressed || closing) return true
+                        if (closing) return true
+                        if (pressed) {
+                            Tray.current?.hover(e.rawX, e.rawY)
+                            return true
+                        }
                         val dx = e.rawX - downX
                         val dy = e.rawY - downY
                         if (!moving && !swiped && max(abs(dx), abs(dy)) > slop) {
@@ -223,11 +228,19 @@ class OverlayService : Service(), Screen.Host {
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         if (closing) {
-                            if (e.actionMasked == MotionEvent.ACTION_UP) Lens.current?.dismiss()
+                            if (e.actionMasked == MotionEvent.ACTION_UP) {
+                                Lens.current?.dismiss()
+                                Tray.current?.dismiss()
+                            }
                             return true
                         }
                         handle.removeCallbacks(longPress)
-                        if (pressed) return true
+                        if (pressed) {
+                            val moved = max(abs(e.rawX - downX), abs(e.rawY - downY)) > slop
+                            if (e.actionMasked == MotionEvent.ACTION_UP) Tray.current?.release(e.rawX, e.rawY, moved)
+                            else Tray.current?.dismiss()
+                            return true
+                        }
                         pill.animate().scaleX(1f).scaleY(1f).setDuration(140)
                         holding = false
                         if (moving) prefs.edit().putInt("y", rightLp.y).apply()
@@ -240,6 +253,16 @@ class OverlayService : Service(), Screen.Host {
             }
         })
         wm.addView(handle, rightLp)
+    }
+
+    /** The tray, beside the handle at the finger's height: the lens and the assistant. */
+    private fun tray(y: Float) {
+        val screen = screen
+        if (screen == null || screen.isClosed) ScreenActivity.current?.leave() // brought up for this touch, not shown
+        Tray(this, listOf(
+            Tray.Item(R.drawable.ccm_lens, "Lens") { lens() },
+            Tray.Item(R.drawable.ccm_mic, "Assistant") { VoiceService.start(this) },
+        )).show(y, dp(HANDLE_W))
     }
 
     /**
@@ -274,6 +297,7 @@ class OverlayService : Service(), Screen.Host {
         running = false
         if (instance === this) instance = null
         Lens.current?.dismiss()
+        Tray.current?.dismiss()
         ScreenActivity.current?.finish()
         right?.let { if (it.isAttachedToWindow) wm.removeView(it) }
         screen?.destroy()

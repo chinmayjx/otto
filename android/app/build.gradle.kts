@@ -159,6 +159,8 @@ dependencies {
     implementation("io.noties.markwon:linkify:4.6.2")
     implementation("io.noties.markwon:html:4.6.2")
     implementation("io.noties.markwon:image:4.6.2")
+    // The assistant's voice call (VoiceCall): WebRTC, as built for Android by the webrtc-sdk project.
+    implementation("io.github.webrtc-sdk:android:144.7559.15")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
 }

@@ -7,10 +7,11 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
-    <!-- Artifacts and pages that ask for the microphone (AppWeb) -->
+    <!-- Artifacts and pages that ask for the microphone (AppWeb), and the assistant (VoiceService) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- The device agent: installs, uninstalls, every app's info -->
@@ -115,6 +116,20 @@
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="The browser the owner's agents on their own machine drive, kept connected while the screen is closed" />
         </service>
+
+        <!-- The assistant: a voice call with Codex on the box, its orb over every app (see VoiceService). Started
+             through VoiceActivity, which asks for the microphone and starts it from the foreground. -->
+        <service
+            android:name=".VoiceService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
+        <activity
+            android:name=".VoiceActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="io.github.otto.voice" />
 
         <!-- The device agent's eyes and hands (see device/AgentAccessibility). -->
         <service
