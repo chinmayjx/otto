@@ -4,3 +4,6 @@
 -dontwarn pl.droidsonroids.gif.**
 -dontwarn com.caverock.androidsvg.**
 -keepattributes SourceFile,LineNumberTable
+# WebRTC (the assistant's voice call): its native code finds its Java classes, methods and fields by name.
+-keep class org.webrtc.** { *; }
+-dontwarn org.webrtc.**
