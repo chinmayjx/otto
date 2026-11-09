@@ -230,7 +230,7 @@ test('stop words: on their own, in English or Hindi; not inside a sentence', asy
   for (const t of ['Wait, what time is it?', 'I said stop the music', 'okay', '', 'Thank you.']) assert.ok(!stopWord(t), t);
 });
 
-test('realtime: talking over the voice: noise dropped; clean words, a stop word or long speech stop it', async () => {
+test('realtime: talking over the voice: noise dropped; clean words or a stop word stop it, unsure pieces never', async () => {
   const { OpenAICall } = await import('../channels/voice/openai.js');
   const call: any = new OpenAICall({ toAgent: () => {}, log: () => {} }, { apiKey: 'k', bargeIn: 1.5 });
   const sent: any[] = [];
@@ -286,14 +286,17 @@ test('realtime: talking over the voice: noise dropped; clean words, a stop word 
   assert.equal(count('conversation.item.truncate'), 2);
   voiceDone();
 
-  // Speech that isn't clean, piece after piece, stops it after bargeIn seconds.
+  // Pieces that aren't clean (a second of noise made into a sentence, unsure) never stop it, and are dropped.
   voiceTalks();
   heard('l1', 'Sim.');
-  assert.equal(count('response.cancel'), 2);
   await wait(600);
-  heard('l2', 'de');
-  assert.equal(count('response.cancel'), 3);
+  call.event({ type: 'input_audio_buffer.committed', item_id: 'l2' });
+  call.event({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'l2', transcript: 'Mujhe aapki madad chahiye.',
+    logprobs: [{ logprob: -1.2 }, { logprob: -0.9 }] });
+  assert.equal(count('response.cancel'), 2);
   voiceDone();
+  await wait(900);
+  assert.equal(count('response.create'), 2, 'nothing answered');
   clearInterval(call.pieceTimer);
   clearTimeout(call.gapTimer);
   await wait(900);

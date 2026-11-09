@@ -92,8 +92,8 @@ hangs up too). Muting mid-sentence counts what you said so far as said; a call l
 (the next call carries on from the saved transcript). With OpenAI's voice, a horn or a cough doesn't cut it off: what
 the microphone hears while it talks is transcribed second by second, and it stops as soon as that's clear words (two
 real words or more, heard with confidence, not its own voice coming back), or a stop word ("stop",
-"wait", "no no", "hold on", "ruko", "bas", "ek minute"), or about 5 s of unclear talking over it (`--barge-in S`; 0
-lets any sound stop it). What stopped it is answered once it's done; noise is dropped. The box's log has a line for
+"wait", "no no", "hold on", "ruko", "bas", "ek minute"). Nothing else does, as a second of noise often comes
+back as a made-up sentence, with low confidence (`--barge-in 0` instead lets any sound stop it). What stopped it is answered once it's done; noise is dropped. The box's log has a line for
 each piece it heard over the voice and what it decided. What
 the assistant says when no call is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
 

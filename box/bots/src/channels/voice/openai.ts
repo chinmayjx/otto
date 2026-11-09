@@ -21,8 +21,8 @@
 // what the microphone heard every PIECE_MS, each piece transcribed on its own. Words heard
 // cleanly stop the voice at once: a stop word ("wait", "stop", "no no", "ruko"), or two real words or more (not
 // filler, in Latin or Devanagari letters, transcribed with confidence, not a known noise phrase, not the voice's own
-// words coming back). Pieces with words in a row that aren't clean add up, and bargeIn seconds of them stop it too.
-// What stopped the voice is answered once it's done; pieces that never came to anything (no words, filler, a horn
+// words coming back). Nothing else does: a second of noise or silence often comes back as a whole made-up sentence,
+// with low confidence. What stopped the voice is answered once it's done; pieces that never came to anything (no words, filler, a horn
 // heard as "thank you" or in another script) are taken out of the conversation so they're never answered. Every
 // piece and what was decided goes to the log, to tune this by.
 import WebSocket from 'ws';
@@ -145,7 +145,6 @@ export class OpenAICall extends Call {
   private deaf = false; // turn detection off while the voice talks; the box listens in pieces
   private pieceTimer: NodeJS.Timeout | null = null;
   private pieces = new Map<string, number>(); // pieces committed while the voice talks, by item: when
-  private run: { since: number; last: number } | null = null; // pieces with words in a row
   private unsure: string[] = []; // pieces with words but not clean, kept only if the user is found to be talking
   private said = ''; // what the voice is saying now, to tell its echo from the user
   private tail = false; // the last piece, committed as turn detection comes back on
@@ -400,8 +399,7 @@ export class OpenAICall extends Call {
   }
 
   /** A piece's words are in, or a turn's. A piece heard while the voice talks: a stop word, or clean speech, stops
-   * it at once; other pieces with words in a row stop it once they add up to bargeIn seconds; what stopped it is
-   * answered once it's done. Pieces that never come to that are dropped. */
+   * it at once, and is answered once it's done. Other pieces are dropped unless clear words follow. */
   private heardOver(id: string, text: string, logprob: number | null) {
     const at = this.pieces.get(id);
     this.pieces.delete(id);
@@ -419,7 +417,6 @@ export class OpenAICall extends Call {
       this.transcript.fill(id, text);
       this.answered.add(id); // stopping is the answer
       for (const u of this.unsure.splice(0)) this.drop(u);
-      this.run = null;
       if (this.talking) this.interrupt('stop word: stopped');
       return;
     }
@@ -430,10 +427,9 @@ export class OpenAICall extends Call {
       return this.free();
     }
     this.transcript.fill(id, text);
-    const follows = this.run && at - this.run.last <= PIECE_MS * 1.6;
-    if (follows) this.run!.last = at; else this.run = { since: at - PIECE_MS, last: at };
-    const long = this.run!.last - this.run!.since >= this.barge * 1000;
-    if (!c.ok && !long) {
+    // Not clean: never stops the voice or gets answered on its own (transcribing a second of noise or silence
+    // makes up whole sentences, with low confidence); kept only if clear words follow.
+    if (!c.ok) {
       note(`${c.why}: held`);
       this.unsure.push(id);
       return this.free();
@@ -442,10 +438,9 @@ export class OpenAICall extends Call {
     this.unsure = [];
     this.owed = true;
     if (this.talking && !this.midTurn) {
-      note(c.ok ? 'clean: stopped' : `talked over for ${this.barge} s: stopped`);
-      this.run = null;
+      note('clean: stopped');
       this.midTurn = true;
-      this.interrupt(c.ok ? 'clean speech: stopped' : `talked over for ${this.barge} s: stopped`);
+      this.interrupt('clean speech: stopped');
     } else {
       note(this.talking ? 'kept, stopping already' : 'kept, answered next');
       this.free();
@@ -495,7 +490,6 @@ export class OpenAICall extends Call {
     if (this.pieceTimer) clearInterval(this.pieceTimer);
     this.pieceTimer = null;
     if (on) {
-      this.run = null;
       this.send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: null } } } });
       this.pieceTimer = setInterval(() => { if (!this.mutedSince) this.send({ type: 'input_audio_buffer.commit' }); }, PIECE_MS);
       this.pieceTimer.unref(); // the call's end clears it; a test or a closing process needn't wait for it

@@ -169,7 +169,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
         return [n, kinds.map(k => {
           if (k !== VOICE) return k;
           const v = c.channels[k];
-          const via = (v.auth === 'codex' ? ', codex' : '') + (v.provider === 'android' ? '' : `, barge-in ${v.bargeIn ?? 5} s`);
+          const via = (v.auth === 'codex' ? ', codex' : '') + (v.provider === 'android' ? '' : `, ${Number(v.bargeIn ?? 5) ? 'stops on clear words' : 'stops on any sound'}`);
           return `voice (${v.provider ?? 'openai-realtime'}${via}): assistant`;
         }).join(', ') || '(no channels)',
           s?.handle ?? '', s ? 'running' : 'stopped', paired ? 'paired' : 'unpaired',
@@ -250,7 +250,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
         : v.auth === 'codex' ? `OpenAI's realtime voice via the Codex sign-in (${v.model ?? 'gpt-realtime-2.1'})`
         : `OpenAI's realtime voice (${v.model ?? 'gpt-realtime-2.1'})`;
       const barge = provider === 'android' ? '' : Number(v.bargeIn ?? 5)
-        ? ` Clear words or a stop word ("wait") stop it at once; other talking over it after ${Number(v.bargeIn ?? 5)} s.` : ' Any sound stops it mid-sentence.';
+        ? ' Clear words or a stop word ("wait") stop it; noise doesn\'t.' : ' Any sound stops it mid-sentence.';
       return out(`${name} is your assistant, with ${how}.${barge} `
         + `On the phone: long-press the handle › Assistant.${running ? '' : `\n${NOT_RUNNING} try it.`}`);
     }
