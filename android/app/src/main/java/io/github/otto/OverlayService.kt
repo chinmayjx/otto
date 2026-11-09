@@ -101,11 +101,15 @@ class OverlayService : Service(), Screen.Host {
     /**
      * The screen opens in an app screen of its own (ScreenActivity), not an overlay: overlays (other apps' bubbles,
      * this handle) then draw above it, and Back, the keyboard, Home and Recents work as in any app. As soon as it
-     * starts to come in, the activity is started; the screen's view moves into it, and out again when it's gone.
+     * starts to come in, the activity is started (if a touch on the handle hasn't already brought it up, unseen) and
+     * shown; the screen's view moves into it, and out again when it's gone.
      */
     override fun moved(position: Float) {
         if (right == null) return // the screen's first layout, before the handle is up
-        if (position > 0) bringScreen()
+        if (position > 0) {
+            bringScreen()
+            ScreenActivity.current?.reveal()
+        }
     }
 
     override fun settled(open: Boolean) {
@@ -204,7 +208,8 @@ class OverlayService : Service(), Screen.Host {
                         pressed = false
                         handle.postDelayed(longPress, LONG_PRESS_MS)
                         pill.animate().scaleX(1.5f).scaleY(1.12f).setDuration(90)
-                        // The app screen comes up at the touch, so it's there by the time the finger lifts.
+                        // The app screen comes up at the touch, unseen (ScreenActivity), so it's there by the time the
+                        // finger lifts; it shows only when the screen starts to come in, so a long press never shows it.
                         holding = true
                         if (!screen.isOpen) bringScreen()
                         return true

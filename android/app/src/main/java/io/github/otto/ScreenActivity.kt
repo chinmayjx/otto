@@ -11,7 +11,9 @@ import android.widget.FrameLayout
  *
  * It's started once and then kept: when the screen is out it waits in the background (its own task, out of
  * Recents) and OverlayService brings it back to the front, at the first touch on the handle, which is much
- * quicker than starting it anew and keeps the browser embedded in it.
+ * quicker than starting it anew and keeps the browser embedded in it. Brought up for a touch, it stays unseen (its
+ * window fully transparent) until the screen starts to come in ([reveal]): a long press on the handle (the tray)
+ * brings it up and sends it back without anything showing.
  */
 class ScreenActivity : Activity() {
     private lateinit var frame: FrameLayout
@@ -31,7 +33,26 @@ class ScreenActivity : Activity() {
             return
         }
         current = this
+        seen(!screen.isClosed)
         screen.attach(frame)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Back to the front for a touch on the handle: unseen until the screen moves.
+        seen(Screen.current?.isClosed == false)
+    }
+
+    /** The screen is coming in: its window shows. */
+    fun reveal() = seen(true)
+
+    /** The whole window, the browser's surface in it included, shown or fully transparent. */
+    private fun seen(on: Boolean) {
+        val a = if (on) 1f else 0f
+        val lp = window.attributes
+        if (lp.alpha == a) return
+        lp.alpha = a
+        window.attributes = lp
     }
 
     override fun onResume() {
@@ -48,6 +69,7 @@ class ScreenActivity : Activity() {
     fun leave() {
         if (!isShown) return
         isShown = false
+        seen(false)
         moveTaskToBack(true)
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
