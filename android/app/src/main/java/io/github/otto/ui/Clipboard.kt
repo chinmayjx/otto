@@ -132,7 +132,7 @@ fun ClipboardScreen(model: ClipboardModel) {
                             item {
                                 Empty(when {
                                     model.error != null -> model.error!!
-                                    model.fetched -> "No clips yet. Long-press Otto's handle to take one from the screen, " +
+                                    model.fetched -> "No clips yet. Swipe Otto's handle in › Lens to take one from the screen, " +
                                         "or open an artifact and collect notes on it."
                                     else -> "Loading…"
                                 })

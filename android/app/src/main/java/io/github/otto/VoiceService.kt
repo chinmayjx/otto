@@ -140,7 +140,12 @@ class VoiceService : Service() {
         var running = false
             private set
 
-        /** From the tray: a call, unless there's one on already (its pill is on screen). */
+        /** Ends the call that's on (a long press on the handle). */
+        fun hangUp(ctx: Context) {
+            if (running) ctx.startService(Intent(ctx, VoiceService::class.java).setAction(ACTION_END))
+        }
+
+        /** From the tray or the handle: a call, unless there's one on already (its pill is on screen). */
         fun start(ctx: Context) {
             if (running) return Toast.makeText(ctx, "The assistant is already on", Toast.LENGTH_SHORT).show()
             ctx.startActivity(Intent(ctx, VoiceActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))

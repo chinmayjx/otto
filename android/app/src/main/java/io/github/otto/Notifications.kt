@@ -29,7 +29,7 @@ object Notifications {
         return Notification.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_screen)
             .setContentTitle("Otto")
-            .setContentText("Tap or swipe the handle on the right edge, or tap here")
+            .setContentText("Tap the handle on the right edge (swipe it in for the lens and the assistant), or tap here")
             .setContentIntent(show)
             .addAction(Notification.Action.Builder(null, "Turn off", stop).build())
             .setOngoing(true)

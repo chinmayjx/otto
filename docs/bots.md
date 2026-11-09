@@ -43,8 +43,9 @@ path.
 
 ## The assistant: Otto's voice
 
-One bot can have the `otto_voice` channel; that bot is your assistant. On the phone, long-press the handle and pick
-Assistant: a call starts, with a pill over every app (tap to mute, × to end). What the assistant says when no call
+One bot can have the `otto_voice` channel; that bot is your assistant. On the phone, long-press the handle (or swipe it
+in and pick Assistant): a call starts, with a pill over every app (tap to mute, × to end; a long press on the handle
+hangs up too). What the assistant says when no call
 is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
 
 ```sh

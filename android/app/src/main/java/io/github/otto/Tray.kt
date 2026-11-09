@@ -28,12 +28,12 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * The handle's tray: what a long press on the handle opens, one dark slab that unrolls leftward out of the handle
+ * The handle's tray: what a swipe in on the handle opens, one dark slab that unrolls leftward out of the handle
  * (=|: the lens next to the handle, then the assistant). The handle shrinks to the slab's height as it opens and is
  * its lavender right edge, so the two read as one shape; the slab draws its own copy of that edge, being a window of
- * its own above the handle's. One gesture: the finger that pressed slides left onto an item (it lights up, with its
- * name above it) and lifts there to pick it; lifted anywhere else, the tray closes. Lifted without moving, the tray
- * stays, to tap an item (or outside, to close it), as the second screen's menus do (Screen.onPress).
+ * its own above the handle's. One gesture: the finger that swiped goes on left onto an item (it lights up, with its
+ * name above it) and lifts there to pick it; lifted anywhere else (a flick), the tray stays, to tap an item (or
+ * outside, to close it), as the second screen's menus do (Screen.onPress).
  *
  * The handle's touch listener keeps the gesture (Android sends the moves to the window the finger came down on) and
  * passes them here: [hover] and [release]. [closed] runs once the slab has rolled back into the handle.
@@ -127,14 +127,11 @@ class Tray(private val ctx: Context, private val items: List<Item>, private val 
         if (i >= 0) root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
     }
 
-    /** The finger lifted: on an item, it's picked; elsewhere after a drag, the tray closes; without a move, it stays. */
-    fun release(x: Float, y: Float, moved: Boolean) {
+    /** The finger lifted: on an item, it's picked; anywhere else, the tray stays, to tap. */
+    fun release(x: Float, y: Float) {
         val i = itemAt(x, y)
-        when {
-            !moved -> if (hot >= 0) { hot = -1; light(-1) } // a press without a drag: it stays, to tap
-            i >= 0 -> pick(i)
-            else -> dismiss()
-        }
+        if (i >= 0) pick(i)
+        else if (hot >= 0) { hot = -1; light(-1) }
     }
 
     private fun pick(i: Int) {

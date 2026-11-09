@@ -180,13 +180,26 @@ class MainActivity : AppCompatActivity() {
         }
         val bots = a.optJSONArray("bots")?.let { l -> (0 until l.length()).map { l.getString(it) } } ?: emptyList()
         if (a.isNull("bot")) {
-            item("Assistant", "None yet. Give a bot a voice on the box:\n  otto bot voice <bot>\nthen long-press the handle › Assistant.",
+            item("Assistant", "None yet. Give a bot a voice on the box:\n  otto bot voice <bot>\nthen long-press the handle (or swipe it in › Assistant).",
                 false, "Copy the command") { copy("otto bot voice ${bots.firstOrNull() ?: "<bot>"}") }
             return
         }
         val how = if (a.optString("provider") == "android") "this phone's own speech" else "a realtime voice (OpenAI)"
-        item("Assistant: ${a.optString("bot")}", "${a.optString("agent")}, through $how. Long-press the handle › Assistant to talk; " +
+        item("Assistant: ${a.optString("bot")}", "${a.optString("agent")}, through $how. Long-press the handle (or swipe it in › Assistant) to talk; " +
             "what it says with no call on comes as a notification.", true, if (bots.size > 1) "Change" else null) { pickAssistant(bots, a.optString("bot")) }
+    }
+
+    private fun pickLongPress() {
+        val now = HandleSettings.longPress(this)
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Long press on the handle")
+            .setSingleChoiceItems(HandleSettings.CHOICES.map { it.second }.toTypedArray(), HandleSettings.CHOICES.indexOfFirst { it.first == now }) { d, i ->
+                d.dismiss()
+                HandleSettings.setLongPress(this, HandleSettings.CHOICES[i].first)
+                render()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun pickAssistant(bots: List<String>, now: String) {
@@ -227,7 +240,8 @@ class MainActivity : AppCompatActivity() {
             connected -> "On, connected to ${pairing.box}"
             else -> "On, connecting to ${pairing.box}"
         }
-        heroDetail.text = if (on) "Tap or swipe the handle on the right edge to bring in the second screen; drag it up or down to move it."
+        heroDetail.text = if (on) "Tap the handle on the right edge to bring in the second screen; swipe it in for the lens and the " +
+            "assistant; drag it up or down to move it."
         else "Turn it on for the second screen, and for your agents to reach this phone's browser and screen."
         val fg = color(if (connected) M.attr.colorOnPrimaryContainer else M.attr.colorOnSurface)
         heroCard.setCardBackgroundColor(color(if (connected) M.attr.colorPrimaryContainer else M.attr.colorSurfaceContainerHigh))
@@ -250,6 +264,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         assistantItem()
+        val press = HandleSettings.longPress(this)
+        item("Long press on the handle", HandleSettings.label(press) +
+            if (press == HandleSettings.ASSISTANT) ". During a call, a long press hangs up." else ".", true, "Change") { pickLongPress() }
         val overlay = Settings.canDrawOverlays(this)
         item("Draw over other apps", if (overlay) "Allowed." else "Needed for the handle and the second screen.", overlay,
             if (overlay) null else "Allow") { openSettings(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, true) }

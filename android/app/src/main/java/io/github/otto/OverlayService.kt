@@ -29,7 +29,8 @@ import kotlin.math.roundToInt
 
 /**
  * Keeps the second screen at hand over every app: a handle on the right edge (an overlay window, so it stays
- * above the screen too; a tap fades the screen in and out, a long press opens its tray: the lens, the assistant), and the screen itself
+ * above the screen too; a tap fades the screen in and out, a swipe in opens its tray (the lens, the assistant), a long
+ * press does what the user chose (the assistant, the lens, or nothing: HandleSettings), and the screen itself
  * (Screen), which lives here and is shown in ScreenActivity while it's in. A foreground service, so Android keeps all of it, the browser's tabs
  * included, while other apps are in front.
  *
@@ -164,10 +165,11 @@ class OverlayService : Service(), Screen.Host {
     }
 
     /**
-     * The one handle, on the right edge, over the screen too: a tap or a swipe across it fades the screen in, the
-     * next fades it out. A drag up or down moves it along the edge. A long press opens the tray (Tray) beside it,
-     * and the same finger slides onto the lens (Lens) or the assistant (VoiceService) and lifts there to pick one.
-     * With the lens or the tray open, a tap closes it.
+     * The one handle, on the right edge, over the screen too: a tap fades the screen in, the next fades it out. A
+     * drag up or down moves it along the edge. A swipe in (leftwards) opens the tray (Tray) beside it, and the same
+     * finger goes on onto the lens (Lens) or the assistant (VoiceService) and lifts there to pick one. A long press
+     * does what the user set (HandleSettings): calls the assistant (or, during a call, hangs up), opens the lens, or
+     * nothing (it's a tap). With the lens or the tray open, a tap closes it.
      */
     @SuppressLint("ClickableViewAccessibility")
     private fun addRightHandle() {
@@ -183,15 +185,14 @@ class OverlayService : Service(), Screen.Host {
             var downY = 0f
             var startY = 0
             var moving = false // a drag up or down, not a tap
-            var swiped = false // a swipe across, which toggles the screen as a tap does
-            var pressed = false // held still long enough: the tray, and nothing else for this touch
+            var pressed = false // the tray is open for this touch (a swipe in), or a long press acted: nothing else for it
             var closing = false // a touch while the lens or the tray is open: it closes it, and does nothing else
             val longPress = Runnable {
                 pressed = true
                 pill.animate().scaleX(1f).scaleY(1f).setDuration(90)
                 handle.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                 holding = false
-                tray()
+                longPressed()
             }
 
             override fun onTouch(v: View, e: MotionEvent): Boolean {
@@ -202,11 +203,10 @@ class OverlayService : Service(), Screen.Host {
                         if (closing) return true
                         downX = e.rawX
                         downY = e.rawY
-                        swiped = false
                         startY = rightLp.y
                         moving = false
                         pressed = false
-                        handle.postDelayed(longPress, LONG_PRESS_MS)
+                        if (HandleSettings.longPress(this@OverlayService) != HandleSettings.NOTHING) handle.postDelayed(longPress, LONG_PRESS_MS)
                         pill.animate().scaleX(1.5f).scaleY(1.12f).setDuration(90)
                         // The app screen comes up at the touch, unseen (ScreenActivity), so it's there by the time the
                         // finger lifts; it shows only when the screen starts to come in, so a long press never shows it.
@@ -222,13 +222,20 @@ class OverlayService : Service(), Screen.Host {
                         }
                         val dx = e.rawX - downX
                         val dy = e.rawY - downY
-                        if (!moving && !swiped && max(abs(dx), abs(dy)) > slop) {
-                            // Whichever way it went first decides: across toggles the screen at once, up or down moves the handle.
+                        if (!moving && max(abs(dx), abs(dy)) > slop) {
+                            // Whichever way it went first decides: across opens the tray under the finger, up or down
+                            // moves the handle.
                             handle.removeCallbacks(longPress)
                             if (abs(dx) > abs(dy)) {
-                                swiped = true
-                                toggle()
-                            } else moving = true
+                                pressed = true
+                                pill.animate().scaleX(1f).scaleY(1f).setDuration(90)
+                                handle.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                                holding = false
+                                tray()
+                                Tray.current?.hover(e.rawX, e.rawY)
+                                return true
+                            }
+                            moving = true
                         }
                         if (moving) moveHandle(startY + dy.roundToInt())
                         return true
@@ -243,15 +250,15 @@ class OverlayService : Service(), Screen.Host {
                         }
                         handle.removeCallbacks(longPress)
                         if (pressed) {
-                            val moved = max(abs(e.rawX - downX), abs(e.rawY - downY)) > slop
-                            if (e.actionMasked == MotionEvent.ACTION_UP) Tray.current?.release(e.rawX, e.rawY, moved)
+                            if (e.actionMasked == MotionEvent.ACTION_UP) Tray.current?.release(e.rawX, e.rawY)
                             else Tray.current?.dismiss()
+                            if (screen.isClosed) ScreenActivity.current?.leave() // brought up for this touch, not shown
                             return true
                         }
                         pill.animate().scaleX(1f).scaleY(1f).setDuration(140)
                         holding = false
                         if (moving) prefs.edit().putInt("y", rightLp.y).apply()
-                        else if (!swiped && e.actionMasked == MotionEvent.ACTION_UP) toggle()
+                        else if (e.actionMasked == MotionEvent.ACTION_UP) toggle()
                         if (screen.isClosed) ScreenActivity.current?.leave() // moved, not opened
                         return true
                     }
@@ -260,6 +267,18 @@ class OverlayService : Service(), Screen.Host {
             }
         })
         wm.addView(handle, rightLp)
+    }
+
+    /** A long press on the handle, as the user set it (HandleSettings). */
+    private fun longPressed() {
+        when (HandleSettings.longPress(this)) {
+            HandleSettings.LENS -> lens()
+            HandleSettings.ASSISTANT -> {
+                val screen = screen
+                if (screen == null || screen.isClosed) ScreenActivity.current?.leave() // brought up for this touch, not shown
+                if (VoiceService.running) VoiceService.hangUp(this) else VoiceService.start(this)
+            }
+        }
     }
 
     /**

@@ -2,9 +2,12 @@
 
 The second screen and the device agent in one Android app, in Kotlin (package `io.github.otto`, Android 12+):
 
-- a handle on the screen's right edge: a tap or a swipe across it fades the second screen in and out over any app
-  (Back and Home put it away too; nothing on the screen itself swipes it out); a drag up or down moves it;
-- the lens: a long press on the handle freezes the screen under the collector, to select parts of it, with a note;
+- a handle on the screen's right edge: a tap fades the second screen in and out over any app (Back and Home put it
+  away too; nothing on the screen itself swipes it out); a swipe in opens its tray (the lens, the assistant); a long
+  press calls the assistant (or hangs up), opens the lens, or does nothing, as set on the main screen; a drag up or
+  down moves it;
+- the lens: from the tray, it freezes the screen under the collector, to select parts of it, with a note (or dictate
+  one with its mic);
   unfrozen, the collector floats over the live app, which stays usable; Copy sends them to the box as a clip for an
   agent (`otto clip <id>`) (`Lens`, `Collector`, `Clips`; screenshots through the accessibility service);
 - the second screen: the browser agents drive (embedded Chromium, in its own process), files, artifacts, the box's
@@ -79,7 +82,7 @@ Open Otto. It's a setup screen: the handle's switch at the top, then each thing 
 
 - `OverlayService`, a foreground service while the handle is on, keeps the handle (an overlay window), the second
   screen (`Screen`, shown in the transparent `ScreenActivity` while it's in, so other overlays, Back, the keyboard
-  and Home work as in any app) and the tunnel (`Tunnel`). A long press on the handle opens the lens (`Lens`): an
+  and Home work as in any app) and the tunnel (`Tunnel`). The tray (a swipe in on the handle) opens the lens (`Lens`): an
   overlay window for the screenshot, and above it one for the collector (`Collector`: chips, a toolbar, the note),
   laid out clear of the bars and the keyboard, whose touches outside go to what's beneath (`FLAG_NOT_TOUCH_MODAL`).
   The panel's window never changes but for its height, its place and its focus, so it doesn't move as the lens

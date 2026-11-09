@@ -37,7 +37,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * The lens: a long press on the handle opens the collector (Collector) as a panel floating over the live screen,
+ * The lens: the handle's tray (a swipe in on the handle), or a long press if the user set it so, opens the collector (Collector) as a panel floating over the live screen,
  * to gather a clip (Clips) for an agent to read with `otto clip <id>`: a note, typed or dictated, and parts of the
  * screen.
  *
@@ -46,7 +46,7 @@ import kotlin.math.roundToInt
  * overlays, such as a dictation bubble, while the note has the focus. It takes the focus when touched and gives it
  * back when the app is (FLAG_WATCH_OUTSIDE_TOUCH), so Back and the keyboard go where the user last was.
  *
- * It opens frozen, as the long press found the screen; its freeze button (Done while frozen) goes back to the
+ * It opens frozen, as the screen was found; its freeze button (Done while frozen) goes back to the
  * live screen and freezes it again. Freezing takes a screenshot (through the accessibility service, with the panel
  * and handle out of it) and the window grows over the whole screen to show it: drag on it for a selection; drag its corners or edges to
  * adjust it, inside it to move it. Each selection is a chip. Done (the same button) or Home unfreeze: the
