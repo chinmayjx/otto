@@ -230,7 +230,7 @@ test('stop words: on their own, in English or Hindi; not inside a sentence', asy
   for (const t of ['Wait, what time is it?', 'I said stop the music', 'okay', '', 'Thank you.']) assert.ok(!stopWord(t), t);
 });
 
-test('realtime: talking over the voice: noise dropped, a short question answered after it, a stop word or long speech stops it', async () => {
+test('realtime: talking over the voice: noise dropped; clean words, a stop word or long speech stop it', async () => {
   const { OpenAICall } = await import('../channels/voice/openai.js');
   const call: any = new OpenAICall({ toAgent: () => {}, log: () => {} }, { apiKey: 'k', bargeIn: 1.5 });
   const sent: any[] = [];
@@ -268,10 +268,10 @@ test('realtime: talking over the voice: noise dropped, a short question answered
   assert.equal(count('conversation.item.delete'), 2);
   assert.equal(count('response.cancel'), 0);
 
-  // A short question: kept, answered once the voice is done.
+  // A short question heard cleanly stops it at once, and is answered once it's done.
   heard('q1', "What's the capital");
+  assert.equal(count('response.cancel'), 1);
   heard('q2', 'of France?');
-  assert.equal(count('response.cancel'), 0);
   voiceDone();
   assert.equal(turns().type, 'semantic_vad', 'turn detection back on');
   call.event({ type: 'input_audio_buffer.committed', item_id: 't' }); // the last piece
@@ -279,20 +279,20 @@ test('realtime: talking over the voice: noise dropped, a short question answered
   await wait(900);
   assert.equal(count('response.create'), 2, 'answered after');
 
-  // A lone "wait" stops it at once, and isn't answered; what it never said is cut.
+  // "Stop." or "No, no." stops it at once, and isn't answered; what it never said is cut.
   voiceTalks();
-  heard('w', 'Wait.');
-  assert.equal(count('response.cancel'), 1);
-  assert.equal(count('conversation.item.truncate'), 1);
+  heard('w', 'No, no.');
+  assert.equal(count('response.cancel'), 2);
+  assert.equal(count('conversation.item.truncate'), 2);
   voiceDone();
 
-  // Speech over it, piece after piece, stops it after bargeIn seconds.
+  // Speech that isn't clean, piece after piece, stops it after bargeIn seconds.
   voiceTalks();
-  heard('l1', 'I want to tell you about');
-  assert.equal(count('response.cancel'), 1);
-  await wait(600);
-  heard('l2', 'my day at the market');
+  heard('l1', 'Sim.');
   assert.equal(count('response.cancel'), 2);
+  await wait(600);
+  heard('l2', 'de');
+  assert.equal(count('response.cancel'), 3);
   voiceDone();
   clearInterval(call.pieceTimer);
   clearTimeout(call.gapTimer);

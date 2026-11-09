@@ -6,7 +6,8 @@
 //   {type: "speak", text}     android: words for the phone to say
 //   {type: "error", message}
 //   {type: "bye", message}    the box ended the call itself, and why (before the ended state)
-// Transcripts never go to the log: states, timings and sizes only.
+// Transcripts never go to the log (states, timings and sizes only), except what a realtime call hears over its voice
+// (openai.ts): those pieces and what was decided about each are logged, to tune talking over the voice by.
 import crypto from 'node:crypto';
 import type { History } from './history.js';
 import { Transcript } from './transcript.js';

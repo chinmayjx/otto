@@ -250,7 +250,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
         : v.auth === 'codex' ? `OpenAI's realtime voice via the Codex sign-in (${v.model ?? 'gpt-realtime-2.1'})`
         : `OpenAI's realtime voice (${v.model ?? 'gpt-realtime-2.1'})`;
       const barge = provider === 'android' ? '' : Number(v.bargeIn ?? 5)
-        ? ` Talking over it stops it after ${Number(v.bargeIn ?? 5)} s, or at once with "wait".` : ' Any sound stops it mid-sentence.';
+        ? ` Clear words or a stop word ("wait") stop it at once; other talking over it after ${Number(v.bargeIn ?? 5)} s.` : ' Any sound stops it mid-sentence.';
       return out(`${name} is your assistant, with ${how}.${barge} `
         + `On the phone: long-press the handle › Assistant.${running ? '' : `\n${NOT_RUNNING} try it.`}`);
     }
