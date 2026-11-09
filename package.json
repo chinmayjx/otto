@@ -6,6 +6,7 @@
   "workspaces": [
     "box/relay",
     "box/bots",
+    "box/voice",
     "cli",
     "mcp",
     "adapters"

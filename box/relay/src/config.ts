@@ -19,6 +19,8 @@ export interface Config {
   stateFile: string;
   /** Where clips from the phone are kept (clips.ts). */
   clipsDir: string;
+  /** The voice adapter (box/voice), on this machine: the box API passes /voice/… on to it. */
+  voicePort: number;
 }
 
 const home = os.homedir();
@@ -33,7 +35,7 @@ export function loadConfig(file = configPath()): Config {
   try { t = parse(fs.readFileSync(file, 'utf8')) as Record<string, any>; } catch (e: any) {
     if (e.code !== 'ENOENT') throw new Error(`${file}: ${e.message}`);
   }
-  const relay = t.relay ?? {}, phone = t.phone ?? {};
+  const relay = t.relay ?? {}, phone = t.phone ?? {}, voice = t.voice ?? {};
   const token = (f: string) => {
     try { return fs.readFileSync(expand(f), 'utf8').trim(); } catch {
       throw new Error(`no token at ${f} (set phone.token_file in ${file})`);
@@ -48,6 +50,7 @@ export function loadConfig(file = configPath()): Config {
     token: token(phone.token_file ?? phone.browser_token_file ?? '~/.config/otto/token'),
     stateFile: expand(relay.state_file ?? '~/.local/state/otto/relay.json'),
     clipsDir: expand(relay.clips_dir ?? '~/.local/state/otto/clips'),
+    voicePort: voice.port ?? 9336,
   };
 }
 

@@ -1,0 +1,20 @@
+{
+  "name": "@otto/voice",
+  "private": true,
+  "type": "module",
+  "description": "Live voice on the box: a Codex realtime session per call from the phone, its audio straight between the phone and OpenAI",
+  "bin": {
+    "otto-voice": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "smol-toml": "^1.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

@@ -18,5 +18,5 @@ const clips = new Clips(config.clipsDir);
 
 tunnel.listen(config.tailnetHost, config.tunnelPort, config.pipePort);
 serve(config.localPort, browser, device, sessions, clips);
-serveBox(tunnel, clips);
+serveBox(tunnel, clips, config.voicePort);
 clips.prune();

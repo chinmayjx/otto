@@ -15,7 +15,8 @@
 //                                         clips from the phone (clips.ts)
 //
 // The box API, served to the app on the pipes it dials itself (tunnel.ts "dial ... box"), never on a port: the
-// clip routes, with POST /clips for uploads (clips.ts).
+// clip routes, with POST /clips for uploads (clips.ts), and /voice/…, passed on as it is to the voice adapter
+// (box/voice) on 127.0.0.1, which answers 503 here when it isn't running.
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { Browser, NO_PHONE } from './browser.js';
@@ -104,9 +105,10 @@ export function serve(port: number, browser: Browser, device: Device, sessions: 
 }
 
 /** The box API, for the app: HTTP on each pipe it dials (kept alive, as many requests as it likes). */
-export function serveBox(tunnel: Tunnel, clips: Clips, log = console.log) {
+export function serveBox(tunnel: Tunnel, clips: Clips, voicePort: number, log = console.log) {
   const server = http.createServer(async (req, res) => {
     try {
+      if (req.url?.startsWith('/voice/')) return voice(req, res, voicePort);
       if (await clips.serve(req, res, true)) return;
       res.writeHead(404, { 'content-type': 'text/plain' });
       res.end('not found\n');
@@ -122,6 +124,22 @@ export function serveBox(tunnel: Tunnel, clips: Clips, log = console.log) {
     s.resume();
   });
   return server;
+}
+
+/** A box API request for the voice adapter, passed on and its answer streamed back. */
+function voice(req: http.IncomingMessage, res: http.ServerResponse, port: number) {
+  const up = http.request({ host: '127.0.0.1', port, method: req.method, path: req.url, headers: { 'content-type': req.headers['content-type'] ?? 'application/json' } }, r => {
+    res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'text/plain', 'cache-control': 'no-store' });
+    r.pipe(res);
+  });
+  up.on('error', (e: any) => {
+    if (res.headersSent) return void res.destroy();
+    res.writeHead(503, { 'content-type': 'text/plain' });
+    res.end(e.code === 'ECONNREFUSED' ? 'voice: the voice adapter (otto-voice) is not running\n' : `voice: ${e.message}\n`);
+  });
+  // The phone giving up on a long poll ends ours too.
+  res.on('close', () => { if (!res.writableFinished) up.destroy() });
+  req.pipe(up);
 }
 
 async function phone(cmd: string, u: URL, req: http.IncomingMessage, res: http.ServerResponse, device: Device) {
