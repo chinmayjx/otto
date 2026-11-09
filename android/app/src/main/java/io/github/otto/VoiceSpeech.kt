@@ -20,7 +20,7 @@ import kotlin.math.sin
  * A call with the assistant through the phone's own speech (box/bots' otto_voice channel with the "android"
  * provider): Android's speech recognizer listens in a loop and what it hears goes to the box, and the assistant's
  * words come back as events, said with text-to-speech. While it speaks, the recognizer rests, so it doesn't hear
- * itself (a tap on the pill stops it).
+ * itself.
  *
  * Not every scrap goes: a result the recognizer isn't sure of, or a single word that isn't an answer ("so",
  * a cough heard as "the"), is dropped; and pieces are held for a moment and joined, so a pause doesn't cut a
@@ -212,7 +212,7 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         t.speak(text, TextToSpeech.QUEUE_ADD, null, "otto-${System.nanoTime()}")
     }
 
-    /** A tap on the pill while it talks: stop, and listen. */
+    /** Stop talking, and listen. */
     override fun interrupt() {
         main.post {
             tts?.stop()

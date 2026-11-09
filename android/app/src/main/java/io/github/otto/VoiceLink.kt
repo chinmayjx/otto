@@ -24,7 +24,7 @@ interface VoiceLink {
     /** The microphone's and the voice's levels, 0 to 1. */
     val micLevel: Float
     val outLevel: Float
-    /** The voice is talking now (the pill's tap stops it rather than muting). */
+    /** The voice is talking now. */
     val talking: Boolean get() = boxState == "speaking" || outLevel > 0.08f
     fun start()
     /** Stops the voice mid-sentence. */
