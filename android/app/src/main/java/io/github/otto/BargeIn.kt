@@ -12,9 +12,10 @@ import kotlin.math.sqrt
 
 /**
  * Listens while the phone talks (VoiceSpeech's text-to-speech), for the user talking over it. The microphone is
- * opened as for a call (VOICE_COMMUNICATION, with the phone's echo canceller and noise suppressor), so what the
- * phone itself says is mostly taken out; what's left is measured for a moment as the echo's level, and only sound
- * well above it, held for a quarter of a second, counts as the user. Then [heard] runs, once, on this thread.
+ * opened as for a call (VOICE_COMMUNICATION, with the noise suppressor, and the echo canceller where the phone
+ * applies one to media too). The phone's own voice still comes back, so it's measured first: from when sound
+ * starts, for 0.6 s, its loudest is the echo's level. After that, only sound well above it, held for a quarter of
+ * a second, counts as the user. Then [heard] runs, once, on this thread.
  *
  * [level] is the microphone's loudness for the pill, 0 to 1.
  */
@@ -55,9 +56,10 @@ class BargeIn(private val heard: () -> Unit) {
                 for (i in 0 until n) sum += buf[i].toDouble() * buf[i]
                 val rms = sqrt(sum / n) / 32768.0
                 level = minOf(1.0, sqrt(rms) * 2.2).toFloat()
+                if (frames == 0 && rms < START) continue // the speech hasn't reached the speaker yet
                 frames++
                 if (frames <= LEARN) { echo = max(echo, rms); continue }
-                val bar = max(FLOOR, echo * 2.5)
+                val bar = max(FLOOR, echo * FACTOR)
                 peak = max(peak, rms)
                 loud = if (rms > bar) loud + 1 else 0
                 if (loud >= HOLD) {
@@ -82,8 +84,10 @@ class BargeIn(private val heard: () -> Unit) {
         private const val TAG = "BargeIn"
         private const val RATE = 16000
         private const val FRAME = 320 // 20 ms
-        private const val LEARN = 15 // the first 300 ms: the echo's level
+        private const val START = 0.008 // the speech has started coming back
+        private const val LEARN = 30 // its first 600 ms: the echo's level
         private const val HOLD = 12 // 240 ms above the bar
         private const val FLOOR = 0.04 // never below this, however quiet the echo
+        private const val FACTOR = 2.5 // how much louder than the echo the user has to be
     }
 }
