@@ -75,7 +75,7 @@ class BargeIn(private val state: State, private val reference: (ShortArray) -> U
                     Log.i(TAG, "the echo is learned after %d ms (%.0f%% of it left)".format(frames * 20, ratio * 100))
                 }
                 if (frames % 50 == 0) Log.d(TAG, "%.1f s: mic %.3f, with the echo out %.3f, left %.0f%%".format(frames / 50.0, before, after, ratio * 100))
-                loud = if (armed && after > BAR) loud + 1 else 0
+                loud = if (armed && after > BAR && after > before * USER) loud + 1 else 0
                 if (loud >= HOLD) {
                     Log.i(TAG, "user talked over it (%.3f with the echo out, %.3f before)".format(after, before))
                     if (running) heard()
@@ -105,9 +105,8 @@ class BargeIn(private val state: State, private val reference: (ShortArray) -> U
         internal const val FRAME = 320 // 20 ms
         internal const val TAIL = 8192 // an echo up to 512 ms late (the playback and recording paths' delay included)
         private const val WORKING = 0.4 // the canceller is taking out most of the echo
+        private const val USER = 0.6 // most of the sound got through the canceller: not the phone's own voice
         private const val HOLD = 12 // 240 ms above the bar
-        // The user's voice with the echo out: on the S23's loudspeaker what's left of the phone's own voice stays under
-        // 0.03 once learned, and the user's comes through at 0.1 and more.
-        private const val BAR = 0.045
+        private const val BAR = 0.035 // the user's voice, with the echo out
     }
 }
