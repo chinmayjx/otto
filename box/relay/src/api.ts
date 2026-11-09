@@ -15,9 +15,9 @@
 //                                         clips from the phone (clips.ts)
 //
 // The box API, served to the app on the pipes it dials itself (tunnel.ts "dial ... box"), never on a port: the
-// clip routes, with POST /clips for uploads (clips.ts), and /voice/…, passed on as it is to the assistant's voice
-// server (box/bots, channels/voice) on 127.0.0.1, which answers 503 here when it isn't running; its WebSockets
-// (/voice/transcribe) too.
+// clip routes, with POST /clips for uploads (clips.ts), and /voice/… and /schedules…, passed on as they are to
+// otto-bots' server (box/bots: channels/voice, and local.ts for the schedules) on 127.0.0.1, which answers 503 here
+// when it isn't running; its WebSockets (/voice/transcribe) too.
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { Browser, NO_PHONE } from './browser.js';
@@ -109,7 +109,7 @@ export function serve(port: number, browser: Browser, device: Device, sessions: 
 export function serveBox(tunnel: Tunnel, clips: Clips, voicePort: number, log = console.log) {
   const server = http.createServer(async (req, res) => {
     try {
-      if (req.url?.startsWith('/voice/')) return voice(req, res, voicePort);
+      if (req.url?.startsWith('/voice/') || /^\/schedules(\/|\?|$)/.test(req.url ?? '')) return voice(req, res, voicePort);
       if (await clips.serve(req, res, true)) return;
       res.writeHead(404, { 'content-type': 'text/plain' });
       res.end('not found\n');
@@ -131,7 +131,7 @@ export function serveBox(tunnel: Tunnel, clips: Clips, voicePort: number, log = 
   return server;
 }
 
-/** A box API request for the voice adapter, passed on and its answer streamed back. */
+/** A box API request for otto-bots (the voice, the schedules), passed on and its answer streamed back. */
 function voice(req: http.IncomingMessage, res: http.ServerResponse, port: number) {
   const up = http.request({ host: '127.0.0.1', port, method: req.method, path: req.url, headers: { 'content-type': req.headers['content-type'] ?? 'application/json' } }, r => {
     res.writeHead(r.statusCode ?? 502, { 'content-type': r.headers['content-type'] ?? 'text/plain', 'cache-control': 'no-store' });
@@ -140,7 +140,7 @@ function voice(req: http.IncomingMessage, res: http.ServerResponse, port: number
   up.on('error', (e: any) => {
     if (res.headersSent) return void res.destroy();
     res.writeHead(503, { 'content-type': 'text/plain' });
-    res.end(e.code === 'ECONNREFUSED' ? 'voice: the bots service (otto-bots) is not running\n' : `voice: ${e.message}\n`);
+    res.end(e.code === 'ECONNREFUSED' ? 'the bots service (otto-bots) is not running\n' : `otto-bots: ${e.message}\n`);
   });
   // The phone giving up on a long poll ends ours too.
   res.on('close', () => { if (!res.writableFinished) up.destroy() });

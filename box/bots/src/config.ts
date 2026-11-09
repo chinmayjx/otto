@@ -45,6 +45,10 @@ export const configDir = () => expand(process.env.OTTO_BOTS_CONFIG || '~/.config
 export const stateRoot = () => expand(process.env.OTTO_BOTS_STATE || '~/.local/state/otto/bots');
 export const stateDir = (name: string) => path.join(stateRoot(), name);
 export const configFile = (name: string) => path.join(configDir(), `${name}.json`);
+/** Otto's state folder (the bots' folder's parent): channels' logs and schedules' runs live there too. */
+export const ottoState = () => path.dirname(stateRoot());
+/** The schedules' configs, next to the bots' (~/.config/otto/schedules/<name>.json). */
+export const schedulesDir = () => path.join(path.dirname(configDir()), 'schedules');
 /** The service's pid, for the CLI to signal it after a change. */
 export const pidFile = () => path.join(stateRoot(), 'service.pid');
 

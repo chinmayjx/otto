@@ -3,7 +3,8 @@
 // (core.ts) with its channels: Telegram, and on one bot, the user's assistant, Otto's voice (channels/voice), whose
 // server for the phone this also runs (on [voice] port of ~/.config/otto/config.toml, OTTO_CONFIG). On SIGHUP it reads the configs again: new bots start, removed ones
 // stop, and changed ones restart (the `otto bot` commands send it after a change). Each bot logs to the journal
-// and to its own log file, which `otto bot logs` reads.
+// and to its own log file, which `otto bot logs` reads. It also runs the schedules (schedules/), and the local API
+// that `otto send`, `otto channel` and `otto schedule` use (local.ts), on the voice server's port.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,8 +15,12 @@ import { Telegram } from './channels/telegram.js';
 import { History } from './channels/voice/history.js';
 import { Voice } from './channels/voice/index.js';
 import { notify, serveVoice } from './channels/voice/server.js';
+import { logChannel } from './channel-log.js';
 import { type BotConfig, expand, load, loadAll, pidFile, save, stateDir, stateRoot, update, VOICE } from './config.js';
 import { Bot } from './core.js';
+import { local } from './local.js';
+import { Scheduler } from './schedules/runner.js';
+import { checkZone } from './schedules/when.js';
 import type { Provider } from './provider.js';
 import { claude } from './providers/claude.js';
 
@@ -26,6 +31,8 @@ try { otto = parse(fs.readFileSync(process.env.OTTO_CONFIG || path.join(os.homed
 }
 const VOICE_PORT: number = otto.voice?.port ?? 9336;
 const RELAY_PORT: number = otto.relay?.local_port ?? 9334;
+let TIMEZONE: string = otto.schedules?.timezone ?? 'Asia/Kolkata';
+try { checkZone(TIMEZONE); } catch { console.error(`config: [schedules] timezone "${TIMEZONE}" isn't a time zone; using Asia/Kolkata`); TIMEZONE = 'Asia/Kolkata'; }
 
 const CHANNELS: Record<string, (c: BotConfig['channels'][string], log: (m: string) => void, name: string) => Channel> = {
   telegram: (c, log) => new Telegram(String(c.token), log),
@@ -89,6 +96,7 @@ function run(name: string, config: BotConfig) {
     tools: { command: process.execPath, args: [TOOLS] },
     save: patch => (r.config = update(name, patch)),
     log,
+    channelLog: logChannel,
   });
   r.bot = bot;
   // What was said on calls that never reached the agent (the service stopped first) goes in front of its next
@@ -145,18 +153,49 @@ async function assign(name: string) {
   reload();
 }
 
+/** A phone notification, in the notify channel's log too. */
+async function notifyPhone(text: string, by: string) {
+  await notify(RELAY_PORT, text);
+  logChannel('notify', { dir: 'out', by, text });
+}
+
+/** `otto send`: a message on a channel from anyone on the box, through the bot that has it: the one named, else the
+ * assistant (when it has that channel), else the only bot with it. "notify" is the phone's notifications, no bot's. */
+async function send(m: { channel: string; text?: string; file?: string; caption?: string; bot?: string; by: string }): Promise<string> {
+  if (m.channel === 'notify') {
+    if (m.file) throw new Error('a notification can\'t carry a file: send it on telegram, or publish an artifact and send its link');
+    await notifyPhone(m.text ?? '', m.by);
+    return 'notify';
+  }
+  const have = [...bots].filter(([, r]) => r.bot?.kinds.includes(m.channel));
+  const pick = m.bot ? have.find(([n]) => n === m.bot) : have.find(([, r]) => r.voice) ?? (have.length === 1 ? have[0] : undefined);
+  if (!pick) {
+    if (m.bot) throw new Error(bots.has(m.bot) ? `${m.bot} has no ${m.channel} channel running` : `no bot "${m.bot}" is running`);
+    const kinds = [...new Set([...bots.values()].flatMap(r => r.bot?.kinds ?? []))];
+    if (!have.length) throw new Error(`no running bot has a ${m.channel} channel (there's ${['notify', ...kinds].join(', ')})`);
+    throw new Error(`several bots have ${m.channel}: pick one with --bot (${have.map(([n]) => n).join(', ')})`);
+  }
+  await pick[1].bot!.deliver(m.channel, m, m.by);
+  return `${m.channel} (${pick[0]})`;
+}
+
+const scheduler = new Scheduler({ timezone: TIMEZONE, log: m => console.log(m), notify: text => notifyPhone(text, 'otto-bots') });
+
 fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
 serveVoice(VOICE_PORT, {
   assistant, bots: () => [...loadAll(() => {}).keys()], assign, log: m => console.log(m),
   deepgramKeyFile: otto.voice?.deepgram_key_file ? expand(String(otto.voice.deepgram_key_file)) : undefined,
+  route: (req, res, u) => local(req, res, u, { send, scheduler }),
 });
 fs.writeFileSync(pidFile(), String(process.pid));
 process.on('SIGHUP', () => { console.log('reloading'); reload(); });
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.on(sig, () => {
     for (const name of [...bots.keys()]) halt(name);
+    scheduler.stop();
     fs.rmSync(pidFile(), { force: true });
     process.exit(0);
   });
 }
 reload();
+scheduler.start();

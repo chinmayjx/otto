@@ -9,6 +9,8 @@ const home = os.homedir();
 
 export interface Config {
   relay: string; // the relay's local API
+  bots: string; // otto-bots' local API (the voice server's port): otto send, channel, schedule
+  timezone: string; // the user's, for schedules' times ([schedules] timezone)
   display: string; // the box's desktop
   sessionCommand: string | null; // an adapter's command that prints this agent's session id (and title)
   shots: string; // where screenshots are saved
@@ -27,6 +29,8 @@ export function loadConfig(): Config {
   const t = readToml(configFile());
   return {
     relay: `http://127.0.0.1:${t.relay?.local_port ?? 9334}`,
+    bots: `http://127.0.0.1:${t.voice?.port ?? 9336}`,
+    timezone: t.schedules?.timezone ?? 'Asia/Kolkata',
     display: t.desktop?.display ?? ':1',
     sessionCommand: process.env.OTTO_SESSION_COMMAND || t.session?.command || null,
     shots: process.env.OTTO_SHOTS || path.join(os.tmpdir(), 'otto-shots'),
@@ -137,6 +141,18 @@ export async function relay(config: Config, method: string, p: string, body?: un
     });
   } catch {
     throw new OttoError(`the Otto relay isn't running (expected at ${config.relay}); start it with: systemctl start otto-relay`);
+  }
+  if (!r.ok) throw new OttoError((await r.text()).trim() || `${p}: HTTP ${r.status}`);
+  return r;
+}
+
+/** A call to otto-bots' local API (box/bots local.ts). */
+export async function bots(config: Config, method: string, p: string, body?: unknown): Promise<Response> {
+  let r: Response;
+  try {
+    r = await fetch(config.bots + p, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch {
+    throw new OttoError(`otto-bots isn't running (expected at ${config.bots}); start it with: systemctl start otto-bots`);
   }
   if (!r.ok) throw new OttoError((await r.text()).trim() || `${p}: HTTP ${r.status}`);
   return r;

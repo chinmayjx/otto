@@ -30,6 +30,8 @@ export interface BotOptions {
   log: (m: string) => void;
   /** How often the typing indicator is renewed. */
   typingEvery?: number;
+  /** Notes each message on a channel in that channel's own log (channel-log.ts). */
+  channelLog?: (kind: string, e: { dir: 'in' | 'out'; by: string; text?: string; file?: string }) => void;
 }
 
 const COMMANDS = [
@@ -65,6 +67,12 @@ function instructions(links: Link[], tool: (t: string) => string): string {
     'sentences, short lists.',
     'For anything long or visual (a report, a table, a plan, a page), publish an artifact with `otto artifact publish`',
     'and send a short summary and its link.',
+    'To do something later or on a schedule, make a schedule: `otto schedule add <name> --at HH:MM [--every ...] | --cron',
+    '... | --once "YYYY-MM-DD HH:MM" --prompt "..."` (see `otto help`; times are the user\'s). Each run is a fresh session',
+    'that sees only its prompt, none of this conversation: write the prompt so it stands on its own, with everything',
+    'it needs, including whether and where to tell the user (`otto send telegram|otto_voice|notify "..."`). Runs and',
+    'what they sent aren\'t in this conversation: when the user mentions one, or replies to a message you don\'t',
+    'remember sending, look with `otto schedule runs` and `otto channel log <channel>`.',
   ].join('\n');
 }
 
@@ -220,6 +228,7 @@ export class Bot {
     }
     if (!prompt.trim()) return;
     l.chat = m.chat;
+    this.opts.channelLog?.(kind, { dir: 'in', by: m.record ? 'user (for the record)' : 'user', text: prompt });
     if (m.record) return this.remember(kind, prompt, m.delivered);
     this.last = kind;
     if (!this.busy) this.begin(); // otherwise it steers the turn in progress
@@ -284,8 +293,21 @@ export class Bot {
   private say(text: string, kinds: string[] = [this.last]) {
     for (const kind of kinds) {
       const l = this.links.get(kind);
-      if (l?.chat != null) l.channel.send(l.chat, text).catch(e => this.log(`send on ${kind}: ${e.message}`));
+      if (l?.chat == null) continue;
+      this.opts.channelLog?.(kind, { dir: 'out', by: `bot ${this.name}`, text });
+      l.channel.send(l.chat, text).catch(e => this.log(`send on ${kind}: ${e.message}`));
     }
+  }
+
+  /** A message or file on one of the bot's channels from someone else on the box (`otto send`: a scheduled run, a
+   * session), to the owner's chat there. It's not part of the bot's conversation, only of the channel's log. */
+  async deliver(kind: string, m: { text?: string; file?: string; caption?: string }, by: string): Promise<void> {
+    const l = this.links.get(kind);
+    if (!l) throw new Error(`${this.name} has no ${kind} channel`);
+    if (l.chat === null) throw new Error(`${kind} has no owner yet (otto bot pair ${this.name})`);
+    if (m.file) await l.channel.sendFile(l.chat, m.file, m.caption);
+    else await l.channel.send(l.chat, m.text ?? '');
+    this.opts.channelLog?.(kind, { dir: 'out', by, text: m.file ? m.caption : m.text, file: m.file });
   }
 
   // --- The tools' socket -------------------------------------------------------------------------------------------
@@ -317,6 +339,8 @@ export class Bot {
           if (m.kind === 'message') await l.channel.send(l.chat, String(m.text ?? ''));
           else if (m.kind === 'file') await l.channel.sendFile(l.chat, String(m.path ?? ''), m.caption);
           else throw new Error('unknown kind');
+          this.opts.channelLog?.(l.channel.kind, { dir: 'out', by: `bot ${this.name}`,
+            ...(m.kind === 'file' ? { file: String(m.path ?? ''), text: m.caption } : { text: String(m.text ?? '') }) });
           this.answered.add(l.channel.kind);
           res.writeHead(200).end('sent');
         } catch (e: any) {

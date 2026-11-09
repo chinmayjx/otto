@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { bot } from './bots.js';
+import { channel, schedule, send } from './schedules.js';
 import { loadConfig, session, relay, browser, phone, saveShot, desktopShot, pairing, pairingLink, OttoError } from './lib.js';
 
 const HELP = `otto: the phone, its browser and the box's desktop, for agents and people
@@ -56,6 +57,26 @@ Clips (what the user collected on the phone for you: text, screenshots, notes on
   otto clip <id>                           the clip: its text, its source, and the paths of its images
   otto clip list [--limit N]               the newest clips
   otto clip rm <id>
+
+Messages to the user (through otto-bots, which holds the channels):
+  otto send <channel> <text>               on telegram, otto_voice (spoken on a call, else a notification) or
+                                           notify (a phone notification); text from stdin when not given
+  otto send telegram --file F [--caption C]   a file, as a photo when it's an image
+  otto send <channel> --bot B ...          when several bots have that channel
+  otto channel log <channel> [--since 2h] [--lines N]   what was sent and received there, and by whom (a bot,
+                                           a scheduled run, a session): look here when the user replies to a
+                                           message you don't remember sending
+
+Schedules (a prompt run at a time, as a fresh session on this box; times in [schedules] timezone):
+  otto schedule add <name> --at HH:MM [--every day|weekday|weekend|mon,thu] --prompt "…" | --prompt-file F
+  otto schedule add <name> --cron "M H dom mon dow" | --once "YYYY-MM-DD HH:MM" --prompt "…"
+       [--agent claude|codex] [--cwd DIR] [--model M] [--timeout 30m]
+                                           the run sees only its prompt: spell out everything it needs,
+                                           including whether and where to tell the user (otto send)
+  otto schedule list | show <name> | edit <name> [flags as for add] | pause <name> | resume <name> | rm <name>
+  otto schedule run <name>                 run it now
+  otto schedule runs [<name>] [--limit N]  recent runs: when, status, transcript
+  otto schedule runs <name> <run>          what that run did
 
 Bots (chat bots, each one long-running agent conversation on this box; the otto-bots service runs them):
   otto bot add <name> --channel telegram [--cwd DIR] [--model M] [--permission-mode MODE]
@@ -235,6 +256,15 @@ async function main(argv: string[]) {
 
     case 'bot': case 'bots':
       return bot(cmd, a, out);
+
+    case 'send':
+      return send(config, parseArgs(argv.slice(1)), out);
+
+    case 'channel': case 'channels':
+      return channel(config, cmd, a, out);
+
+    case 'schedule': case 'schedules':
+      return schedule(config, cmd, a, out);
 
     case 'artifact': {
       // The artifact hub's own CLI, until it moves into hub/artifacts.
