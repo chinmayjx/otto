@@ -18,7 +18,6 @@ import android.graphics.SweepGradient
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.TextPaint
-import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -31,18 +30,20 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
- * The assistant's pill: a dark pill floating over every app while a voice call is on (VoiceService). On its left a
- * small glass sphere with coloured light moving inside it, then a waveform and what the call is doing in words; on
- * its right a × that ends the call. The light and the bars follow the microphone's level while it listens and the
- * voice's while it speaks, and run along while Codex thinks. A tap mutes and unmutes (and after an error, tries
- * again). It can be dragged anywhere.
+ * The assistant's pill: a dark pill floating over every app while a voice call is on (VoiceService): a small glass
+ * sphere with coloured light moving inside it, one word for what the call is doing, and a × that ends it. The light
+ * follows the microphone's level while it listens and the voice's while it speaks, and swirls while Codex thinks.
+ * The pill is as wide as its word and glides to the new width when the word changes. A tap mutes and unmutes (and
+ * after an error, tries again). It can be dragged anywhere; left near a side of the screen, it keeps that end where
+ * it is and grows and shrinks away from it.
  */
 class VoicePill(private val ctx: Context, private val tap: () -> Unit, private val close: () -> Unit) {
-    /** What the pill shows, each with its words and the three colours of the sphere's light. */
+    /** What the pill shows, each with its word and the three colours of the sphere's light. */
     enum class Look(val label: String, val palette: IntArray) {
         CONNECTING("Connecting", colors("#8e949c", "#ab9cf2", "#6b7280")),
         LISTENING("Listening", colors("#6aa0ff", "#7ee0f0", "#ab9cf2")),
@@ -52,6 +53,9 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
         ERROR("Tap to retry", colors("#ff6b81", "#c2485b", "#ff6b81")),
     }
 
+    /** Which point of the pill stays put as its width changes. */
+    private enum class Anchor { LEFT, MIDDLE, RIGHT }
+
     /** The call it shows, read each frame; null while there's none (after an error). */
     var call: VoiceCall? = null
     /** Set after a failure: the pill says so, with a retry. */
@@ -60,51 +64,47 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
             field = v
             pill.invalidate()
         }
-    /** What Codex is doing, in a few words, shown for a while after "Thinking". */
-    private var note: String? = null
-    private var noteUntil = 0L
 
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private val pill = PillView(ctx)
+    private val end = ImageView(ctx)
     private val root = FrameLayout(ctx)
     private lateinit var lp: WindowManager.LayoutParams
     private var look: Look? = null
-
-    fun note(text: String) {
-        note = text
-        noteUntil = System.currentTimeMillis() + 6000
-    }
+    private var anchor = Anchor.MIDDLE
+    private var anchorX = 0 // on the screen: the pill's left end, middle or right end
 
     @SuppressLint("ClickableViewAccessibility")
     fun show() {
-        root.addView(pill, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
-        // The ×, inside the pill on its right.
-        val end = ImageView(ctx).apply {
+        root.addView(pill, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        // The ×, inside the pill's right end, moved along with it (PillView).
+        end.apply {
             setImageResource(R.drawable.ccm_close)
             imageTintList = ColorStateList.valueOf(BrowserService.STEEL)
             scaleType = ImageView.ScaleType.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(BrowserService.LINE)
+                setColor(END_BG)
             }
             contentDescription = "End the assistant"
             setOnClickListener { close() }
         }
-        root.addView(end, FrameLayout.LayoutParams(dp(END), dp(END), Gravity.CENTER_VERTICAL or Gravity.END).apply {
-            rightMargin = dp(ROOM) + dp((H - END) / 2)
+        root.addView(end, FrameLayout.LayoutParams(dp(END), dp(END), Gravity.TOP or Gravity.START).apply {
+            topMargin = dp(ROOM) + dp((H - END) / 2)
         })
 
         val bounds = wm.currentWindowMetrics.bounds
-        lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+        anchorX = bounds.width() / 2
+        lp = WindowManager.LayoutParams(0, dp(H + 2 * ROOM),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT).apply {
-            // Placed by its middle, so it stays where it was put as its words get longer or shorter.
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-            x = 0
+            gravity = Gravity.TOP or Gravity.START
             y = (bounds.height() * 0.7f).roundToInt()
             title = "Otto assistant"
         }
+        pill.start(lookNow())
+        place(pill.widest())
 
         // A tap: mute (or retry); a drag: the pill moves.
         val slop = ViewConfiguration.get(ctx).scaledTouchSlop
@@ -131,7 +131,8 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         root.animate().scaleX(1f).scaleY(1f).setDuration(120)
-                        if (!dragging && e.actionMasked == MotionEvent.ACTION_UP) v.performClick()
+                        if (dragging) settle()
+                        else if (e.actionMasked == MotionEvent.ACTION_UP) v.performClick()
                     }
                 }
                 return true
@@ -143,6 +144,39 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
 
     fun dismiss() {
         if (root.isAttachedToWindow) wm.removeView(root)
+    }
+
+    /**
+     * The window [width] px of pill wide (and room round it), placed so the anchored point stays where it is. While
+     * the width changes the window is as wide as the wider of the two, and the pill is drawn inside it.
+     */
+    private fun place(width: Float) {
+        lp.width = width.roundToInt() + 2 * dp(ROOM)
+        lp.x = when (anchor) {
+            Anchor.LEFT -> anchorX - dp(ROOM)
+            Anchor.MIDDLE -> anchorX - lp.width / 2
+            Anchor.RIGHT -> anchorX + dp(ROOM) - lp.width
+        }
+        if (root.isAttachedToWindow) wm.updateViewLayout(root, lp)
+    }
+
+    /** Dropped after a drag: near a side of the screen, that end of the pill stays put; elsewhere, its middle. */
+    private fun settle() {
+        val sw = wm.currentWindowMetrics.bounds.width()
+        val left = lp.x + pill.pillLeft()
+        val w = pill.pillWidth()
+        val mid = left + w / 2
+        anchor = when {
+            mid < sw / 3f -> Anchor.LEFT
+            mid > sw * 2 / 3f -> Anchor.RIGHT
+            else -> Anchor.MIDDLE
+        }
+        anchorX = when (anchor) {
+            Anchor.LEFT -> left
+            Anchor.MIDDLE -> mid
+            Anchor.RIGHT -> left + w
+        }.roundToInt()
+        place(pill.widest())
     }
 
     /** What the pill shows now, from the call: an error first, then connecting, muted, speaking, thinking, listening. */
@@ -158,12 +192,6 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
         }
     }
 
-    /** Its words: the state, and while Codex thinks, what it's doing if that's fresh. */
-    private fun words(l: Look): String {
-        val n = note
-        return if (l == Look.THINKING && n != null && System.currentTimeMillis() < noteUntil) "${l.label} · $n" else l.label
-    }
-
     private fun setLook(l: Look) {
         if (l == look) return
         look = l
@@ -175,15 +203,17 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
     }
 
     /**
-     * The pill, drawn each frame while it's on screen, with room round it for the sphere's halo and the shadow. In dp:
-     * 46 tall, the sphere's centre 23 in, seven bars from 50 (8 apart), the words from 112, then the ×.
+     * The pill, drawn each frame while it's on screen, with room round it for the shadow. In dp: 46 tall, the
+     * sphere's glass 28 across with its centre 23 in, the word from 47, then 10 and the × (28), 9 from the right end.
+     * When the word changes, the width glides to the new one (220 ms) and the word cross-fades (120 ms out, then in).
      */
     private inner class PillView(ctx: Context) : View(ctx) {
         private val d = ctx.resources.displayMetrics.density
         private val text = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 12.5f, ctx.resources.displayMetrics)
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 14f, ctx.resources.displayMetrics)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            color = BrowserService.TEXT
+            letterSpacing = 0.007f
+            color = WORD
         }
         private val body = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = BrowserService.FIELD
@@ -198,32 +228,63 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
         private val turn = Matrix()
         private val t0 = System.nanoTime()
         private var level = 0f
-        private var shown = ""
-        private var shownWidth = 0f
+        // The word and the width, and the change in progress: from what, since when (ms since t0).
+        private var word = ""
+        private var oldWord = ""
+        private var fromW = 0f
+        private var toW = 0f
+        private var changedAt = -1e6f
+        private var fitted = true // the window is down to the new width
 
-        /** The words as they fit in the pill at its widest, ellipsized. */
-        private fun fit(s: String): String {
-            val most = (MAX_W - TEXT_X - GAP - END - (H - END) / 2) * d
-            return TextUtils.ellipsize(s, text, most, TextUtils.TruncateAt.END).toString()
+        /** The pill's width for [w], in px. */
+        private fun widthFor(w: String) = (TEXT_X + GAP + END + EDGE) * d + text.measureText(w)
+
+        private fun now() = (System.nanoTime() - t0) / 1e6f
+
+        /** The first word, at once. */
+        fun start(l: Look) {
+            word = l.label
+            oldWord = word
+            fromW = widthFor(word)
+            toW = fromW
         }
 
-        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-            val w = (TEXT_X + GAP + END + (H - END) / 2) * d + shownWidth
-            setMeasuredDimension((w + 2 * ROOM * d).roundToInt(), ((H + 2 * ROOM) * d).roundToInt())
+        /** The wider of where the width is coming from and going to: the window's width while it changes. */
+        fun widest() = max(fromW, toW)
+
+        /** The pill's width now, in px. */
+        fun pillWidth(): Float {
+            val u = min(1f, (now() - changedAt) / WIDTH_MS)
+            val e = 1 - (1 - u) * (1 - u) * (1 - u)
+            return fromW + (toW - fromW) * e
+        }
+
+        /** Where the pill's left end is in the window, by the anchor. */
+        fun pillLeft(): Float {
+            val w = pillWidth()
+            return when (anchor) {
+                Anchor.LEFT -> ROOM * d
+                Anchor.MIDDLE -> (width - w) / 2
+                Anchor.RIGHT -> width - ROOM * d - w
+            }
+        }
+
+        private fun change(to: String) {
+            if (to == word) return
+            val ms = now()
+            fromW = pillWidth()
+            oldWord = if (ms - changedAt < FADE_MS) oldWord else word
+            word = to
+            toW = widthFor(to)
+            changedAt = ms
+            fitted = false
+            post { place(widest()) }
         }
 
         override fun onDraw(c: Canvas) {
             val l = lookNow()
             setLook(l)
-            val words = fit(words(l))
-            if (words != shown) {
-                shown = words
-                val w = text.measureText(words)
-                if (w != shownWidth) {
-                    shownWidth = w
-                    requestLayout()
-                }
-            }
+            change(l.label)
             val call = call
             val target = when (l) {
                 Look.LISTENING -> call?.micLevel ?: 0f
@@ -231,35 +292,34 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
                 else -> 0f
             }
             level += (target - level) * 0.25f
-            val t = (System.nanoTime() - t0) / 1e9f
-            val left = ROOM * d
+            val ms = now()
+            val t = ms / 1000f
+            val w = pillWidth()
+            if (!fitted && ms - changedAt >= WIDTH_MS) {
+                fitted = true
+                fromW = toW
+                post { place(toW) }
+            }
+            val left = pillLeft()
             val top = ROOM * d
             val cy = top + H / 2f * d
-            // The pill.
-            r.set(left, top, width - ROOM * d, top + H * d)
+            // The pill, and the × at its right end.
+            r.set(left, top, left + w, top + H * d)
             c.drawRoundRect(r, H / 2f * d, H / 2f * d, body)
-            sphere(c, left + 23 * d, cy, 15 * d, l, t, level)
-            // The waveform: the level while listening or speaking, a travelling wave while thinking, flat when still.
-            fill.shader = null
-            fill.color = when (l) {
-                Look.ERROR -> ERROR
-                Look.MUTED -> STILL_BARS
-                else -> BrowserService.ACCENT
+            val endX = left + w - (EDGE + END) * d
+            if (end.x != endX) end.x = endX
+            sphere(c, left + 23 * d, cy, 14 * d, l, t, level)
+            // The word, cross-fading: the old one out, then the new one in; kept off the ×.
+            val since = ms - changedAt
+            val (shown, a) = if (since < FADE_MS) oldWord to 1 - since / FADE_MS else word to min(1f, (since - FADE_MS) / FADE_MS)
+            if (a > 0f) {
+                c.save()
+                c.clipRect(left + TEXT_X * d, top, endX - GAP * d / 2, top + H * d)
+                text.alpha = (255 * a).roundToInt()
+                val fm = text.fontMetrics
+                c.drawText(shown, left + TEXT_X * d, cy - (fm.ascent + fm.descent) / 2, text)
+                c.restore()
             }
-            val bx = left + 50 * d
-            for (i in 0 until 7) {
-                val h = d * when (l) {
-                    Look.THINKING -> 4 + 6 * max(0f, sin(t * 6 - i * 0.6f))
-                    Look.LISTENING, Look.SPEAKING -> 3 + 22 * level * (0.45f + 0.55f * abs(sin(t * 9 + i * 1.3f)))
-                    Look.CONNECTING -> 3 + 3 * max(0f, sin(t * 3 - i * 0.5f))
-                    else -> 3f
-                }
-                r.set(bx + i * 8 * d, cy - h / 2, bx + i * 8 * d + 3.5f * d, cy + h / 2)
-                c.drawRoundRect(r, 2 * d, 2 * d, fill)
-            }
-            // The words.
-            val fm = text.fontMetrics
-            c.drawText(shown, left + TEXT_X * d, cy - (fm.ascent + fm.descent) / 2, text)
             if (isAttachedToWindow) postInvalidateOnAnimation()
         }
 
@@ -277,9 +337,11 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
                 else -> 0f
             }
             val rs = radius * (1 + 0.12f * live)
+            // Small, in the pill: the rings and the halo stay inside it.
+            val ringOff = min(6 * d, radius * 0.25f)
             // The halo.
             if (!still) {
-                val out = rs * (1.7f + live * 0.6f)
+                val out = rs * (1.3f + live * 0.4f)
                 fill.shader = RadialGradient(x, y, out, intArrayOf(alpha(p[0], 0x66), alpha(p[0], 0x66), alpha(p[0], 0)),
                     floatArrayOf(0f, rs * 0.8f / out, 1f), Shader.TileMode.CLAMP)
                 c.drawCircle(x, y, out, fill)
@@ -288,7 +350,7 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
             if (l == Look.SPEAKING) {
                 line.color = alpha(p[1], (80 * lv + 20).roundToInt())
                 line.strokeWidth = 1.5f * d
-                c.drawCircle(x, y, rs + 5 * d + lv * 9 * d, line)
+                c.drawCircle(x, y, rs + ringOff + lv * 3 * d, line)
             }
             // The glass, in a layer of its own: the light is added onto it, then everything outside the circle cut away.
             val box = rs + d
@@ -327,7 +389,7 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
                 line.color = alpha(BrowserService.ACCENT, 0xaa)
                 val phase = ((-t * 18 * d) % (7 * d) + 7 * d) % (7 * d)
                 line.pathEffect = DashPathEffect(floatArrayOf(2 * d, 5 * d), phase)
-                c.drawCircle(x, y, rs + 6 * d, line)
+                c.drawCircle(x, y, rs + ringOff, line)
                 line.pathEffect = null
             }
             if (l == Look.THINKING) {
@@ -340,7 +402,7 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
                 sweep.setLocalMatrix(turn)
                 line.shader = sweep
                 line.strokeWidth = 2.5f * d
-                r.set(x - rs - 6 * d, y - rs - 6 * d, x + rs + 6 * d, y + rs + 6 * d)
+                r.set(x - rs - ringOff, y - rs - ringOff, x + rs + ringOff, y + rs + ringOff)
                 c.drawArc(r, deg, Math.toDegrees(1.9).toFloat(), false, line)
                 line.shader = null
             }
@@ -384,14 +446,17 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
 
     companion object {
         private const val H = 46 // the pill's height
-        private const val TEXT_X = 112 // where the words start
-        private const val GAP = 10 // between the words and the ×
+        private const val TEXT_X = 47 // where the word starts: 10 after the sphere's glass
+        private const val GAP = 10 // between the word and the ×
         private const val END = 28 // the ×
-        private const val MAX_W = 260 // the pill at its widest
-        private const val ROOM = 16 // round the pill, for the halo and the shadow
+        private const val EDGE = 9 // the ×'s distance from the right end (and the glass's from the left)
+        private const val ROOM = 12 // round the pill, for the shadow
+        private const val WIDTH_MS = 220f
+        private const val FADE_MS = 120f
         private val ERROR = Color.parseColor("#ff6b81")
         private val GLASS = Color.parseColor("#101014")
-        private val STILL_BARS = Color.parseColor("#5b6068")
+        private val WORD = Color.parseColor("#e9eaee")
+        private val END_BG = Color.parseColor("#26262c")
 
         private fun colors(vararg hex: String) = hex.map { Color.parseColor(it) }.toIntArray()
 

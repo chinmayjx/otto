@@ -48,7 +48,6 @@ class VoiceService : Service() {
         val pill = pill ?: return
         pill.error = null
         call = VoiceCall(this, object : VoiceCall.Listener {
-            override fun note(text: String) = main.post { pill.note(text) }.let {}
             override fun failed(message: String) = main.post {
                 if (call == null) return@post
                 call = null
