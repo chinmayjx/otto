@@ -112,9 +112,9 @@ class Tray(private val ctx: Context, private val items: List<Item>) {
     fun release(x: Float, y: Float, moved: Boolean) {
         val i = itemAt(x, y)
         when {
+            !moved -> if (hot >= 0) { light(hot, false); hot = -1 } // a press without a drag: it stays, to tap
             i >= 0 -> pick(i)
-            moved -> dismiss()
-            else -> if (hot >= 0) { light(hot, false); hot = -1 }
+            else -> dismiss()
         }
     }
 
