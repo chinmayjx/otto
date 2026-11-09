@@ -6,6 +6,7 @@ import { Transcript } from '../channels/voice/transcript.js';
 import { speakable } from '../channels/voice/call.js';
 import { normalize } from '../config.js';
 import { Voice } from '../channels/voice/index.js';
+import { accessTokenUsable, applyRefresh, jwtExp } from '../channels/voice/codex-auth.js';
 import { serveVoice } from '../channels/voice/server.js';
 import type { Incoming } from '../channel.js';
 
@@ -28,6 +29,28 @@ test('transcript: each line goes once, in the order said, waiting for words stil
 test('speakable text', () => {
   assert.equal(speakable('**Done.** See [the report](https://x.y/z) and https://a.b\n- one\n- two'), 'Done. See the report and the link\none\ntwo');
   assert.equal(speakable('my_file and `code`'), 'my_file and code');
+});
+
+test('openai voice: an API key, or the Codex sign-in', () => {
+  const deps = { notify: async () => {}, log: () => {} };
+  assert.equal(new Voice({ provider: 'openai-realtime', auth: 'codex' }, deps).provider, 'openai-realtime');
+  assert.throws(() => new Voice({ provider: 'openai-realtime' }, deps), /apiKey/);
+  assert.throws(() => new Voice({ provider: 'openai-realtime', auth: 'nope' }, deps), /unknown voice auth/);
+});
+
+test('a Codex access token is used until shortly before it expires', () => {
+  const jwt = (exp: number) => `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.x`;
+  const now = 1_000_000;
+  assert.equal(jwtExp(jwt(now + 600)), now + 600);
+  assert.equal(accessTokenUsable(jwt(now + 600), now), true);
+  assert.equal(accessTokenUsable(jwt(now + 30), now), false);
+  assert.equal(accessTokenUsable('not-a-jwt', now), true);
+  const merged = applyRefresh({ auth_mode: 'chatgpt', tokens: { access_token: 'old', refresh_token: 'r', account_id: 'acc' } }, { access_token: 'new' }, new Date('2026-11-09T00:00:00.000Z'));
+  assert.equal(merged.tokens!.access_token, 'new');
+  assert.equal(merged.tokens!.refresh_token, 'r');
+  assert.equal(merged.tokens!.account_id, 'acc');
+  assert.equal(merged.auth_mode, 'chatgpt');
+  assert.equal(merged.last_refresh, '2026-11-09T00:00:00.000Z');
 });
 
 test('config: the first shape reads as the new one', () => {

@@ -49,16 +49,19 @@ is on comes as a phone notification. The Otto app's main screen shows which bot 
 
 ```sh
 otto bot voice mybot                              # OpenAI's realtime voice: asks for an API key on stdin
+otto bot voice mybot --auth codex                 # the same voice, with the Codex ChatGPT sign-in (codex login)
 otto bot voice mybot --provider android           # the phone's own speech recognizer and text-to-speech (free)
 otto bot voice mybot --model gpt-realtime-2.1 --voice marin
 otto bot voice mybot --off
 ```
 
 - **openai-realtime**: a realtime voice model is on the call (audio goes straight between the phone and OpenAI; the
-  box creates the call with the key and joins it on a side connection). It handles small talk itself and hands
+  box creates the call with a key and joins it on a side connection). With an API key, that key is the one in the
+  config. With `--auth codex`, each call mints a short-lived realtime key from the Codex sign-in in
+  `~/.codex/auth.json` and opens the call with it; the sign-in is refreshed when it's near expiry. The voice handles small talk itself and hands
   everything else to the bot with its `ask_brain` tool, fire and forget: the bot gets everything said on the call
   since the last hand-off, and its replies are spoken word for word at the next gap. The voice remembers nothing
-  between calls; it asks the bot. About $0.02–0.04 a minute with the mini model.
+  between calls; it asks the bot. The default model is `gpt-realtime-2.1` (the voice is `marin`). On an API key that is about $0.07 a minute; `gpt-realtime-2.1-mini` is the cheaper one, about $0.02–0.04.
 - **android**: no voice model in between; every sentence the phone hears goes to the bot, and its replies are read
   out by the phone.
 

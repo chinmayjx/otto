@@ -20,6 +20,7 @@ const NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
 const CHANNELS = ['telegram'];
 const VOICE = 'otto_voice';
 const VOICE_PROVIDERS = ['openai-realtime', 'android'];
+const VOICE_AUTHS = ['api-key', 'codex'];
 
 /** A config in either shape (box/bots/src/config.ts), in the current one: channels by kind. */
 function normalize(c: any): any {
@@ -165,7 +166,12 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
         const s = status(n);
         const kinds = Object.keys(c.channels ?? {});
         const paired = kinds.every(k => k === VOICE || c.channels[k].owner);
-        return [n, kinds.map(k => (k === VOICE ? `voice (${c.channels[k].provider ?? 'openai-realtime'}): assistant` : k)).join(', '),
+        return [n, kinds.map(k => {
+          if (k !== VOICE) return k;
+          const v = c.channels[k];
+          const via = v.auth === 'codex' ? ', codex' : '';
+          return `voice (${v.provider ?? 'openai-realtime'}${via}): assistant`;
+        }).join(', '),
           s?.handle ?? '', s ? 'running' : 'stopped', paired ? 'paired' : 'unpaired',
           c.session ? `session ${String(c.session).slice(0, 8)}` : 'new session', (c.cwd ?? '~/code').replace(home, '~')];
       });
@@ -194,7 +200,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
     }
 
     case 'voice': {
-      if (!name) throw new OttoError('missing a name: otto bot voice <name> [--provider openai-realtime|android] [--model M] [--voice V] | --off');
+      if (!name) throw new OttoError('missing a name: otto bot voice <name> [--provider openai-realtime|android] [--auth api-key|codex] [--model M] [--voice V] [--key] | --off');
       const c = config(name);
       if (a.off) {
         if (!c.channels[VOICE]) return out(`${name} has no voice.`);
@@ -206,14 +212,19 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       }
       const provider = a.provider ?? c.channels[VOICE]?.provider ?? 'openai-realtime';
       if (!VOICE_PROVIDERS.includes(provider)) throw new OttoError(`unknown voice provider "${provider}" (known: ${VOICE_PROVIDERS.join(', ')})`);
+      if (a.auth && !VOICE_AUTHS.includes(a.auth)) throw new OttoError(`unknown voice auth "${a.auth}" (known: ${VOICE_AUTHS.join(', ')})`);
+      if (a.auth === 'codex' && a.key) throw new OttoError('--auth codex uses the Codex sign-in; leave out --key');
       const v: Record<string, unknown> = { ...(c.channels[VOICE] ?? {}), provider };
       if (a.model) v.model = a.model;
       if (a.voice) v.voice = a.voice;
-      // The key stays when switching to android, so switching back needs none.
-      if (provider === 'openai-realtime' && (!v.apiKey || a.key)) {
+      if (a.auth) v.auth = a.auth;
+      if (a.key) v.auth = 'api-key'; // an explicit key means use the key, even after --auth codex was set before
+      // The key stays when switching to android or to the Codex sign-in, so switching back needs none.
+      if (provider === 'openai-realtime' && v.auth !== 'codex' && (!v.apiKey || a.key)) {
         const key = await readToken('OpenAI API key (not shown): ');
         if (!/^sk-[\w-]{20,}$/.test(key)) throw new OttoError('that doesn\'t look like an OpenAI API key (sk-…)');
         v.apiKey = key;
+        v.auth = 'api-key';
       }
       // Only one bot is the assistant: the voice leaves any other bot.
       let files: string[] = [];
@@ -231,7 +242,10 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       c.channels[VOICE] = v;
       save(name, c);
       const running = reload();
-      return out(`${name} is your assistant, with ${provider === 'android' ? 'the phone\'s own speech' : `OpenAI's realtime voice (${v.model ?? 'gpt-realtime-2.1-mini'})`}. `
+      const how = provider === 'android' ? 'the phone\'s own speech'
+        : v.auth === 'codex' ? `OpenAI's realtime voice via the Codex sign-in (${v.model ?? 'gpt-realtime-2.1'})`
+        : `OpenAI's realtime voice (${v.model ?? 'gpt-realtime-2.1'})`;
+      return out(`${name} is your assistant, with ${how}. `
         + `On the phone: long-press the handle › Assistant.${running ? '' : `\n${NOT_RUNNING} try it.`}`);
     }
 

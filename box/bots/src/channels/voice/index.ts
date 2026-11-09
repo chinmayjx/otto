@@ -2,7 +2,8 @@
 // when Otto says something with no call on. One bot on the box has it: that bot is the user's assistant.
 //
 // The channel's config picks what does the listening and speaking:
-//   {"provider": "openai-realtime", "apiKey": "sk-…", "model"?: "gpt-realtime-2.1-mini", "voice"?: "marin"}
+//   {"provider": "openai-realtime", "apiKey": "sk-…", "model"?: "gpt-realtime-2.1", "voice"?: "marin"}
+//   {"provider": "openai-realtime", "auth": "codex", …}  the Codex ChatGPT sign-in; a realtime key is minted per call
 //   {"provider": "android"}       the phone's own speech recognizer and text-to-speech
 //
 // The phone reaches it through the relay's box API, which passes /voice/… on to the voice server (server.ts).
@@ -13,6 +14,7 @@ import type { Call } from './call.js';
 import { OpenAICall } from './openai.js';
 
 export const PROVIDERS = ['openai-realtime', 'android'];
+export const AUTHS = ['api-key', 'codex'];
 
 const FORMATTING = [
   'A voice call with you from the Otto app on their phone; when no call is on, what you send shows as a phone',
@@ -41,7 +43,11 @@ export class Voice implements Channel {
   constructor(readonly config: ChannelConfig, private deps: VoiceDeps) {
     const p = config.provider ?? 'openai-realtime';
     if (!PROVIDERS.includes(String(p))) throw new Error(`unknown voice provider "${p}" (known: ${PROVIDERS.join(', ')})`);
-    if (p === 'openai-realtime' && typeof config.apiKey !== 'string') throw new Error('openai-realtime needs an apiKey');
+    if (p === 'openai-realtime') {
+      const auth = String(config.auth ?? 'api-key');
+      if (!AUTHS.includes(auth)) throw new Error(`unknown voice auth "${auth}" (known: ${AUTHS.join(', ')})`);
+      if (auth === 'api-key' && typeof config.apiKey !== 'string') throw new Error('openai-realtime needs an apiKey, or "auth": "codex"');
+    }
   }
 
   get provider(): string { return String(this.config.provider ?? 'openai-realtime'); }
@@ -66,7 +72,9 @@ export class Voice implements Channel {
     const call: Call = this.provider === 'android'
       ? new AndroidCall(host)
       : new OpenAICall(host, {
-        apiKey: String(this.config.apiKey), model: this.config.model as string | undefined,
+        auth: this.config.auth === 'codex' ? 'codex' : 'api-key',
+        apiKey: this.config.auth === 'codex' ? undefined : String(this.config.apiKey),
+        model: this.config.model as string | undefined,
         voice: this.config.voice as string | undefined, instructions: this.config.instructions as string | undefined,
         turnDetection: this.config.turnDetection as Record<string, unknown> | undefined,
         noiseReduction: this.config.noiseReduction as Record<string, unknown> | null | undefined,
