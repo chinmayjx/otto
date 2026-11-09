@@ -66,13 +66,13 @@ function fields(a: Args): Record<string, unknown> {
 
 function line(config: Config, s: any): string {
   const last = s.running ? 'running now' : s.last ? `last ${s.last.status} ${time(config, s.last.started)}` : 'never run';
-  return `${s.name}  ${s.description}${s.paused ? '  (paused)' : `  next ${time(config, s.next)}`}  ${last}`;
+  return `${s.name}  ${s.description}${s.paused ? '  (paused)' : s.next ? `  next ${time(config, s.next)}` : '  (done)'}  ${last}`;
 }
 
 function detail(config: Config, s: any): string {
   return [
     `${s.name}: ${s.description} (${config.timezone})${s.paused ? ', paused' : ''}`,
-    `next:    ${s.paused ? 'paused' : time(config, s.next)}`,
+    `next:    ${s.paused ? 'paused' : s.next ? time(config, s.next) : 'none (done)'}`,
     `agent:   ${s.agent ?? 'claude'}${s.model ? ` (${s.model})` : ''}, in ${s.cwd || '~/code'}, up to ${s.timeout ?? 30} min`,
     `last:    ${s.running ? 'running now' : s.last ? `${s.last.status} ${time(config, s.last.started)} (run ${s.last.id})` : 'never run'}`,
     '', s.prompt.trimEnd(),

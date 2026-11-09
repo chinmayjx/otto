@@ -126,7 +126,7 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
       if (d.route && await d.route(req, res, u)) return;
       send(res, 404, 'not found');
     } catch (e: any) {
-      if (!res.headersSent) send(res, 400, `voice: ${e.message}`);
+      if (!res.headersSent) send(res, 400, `${u.pathname.startsWith('/voice/') ? 'voice: ' : ''}${e.message}`);
     }
   });
 

@@ -55,6 +55,8 @@ import io.github.otto.ui.ArtifactsModel
 import io.github.otto.ui.ArtifactsScreen
 import io.github.otto.ui.ClipboardModel
 import io.github.otto.ui.ClipboardScreen
+import io.github.otto.ui.SchedulesModel
+import io.github.otto.ui.SchedulesScreen
 import io.github.otto.ui.ComposeHost
 import io.github.otto.ui.DevboxModel
 import io.github.otto.ui.DevboxScreen
@@ -81,7 +83,7 @@ import kotlin.math.roundToInt
  * Back walks back (the viewer, the section's history) and then closes. Nothing on the screen itself swipes it away:
  * the handle, Back and Home put it away.
  *
- * Sections: Files, Artifacts, Clipboard and Devbox, native (Compose, io.github.otto.ui); Desktop and Terminal, the app's own
+ * Sections: Files, Artifacts, Clipboard, Schedules and Devbox, native (Compose, io.github.otto.ui); Desktop and Terminal, the app's own
  * web UI (AppWeb, a WebView each, under the bar); and Browser, BrowserService's views drawn here from the
  * ":browser" process through a SurfaceView (SurfaceControlViewHost), the browser agents on the box drive through
  * BrowserLink. An artifact or a file opens in the viewer, native too (ui/Viewer), over the whole screen; HTML in
@@ -119,12 +121,14 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private val artifactsModel = ArtifactsModel(ctx)
     private val devboxModel = DevboxModel(ctx)
     private val clipboardModel = ClipboardModel(ctx)
+    private val schedulesModel = SchedulesModel(ctx)
     private val files: ComposeView
     private val artifacts: ComposeView
     private val desktop: WebView
     private val terminal: WebView
     private val devbox: ComposeView
     private val clipboard: ComposeView
+    private val schedules: ComposeView
     private val body = FrameLayout(ctx)
     private var viewer: View? = null // an artifact or file opened from Files or Artifacts, over the whole second screen
     private var viewerTarget: Target? = null
@@ -198,6 +202,9 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         // Clipboard: the clips sent to the box from the lens and the viewer (native, from the relay's box API).
         clipboard = compose.view(ctx, ops) { ClipboardScreen(clipboardModel) }
         body.addView(clipboard, underBar())
+        // Schedules: the box's schedules and their runs (native, from otto-bots through the relay's box API).
+        schedules = compose.view(ctx, ops) { SchedulesScreen(schedulesModel) }
+        body.addView(schedules, underBar())
 
         // Browser: BrowserService's views from the ":browser" process.
         // Typing in the browser needs window focus, which only the host can grant the embedded views: a focused
@@ -341,6 +348,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         artifactsModel.destroy()
         devboxModel.destroy()
         clipboardModel.destroy()
+        schedulesModel.destroy()
         compose.destroy()
     }
 
@@ -350,6 +358,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     fun open() {
         if (tab == ARTIFACTS) refreshArtifacts()
         if (tab == CLIPBOARD) clipboardModel.refresh()
+        if (tab == SCHEDULES) schedulesModel.refresh()
         animateTo(1f)
     }
 
@@ -696,6 +705,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         if (which == ARTIFACTS && tab != ARTIFACTS) refreshArtifacts()
         if (which == FILES && tab != FILES) filesModel.refresh()
         if (which == CLIPBOARD) clipboardModel.refresh()
+        if (which == SCHEDULES) schedulesModel.refresh()
         tab = which
         devboxModel.shown(which == DEVBOX && position > 0f)
         titleText.text = NAMES[which]
@@ -711,6 +721,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         if (which == TERMINAL && terminal.url == null) terminal.loadUrl(AppWeb.URL + "#terminal")
         devbox.visibility = if (which == DEVBOX) View.VISIBLE else View.GONE
         clipboard.visibility = if (which == CLIPBOARD) View.VISIBLE else View.GONE
+        schedules.visibility = if (which == SCHEDULES) View.VISIBLE else View.GONE
         placeSurface()
         if (isOpen) focusTab()
     }
@@ -729,6 +740,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         ARTIFACTS -> artifacts
         DEVBOX -> devbox
         CLIPBOARD -> clipboard
+        SCHEDULES -> schedules
         TERMINAL -> terminal
         else -> desktop
     }
@@ -870,6 +882,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             tab == FILES -> filesModel.refresh(pull = true)
             tab == ARTIFACTS -> artifactsModel.refresh(pull = true)
             tab == CLIPBOARD -> clipboardModel.refresh(pull = true)
+            tab == SCHEDULES -> schedulesModel.refresh(pull = true)
             tab == DEVBOX -> devboxModel.shown(true)
             else -> (sectionView() as? WebView)?.reload()
         }
@@ -1082,7 +1095,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private fun sectionMenu() {
         val list = menuBox()
         val all = tabState.optJSONArray("tabs")
-        for (i in intArrayOf(ARTIFACTS, BROWSER, FILES, CLIPBOARD, DESKTOP, TERMINAL, DEVBOX)) {
+        for (i in intArrayOf(ARTIFACTS, BROWSER, FILES, CLIPBOARD, SCHEDULES, DESKTOP, TERMINAL, DEVBOX)) {
             val sub = if (i == BROWSER && all != null) "${all.length()} " + (if (all.length() == 1) "tab" else "tabs") else null
             list.addView(menuItem(ICONS[i], NAMES[i], sub, i == tab, {
                 menu?.dismiss()
@@ -1453,9 +1466,10 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         private const val TAG = "Screen"
         var current: Screen? = null // for AppWeb and LinkActivity
             private set
-        private val NAMES = arrayOf("Files", "Artifacts", "Browser", "Desktop", "Devbox", "Terminal", "Clipboard")
+        private val NAMES = arrayOf("Files", "Artifacts", "Browser", "Desktop", "Devbox", "Terminal", "Clipboard", "Schedules")
         private val ICONS = intArrayOf(R.drawable.ccm_tab_files, R.drawable.ccm_tab_artifacts, R.drawable.ccm_tab_browser,
-            R.drawable.ccm_tab_desktop, R.drawable.ccm_tab_devbox, R.drawable.ccm_tab_terminal, R.drawable.ccm_tab_clipboard)
+            R.drawable.ccm_tab_desktop, R.drawable.ccm_tab_devbox, R.drawable.ccm_tab_terminal, R.drawable.ccm_tab_clipboard,
+            R.drawable.ccm_tab_schedules)
         private const val FILES = 0
         private const val ARTIFACTS = 1
         private const val BROWSER = 2
@@ -1463,6 +1477,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         private const val DEVBOX = 4
         private const val TERMINAL = 5
         private const val CLIPBOARD = 6
+        private const val SCHEDULES = 7
         private const val BAR_DP = 48
         private const val TITLE_PAD = 6
         private const val BAR_START = 10

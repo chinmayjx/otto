@@ -82,7 +82,10 @@ export function steps(name: string, id: string): { kind: string; text: string }[
         if (c.type === 'text' && c.text?.trim()) out.push({ kind: 'text', text: c.text.trim() });
         if (c.type === 'tool_use') out.push({ kind: 'tool', text: tool(c.name, c.input) });
       }
-    } else if (e.type === 'result') out.push({ kind: 'result', text: String(e.result ?? '').trim() });
+    } else if (e.type === 'result') {
+      const r = String(e.result ?? '').trim();
+      if (r && r !== out.at(-1)?.text) out.push({ kind: 'result', text: r }); // often the last words again
+    }
     else if (e.type === 'item.completed') { // Codex
       if (e.item?.type === 'agent_message') out.push({ kind: 'text', text: String(e.item.text ?? '').trim() });
       if (e.item?.type === 'command_execution') out.push({ kind: 'tool', text: `$ ${e.item.command}` });
