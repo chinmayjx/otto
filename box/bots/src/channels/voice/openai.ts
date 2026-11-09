@@ -256,6 +256,18 @@ export class OpenAICall extends Call {
     ].filter(Boolean).join('\n'), false, b.delivered);
   }
 
+  /** Muting mid-sentence sends no more audio, so the voice would never hear the pause that ends the sentence: what
+   * was said so far is taken as the user's turn now, and answered (or handed to Otto) like any other. */
+  mute(on: boolean) {
+    super.mute(on);
+    if (!on || !this.userSpeaking) return;
+    this.userSpeaking = false;
+    this.send({ type: 'input_audio_buffer.commit' });
+    if (!this.responding) this.send({ type: 'response.create' });
+    this.log('muted mid-sentence: taken as said');
+    this.update();
+  }
+
   /** The user tapped the pill while the voice talks: stop it now. */
   interrupt() {
     if (!this.responding && !this.voiceSpeaking) return;

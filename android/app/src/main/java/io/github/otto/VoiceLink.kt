@@ -58,6 +58,16 @@ interface VoiceLink {
             return text
         }
 
+        /** Tells the box the microphone was muted or unmuted, in the background. */
+        fun tell(session: String?, muted: Boolean) {
+            val id = session ?: return
+            Thread {
+                try { post("/voice/sessions/$id/mute", JSONObject().put("on", muted), timeout = 5) } catch (e: Exception) {
+                    android.util.Log.w("VoiceLink", "mute: $e")
+                }
+            }.start()
+        }
+
         fun create(ctx: Context, mode: String, events: Listener): VoiceLink =
             if (mode == "android") VoiceSpeech(ctx, events) else VoiceCall(ctx, events)
     }
@@ -92,6 +102,7 @@ class VoiceEvents(private val id: String, private val ended: () -> Boolean, priv
                     val e = list.getJSONObject(i)
                     after = e.getInt("n")
                     if (e.optString("type") == "error") return fail(e.optString("message").ifEmpty { "The call failed" })
+                    if (e.optString("type") == "bye") return fail(e.optString("message").ifEmpty { "The call ended on the box" })
                     onEvent(e)
                 }
                 if (o.optString("state") == "ended") return fail("The call ended on the box")

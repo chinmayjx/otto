@@ -105,12 +105,13 @@ export class Voice implements Channel {
     }
   }
 
-  /** Ends the call, if there is one; what Otto said that was never spoken goes to a notification. */
-  async hangUp(reason: string) {
+  /** Ends the call, if there is one; what Otto said that was never spoken goes to a notification. `message` tells the
+   * phone why, when the box is the one hanging up. */
+  async hangUp(reason: string, message?: string) {
     const call = this.call;
     if (!call) return;
     this.call = null;
-    const left = await call.stop(reason);
+    const left = await call.stop(reason, message);
     for (const text of left) await this.deps.notify(text).catch(e => this.deps.log(`voice: a notification failed: ${e.message}`));
   }
 

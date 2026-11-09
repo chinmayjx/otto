@@ -5,6 +5,7 @@
 //   {type: "state", state}    connecting, listening, thinking (Otto is working on something), speaking, error, ended
 //   {type: "speak", text}     android: words for the phone to say
 //   {type: "error", message}
+//   {type: "bye", message}    the box ended the call itself, and why (before the ended state)
 // Transcripts never go to the log: states, timings and sizes only.
 import crypto from 'node:crypto';
 import type { History } from './history.js';
@@ -31,6 +32,8 @@ export abstract class Call {
   readonly created = Date.now();
   /** When the phone last asked for events: a call nobody watches is ended (server.ts). */
   seen = Date.now();
+  /** Since when the phone's microphone has been muted, or 0: a call left muted is ended (server.ts). */
+  mutedSince = 0;
   state: State = 'connecting';
   readonly transcript: Transcript;
   /** What the implementation reports: the user talking, the voice talking. */
@@ -58,6 +61,11 @@ export abstract class Call {
   protected abstract end(): Promise<string[]>;
   /** The user wants the voice to stop talking (a tap on the pill). */
   interrupt(): void {}
+  /** The phone muted or unmuted its microphone. */
+  mute(on: boolean): void {
+    this.mutedSince = on ? this.mutedSince || Date.now() : 0;
+    this.log(on ? 'muted' : 'unmuted');
+  }
   /** The phone heard the user say something (android). */
   heard(_text: string): void { throw new Error('this call hears for itself'); }
 
@@ -117,9 +125,11 @@ export abstract class Call {
   }
 
   /** Ends the call. Whatever the user said that Otto never saw goes to it for the record (no turn of its own), and
-   * whatever Otto said that was never spoken comes back, for a notification. */
-  stop(reason: string): Promise<string[]> {
+   * whatever Otto said that was never spoken comes back, for a notification. `message` tells the phone why, when
+   * the box ends it. */
+  stop(reason: string, message?: string): Promise<string[]> {
     if (this.stopping) return this.stopping.then(() => []);
+    if (message) this.push({ type: 'bye', message });
     let undelivered: string[] = [];
     this.stopping = (async () => {
       this.log(`ending (${reason}) after ${Math.round((Date.now() - this.created) / 1000)} s`);

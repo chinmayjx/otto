@@ -11,6 +11,7 @@
 //   POST /voice/sessions/<id>/heard            android: body {text}, a sentence the phone heard
 //   POST /voice/sessions/<id>/report           android: body {speaking?, hearing?}
 //   POST /voice/sessions/<id>/interrupt        the voice stops talking (a tap on the pill)
+//   POST /voice/sessions/<id>/mute             body {on}: the phone muted or unmuted its microphone
 //   POST /voice/sessions/<id>/stop             ends it
 //   WS   /voice/transcribe                     live dictation (transcribe.ts), for the collector's mic: the phone
 //                                              sends 16-bit mono PCM at 24 kHz as binary messages, then {"type":
@@ -19,7 +20,9 @@
 //                                              message}, and {type: "done"} once the last phrase is in, then closes
 //
 // A call whose phone stops asking for events (gone, or out of signal) for a while is ended, so a lost phone never
-// leaves a call running.
+// leaves a call running; so is one left muted for 10 minutes (the next call picks up where it left off).
+//
+// The same server answers otto-bots' other local routes (local.ts: otto send, channel logs, schedules).
 import http from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { transcriber, type Transcriber } from '../../transcribe.js';
@@ -28,6 +31,7 @@ import type { Voice } from './index.js';
 
 const POLL_MS = 25_000;
 const UNWATCHED_MS = 45_000;
+const MUTED_MS = 10 * 60_000;
 
 export interface Assistant { bot: string; agent: string; voice: Voice }
 
@@ -41,6 +45,8 @@ export interface ServerDeps {
   log(m: string): void;
   /** A Deepgram key's file, for dictation when OpenAI can't start. */
   deepgramKeyFile?: string;
+  /** otto-bots' other routes (local.ts): true when it answered. */
+  route?(req: http.IncomingMessage, res: http.ServerResponse, u: URL): Promise<boolean>;
 }
 
 function send(res: http.ServerResponse, code: number, body: unknown) {
@@ -89,7 +95,7 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
           return send(res, 502, `voice: ${e.message}`);
         }
       }
-      const m = u.pathname.match(/^\/voice\/sessions\/([\w-]+)\/(events|heard|report|interrupt|stop)$/);
+      const m = u.pathname.match(/^\/voice\/sessions\/([\w-]+)\/(events|heard|report|interrupt|mute|stop)$/);
       if (m) {
         const call = a?.voice.call;
         if (!call || call.id !== m[1]) {
@@ -106,6 +112,10 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
           call.interrupt();
           return send(res, 200, 'ok');
         }
+        if (m[2] === 'mute' && req.method === 'POST') {
+          call.mute(!!(await body(req)).on);
+          return send(res, 200, 'ok');
+        }
         if (req.method === 'POST' && call instanceof AndroidCall) {
           const b = await body(req);
           if (m[2] === 'heard') call.heard(String(b.text ?? ''));
@@ -113,6 +123,7 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
           return send(res, 200, 'ok');
         }
       }
+      if (d.route && await d.route(req, res, u)) return;
       send(res, 404, 'not found');
     } catch (e: any) {
       if (!res.headersSent) send(res, 400, `voice: ${e.message}`);
@@ -125,6 +136,8 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
     if (call && call.state !== 'ended' && Date.now() - call.seen > UNWATCHED_MS) {
       d.log(`voice [${call.id}] the phone stopped asking`);
       void a!.voice.hangUp('unwatched');
+    } else if (call && call.state !== 'ended' && call.mutedSince && Date.now() - call.mutedSince > MUTED_MS) {
+      void a!.voice.hangUp('muted', 'Hung up after 10 minutes on mute. Call again to carry on where you left off.');
     }
   }, 5000).unref();
 

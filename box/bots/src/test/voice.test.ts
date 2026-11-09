@@ -194,3 +194,30 @@ test('realtime: a new call starts with what was said on earlier calls, marked as
     ['system', 'input_text', 'This call starts now.'],
   ]);
 });
+
+test('realtime: muting mid-sentence takes what was said as the turn; muted for long, the call is hung up with a reason', async () => {
+  const { OpenAICall } = await import('../channels/voice/openai.js');
+  const call: any = new OpenAICall({ toAgent: () => {}, log: () => {} }, { apiKey: 'k' });
+  const sent: any[] = [];
+  call.ws = { readyState: 1, send: (s: string) => sent.push(JSON.parse(s)) };
+  call.up = true;
+  call.mute(true);
+  call.mute(false);
+  assert.equal(sent.length, 0, 'muting in silence sends nothing');
+  assert.equal(call.mutedSince, 0);
+  call.event({ type: 'input_audio_buffer.speech_started' });
+  call.mute(true);
+  assert.deepEqual(sent.map(e => e.type), ['input_audio_buffer.commit', 'response.create']);
+  assert.ok(call.mutedSince > 0);
+  clearTimeout(call.gapTimer);
+
+  // The box ending a call itself tells the phone why before it ends.
+  const { AndroidCall } = await import('../channels/voice/android.js');
+  const a = new AndroidCall({ toAgent: () => {}, log: () => {} });
+  await a.begin();
+  await a.stop('muted', 'Hung up after 10 minutes on mute.');
+  const { events } = await a.poll(0, 10);
+  const bye = events.findIndex(e => e.type === 'bye'), ended = events.findIndex(e => e.type === 'state' && e.state === 'ended');
+  assert.ok(bye >= 0 && bye < ended);
+  assert.equal(events[bye].message, 'Hung up after 10 minutes on mute.');
+});

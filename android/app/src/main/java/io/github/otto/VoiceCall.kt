@@ -78,13 +78,15 @@ class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener
         Thread { try { VoiceLink.post("/voice/sessions/$id/interrupt", timeout = 5) } catch (e: Exception) { Log.w(TAG, "interrupt: $e") } }.start()
     }
 
-    /** Mute: the microphone's track is turned off, so nothing it hears is sent. */
+    /** Mute: the microphone's track is turned off, so nothing it hears is sent. The box is told, so that what was
+     * said up to the tap counts as said, and so a call left muted is ended. */
     override fun mute(on: Boolean) {
         muted = on
         worker.execute {
             mic?.setEnabled(!on)
             adm?.setMicrophoneMute(on)
         }
+        VoiceLink.tell(session, on)
     }
 
     /** Ends the call here and on the box. */

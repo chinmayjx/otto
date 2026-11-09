@@ -90,6 +90,7 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
     override fun mute(on: Boolean) {
         muted = on
         main.post { if (on) rest() else listen() }
+        VoiceLink.tell(session, on)
     }
 
     override fun end() {
