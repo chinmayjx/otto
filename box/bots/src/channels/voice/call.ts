@@ -50,6 +50,8 @@ export abstract class Call {
   abstract say(text: string): void;
   /** Lets go of the call; `undelivered` is whatever Otto said that was never spoken. */
   protected abstract end(): Promise<string[]>;
+  /** The user wants the voice to stop talking (a tap on the pill). */
+  interrupt(): void {}
   /** The phone heard the user say something (android). */
   heard(_text: string): void { throw new Error('this call hears for itself'); }
 

@@ -88,10 +88,14 @@ class VoiceService : Service() {
         }.start()
     }
 
-    /** The pill tapped: mute or unmute; after an error, try again. */
+    /** The pill tapped: while the voice talks, stop it; otherwise mute or unmute; after an error, try again. */
     private fun tapped() {
         val c = call
-        if (c == null) begin() else c.mute(!c.muted)
+        when {
+            c == null -> begin()
+            c.talking && !c.muted -> c.interrupt()
+            else -> c.mute(!c.muted)
+        }
     }
 
     private fun end() {

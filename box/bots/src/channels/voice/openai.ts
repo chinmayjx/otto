@@ -19,7 +19,8 @@ export const PROMPT = `You are the voice of Otto, the user's personal assistant.
 
 - Small talk and general knowledge (greetings, facts, definitions, quick maths): answer yourself, briefly.
 - Anything about the user, their things or their earlier conversations, or anything that needs doing (looking something up on their computer or phone, sending, scheduling, changing anything): call ask_brain with what the user wants. Never guess, never say you can't access something, never make up an answer: the brain can.
-- ask_brain returns at once; the answer comes later. After calling it, tell the user in a few words that you're on it, then stay available. They can talk about other things meanwhile.
+- ask_brain returns at once; the answer comes later. After calling it, say once, in a few words, that you're on it. Then be quiet until Otto's message arrives: don't fill the silence, don't say you're still checking. If the user asks how it's going, say once that it's still working. They can talk about other things meanwhile.
+- Background noise, a cough, or a fragment like "so" or "um" is not a question: don't answer it, wait for the user to finish.
 - When you're asked to say a message from Otto, say it.
 - To the user, you and the brain are one: Otto. Never mention a brain; say "let me check", not "I've asked the brain".
 
@@ -47,6 +48,8 @@ export interface OpenAIOptions {
   model?: string;
   voice?: string;
   instructions?: string;
+  turnDetection?: Record<string, unknown>;
+  noiseReduction?: Record<string, unknown> | null;
 }
 
 export class OpenAICall extends Call {
@@ -71,7 +74,13 @@ export class OpenAICall extends Call {
     const session = {
       type: 'realtime', model: this.model, instructions: this.o.instructions || PROMPT,
       audio: {
-        input: { transcription: { model: 'gpt-4o-mini-transcribe' }, turn_detection: { type: 'server_vad' } },
+        // Semantic turn detection waits for a finished thought rather than any pause; noise reduction for a phone
+        // on its loudspeaker. Both can be changed in the channel's config (turnDetection, noiseReduction).
+        input: {
+          transcription: { model: 'gpt-4o-mini-transcribe' },
+          turn_detection: this.o.turnDetection ?? { type: 'semantic_vad', eagerness: 'auto' },
+          noise_reduction: this.o.noiseReduction === undefined ? { type: 'far_field' } : this.o.noiseReduction,
+        },
         output: { voice: this.o.voice || 'marin' },
       },
       tools: [TOOL], tool_choice: 'auto',
@@ -183,6 +192,14 @@ export class OpenAICall extends Call {
       ...lines,
       ...asks.map(a => `The voice passes on: ${a}`),
     ].filter(Boolean).join('\n'));
+  }
+
+  /** The user tapped the pill while the voice talks: stop it now. */
+  interrupt() {
+    if (!this.responding && !this.voiceSpeaking) return;
+    this.send({ type: 'response.cancel' });
+    this.send({ type: 'output_audio_buffer.clear' });
+    this.log('interrupted');
   }
 
   say(text: string) {

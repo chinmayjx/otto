@@ -18,9 +18,13 @@ import kotlin.math.sin
 
 /**
  * A call with the assistant through the phone's own speech (box/bots' otto_voice channel with the "android"
- * provider): Android's speech recognizer listens in a loop and each sentence it hears goes to the box, and the
- * assistant's words come back as events, said with text-to-speech. While it speaks, the recognizer rests, so it
- * doesn't hear itself. Nothing in between: everything said goes to the assistant.
+ * provider): Android's speech recognizer listens in a loop and what it hears goes to the box, and the assistant's
+ * words come back as events, said with text-to-speech. While it speaks, the recognizer rests, so it doesn't hear
+ * itself (a tap on the pill stops it).
+ *
+ * Not every scrap goes: a result the recognizer isn't sure of, or a single word that isn't an answer ("so",
+ * a cough heard as "the"), is dropped; and pieces are held for a moment and joined, so a pause doesn't cut a
+ * sentence in two (the user starting to talk again holds them longer).
  */
 class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listener) : VoiceLink {
     @Volatile private var state = "connecting"
@@ -42,6 +46,8 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
     private var pending = 0 // utterances queued or being said
     private var session: String? = null
     private var poll: VoiceEvents? = null
+    private val said = StringBuilder() // heard, waiting a moment for the rest of the sentence
+    private val flush = Runnable { send() }
 
     override fun start() {
         main.post {
@@ -103,6 +109,7 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
             tts = null
             micLevel = 0f
             speaking = false
+            main.removeCallbacks(flush)
         }
     }
 
@@ -124,7 +131,9 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         listening = true
         r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
             .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName))
+            .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            .putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200L))
     }
 
     private fun rest() {
@@ -137,12 +146,14 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         override fun onResults(results: Bundle?) {
             listening = false
             micLevel = 0f
-            val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim().orEmpty()
-            val id = session
-            if (text.isNotEmpty() && id != null && !muted) {
-                Thread {
-                    try { VoiceLink.post("/voice/sessions/$id/heard", JSONObject().put("text", text)) } catch (e: Exception) { Log.w(TAG, "heard: $e") }
-                }.start()
+            val texts = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+            val score = results?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)?.firstOrNull() ?: -1f
+            val text = texts?.firstOrNull()?.trim().orEmpty()
+            if (worth(text, score) && !muted) {
+                if (said.isNotEmpty()) said.append(' ')
+                said.append(text)
+                main.removeCallbacks(flush)
+                main.postDelayed(flush, HOLD_MS)
             }
             main.post { listen() }
         }
@@ -161,11 +172,31 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
 
         override fun onRmsChanged(rmsdB: Float) { if (listening) micLevel = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f) }
         override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
+        // Talking again: what's held waits for the rest.
+        override fun onBeginningOfSpeech() { if (said.isNotEmpty()) { main.removeCallbacks(flush); main.postDelayed(flush, HOLD_MS + 4000) } }
         override fun onBufferReceived(buffer: ByteArray?) {}
         override fun onEndOfSpeech() {}
         override fun onPartialResults(partialResults: Bundle?) {}
         override fun onEvent(eventType: Int, params: Bundle?) {}
+    }
+
+    /** Whether a result is worth sending: the recognizer sure enough of it, and more than a stray word. */
+    private fun worth(text: String, score: Float): Boolean {
+        if (text.isEmpty()) return false
+        if (score in 0f..MIN_CONFIDENCE && score != 0f) return false // 0 or -1: the recognizer gave no score
+        val words = text.lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
+        return words.size >= 2 || words.first().trim('.', ',', '!', '?') in ANSWERS
+    }
+
+    /** What's held goes to the box as one sentence. */
+    private fun send() {
+        val text = said.toString().trim()
+        said.clear()
+        val id = session ?: return
+        if (text.isEmpty() || ended) return
+        Thread {
+            try { VoiceLink.post("/voice/sessions/$id/heard", JSONObject().put("text", text)) } catch (e: Exception) { Log.w(TAG, "heard: $e") }
+        }.start()
     }
 
     // --- Speaking (main thread) ----------------------------------------------------------------------------------
@@ -178,6 +209,16 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
         speaking = true
         rest()
         t.speak(text, TextToSpeech.QUEUE_ADD, null, "otto-${System.nanoTime()}")
+    }
+
+    /** A tap on the pill while it talks: stop, and listen. */
+    override fun interrupt() {
+        main.post {
+            tts?.stop()
+            pending = 0
+            speaking = false
+            listen()
+        }
     }
 
     private val progress = object : UtteranceProgressListener() {
@@ -196,5 +237,9 @@ class VoiceSpeech(private val ctx: Context, private val events: VoiceLink.Listen
 
     companion object {
         private const val TAG = "VoiceSpeech"
+        private const val HOLD_MS = 1500L
+        private const val MIN_CONFIDENCE = 0.35f
+        /** One-word results that are answers, not noise. */
+        private val ANSWERS = setOf("yes", "no", "yeah", "yep", "nope", "ok", "okay", "stop", "wait", "thanks", "sure", "cancel", "continue", "done")
     }
 }

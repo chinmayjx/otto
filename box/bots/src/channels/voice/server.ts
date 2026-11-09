@@ -10,6 +10,7 @@
 //   GET  /voice/sessions/<id>/events?after=N   long poll (up to 25 s): {state, events: [{n, type, …}]} (call.ts)
 //   POST /voice/sessions/<id>/heard            android: body {text}, a sentence the phone heard
 //   POST /voice/sessions/<id>/report           android: body {speaking?, hearing?}
+//   POST /voice/sessions/<id>/interrupt        the voice stops talking (a tap on the pill)
 //   POST /voice/sessions/<id>/stop             ends it
 //
 // A call whose phone stops asking for events (gone, or out of signal) for a while is ended, so a lost phone never
@@ -79,7 +80,7 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
           return send(res, 502, `voice: ${e.message}`);
         }
       }
-      const m = u.pathname.match(/^\/voice\/sessions\/([\w-]+)\/(events|heard|report|stop)$/);
+      const m = u.pathname.match(/^\/voice\/sessions\/([\w-]+)\/(events|heard|report|interrupt|stop)$/);
       if (m) {
         const call = a?.voice.call;
         if (!call || call.id !== m[1]) {
@@ -90,6 +91,10 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
         if (m[2] === 'events' && req.method === 'GET') return send(res, 200, await call.poll(Number(u.searchParams.get('after')) || 0, POLL_MS));
         if (m[2] === 'stop' && req.method === 'POST') {
           await a!.voice.hangUp('phone');
+          return send(res, 200, 'ok');
+        }
+        if (m[2] === 'interrupt' && req.method === 'POST') {
+          call.interrupt();
           return send(res, 200, 'ok');
         }
         if (req.method === 'POST' && call instanceof AndroidCall) {

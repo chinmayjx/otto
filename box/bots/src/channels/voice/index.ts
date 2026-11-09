@@ -68,6 +68,8 @@ export class Voice implements Channel {
       : new OpenAICall(host, {
         apiKey: String(this.config.apiKey), model: this.config.model as string | undefined,
         voice: this.config.voice as string | undefined, instructions: this.config.instructions as string | undefined,
+        turnDetection: this.config.turnDetection as Record<string, unknown> | undefined,
+        noiseReduction: this.config.noiseReduction as Record<string, unknown> | null | undefined,
       });
     this.call = call;
     try {

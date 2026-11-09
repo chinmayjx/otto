@@ -72,6 +72,12 @@ class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener
         }
     }
 
+    /** The box tells the realtime voice to stop talking. */
+    override fun interrupt() {
+        val id = session ?: return
+        Thread { try { VoiceLink.post("/voice/sessions/$id/interrupt", timeout = 5) } catch (e: Exception) { Log.w(TAG, "interrupt: $e") } }.start()
+    }
+
     /** Mute: the microphone's track is turned off, so nothing it hears is sent. */
     override fun mute(on: Boolean) {
         muted = on

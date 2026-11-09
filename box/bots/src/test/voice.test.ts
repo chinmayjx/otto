@@ -60,3 +60,9 @@ test('an android call through the voice server: heard, spoken, ended; a reply wi
   assert.deepEqual(notes, ['later']);
   server.close();
 });
+
+test('fillers wait for the next real sentence', async () => {
+  const { filler } = await import('../channels/voice/android.js');
+  for (const t of ['so', 'yeah so', 'Um...', 'and then', 'oh well', '']) assert.equal(filler(t), true, t);
+  for (const t of ['yes', 'no', 'okay', 'stop', 'so what time is it', 'of the open work on Iraq']) assert.equal(filler(t), false, t);
+});
