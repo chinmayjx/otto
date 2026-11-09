@@ -11,7 +11,7 @@ import { chromium } from 'playwright-core';
 import { FakePhone } from './fake-phone.js';
 
 const base = 19300 + Math.floor(Math.random() * 600);
-const ports = { tunnel: base, pipe: base + 1, local: base + 3 };
+const ports = { tunnel: base, pipe: base + 1, local: base + 3, voice: base + 4 };
 const api = `http://127.0.0.1:${ports.local}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-relay-test-'));
 let relay: ChildProcess;
@@ -29,6 +29,8 @@ state_file = "${dir}/state.json"
 clips_dir = "${dir}/clips"
 [phone]
 token_file = "${dir}/token"
+[voice]
+port = ${ports.voice}
 `);
   const main = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'main.js');
   relay = spawn(process.execPath, [main], { env: { ...process.env, OTTO_CONFIG: path.join(dir, 'config.toml') }, stdio: ['ignore', 'pipe', 'inherit'] });
@@ -319,4 +321,27 @@ test('clips: a pipe for an unknown service is refused, and a bad token gets no b
   p.on('data', d => reply += d);
   await new Promise(r => p.once('close', r));
   assert.equal(reply, '');
+});
+
+test('the box API passes the voice server\'s WebSockets through, and says so when it isn\'t running', async () => {
+  const { WebSocket, WebSocketServer } = await import('ws');
+  const ws = (s: import('node:net').Socket) => new WebSocket('ws://otto-relay/voice/transcribe', { createConnection: () => s } as any);
+  // No voice server yet: the upgrade is answered 503.
+  const refused = ws(await app.dial());
+  const status = await new Promise(r => refused.once('unexpected-response', (_q, res) => r(res.statusCode)));
+  assert.equal(status, 503);
+
+  const voice = new WebSocketServer({ host: '127.0.0.1', port: ports.voice });
+  await new Promise(r => voice.once('listening', r));
+  voice.on('connection', (c, req) => c.on('message', (d, binary) => c.send(`${req.url} ${binary ? 'bytes' : 'text'} ${(d as Buffer).length}`)));
+  const c = ws(await app.dial());
+  await new Promise(r => c.once('open', r));
+  const got: string[] = [];
+  c.on('message', d => got.push(String(d)));
+  c.send(Buffer.alloc(9600));
+  c.send('{"type":"stop"}');
+  await new Promise(r => setTimeout(r, 200));
+  assert.deepEqual(got, ['/voice/transcribe bytes 9600', '/voice/transcribe text 15']);
+  c.close();
+  voice.close();
 });
