@@ -261,7 +261,7 @@ class OverlayService : Service(), Screen.Host {
         if (screen == null || screen.isClosed) ScreenActivity.current?.leave() // brought up for this touch, not shown
         Tray(this, listOf(
             Tray.Item(R.drawable.ccm_lens, "Lens") { lens() },
-            Tray.Item(R.drawable.ccm_mic, "Assistant") { VoiceService.start(this) },
+            Tray.Item(R.drawable.ccm_wave, "Assistant") { VoiceService.start(this) },
         )).show(y, dp(HANDLE_W))
     }
 

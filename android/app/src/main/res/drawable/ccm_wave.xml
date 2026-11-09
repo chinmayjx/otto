@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The handle's tray: the assistant (a voice's waveform). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp" android:height="22dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M5,10 V14 M9,7 V17 M13,4 V20 M17,8 V16 M21,11 V13"
+        android:strokeColor="#ffffff" android:strokeWidth="2.2" android:strokeLineCap="round" />
+</vector>

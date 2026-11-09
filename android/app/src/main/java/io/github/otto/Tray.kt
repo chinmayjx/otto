@@ -10,6 +10,7 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -18,9 +19,9 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * The handle's tray: what a long press on the handle opens, beside it (the lens, the assistant). One gesture: the
- * finger that pressed slides onto an item (it lights up) and lifts there to pick it; lifted anywhere else, the tray
- * closes. Lifted without moving, the tray stays, to tap an item (or outside, to close it), as the second screen's
+ * The handle's tray: what a long press on the handle opens, a row of round icon buttons beside it (==|: the lens next
+ * to the handle, then the assistant). One gesture: the finger that pressed slides left onto an item (it lights up,
+ * with its name above it) and lifts there to pick it; lifted anywhere else, the tray closes. Lifted without moving, the tray stays, to tap an item (or outside, to close it), as the second screen's
  * menus do (Screen.onPress).
  *
  * The handle's touch listener keeps the gesture (Android sends the moves to the window the finger came down on) and
@@ -32,51 +33,52 @@ class Tray(private val ctx: Context, private val items: List<Item>) {
     private val wm = ctx.getSystemService(WindowManager::class.java)
     private val rows = mutableListOf<View>()
     private var hot = -1
-    private lateinit var root: LinearLayout
+    private lateinit var root: FrameLayout
+    private lateinit var tip: TextView
 
     /** Opens it left of the handle ([handleWidth] px wide, on the right edge), centred on [y] on the screen. */
     @SuppressLint("ClickableViewAccessibility")
     fun show(y: Float, handleWidth: Int) {
         current?.dismiss()
         current = this
-        root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            background = GradientDrawable().apply {
-                setColor(BrowserService.FIELD)
-                cornerRadius = dp(18).toFloat()
-                setStroke(dp(1), BrowserService.LINE)
-            }
-            elevation = dp(8).toFloat()
+        root = FrameLayout(ctx).apply { clipChildren = false; clipToPadding = false }
+        // The name of the item under the finger, above it.
+        tip = TextView(ctx).apply {
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(BrowserService.TEXT)
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            background = GradientDrawable().apply { setColor(BrowserService.FIELD); cornerRadius = dp(8).toFloat() }
+            elevation = dp(6).toFloat()
+            visibility = View.INVISIBLE
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
+        root.addView(tip, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(TIP_ROOM), dp(TIP_H), 0, dp(8)) // room for the name above, and the buttons' shadows
+        }
+        // Right to left from the handle: the first item is the nearest.
         items.forEachIndexed { i, item ->
-            val row = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(12), 0, dp(18), 0)
-                minimumHeight = dp(52)
+            val b = ImageView(ctx).apply {
+                setImageResource(item.icon)
+                scaleType = ImageView.ScaleType.CENTER
                 isClickable = true
                 contentDescription = item.label
                 setOnClickListener { pick(i) }
+                elevation = dp(6).toFloat()
             }
-            row.addView(ImageView(ctx).apply {
-                setImageResource(item.icon)
-                imageTintList = ColorStateList.valueOf(BrowserService.TEXT)
-            }, LinearLayout.LayoutParams(dp(24), dp(24)).apply { rightMargin = dp(12) })
-            row.addView(TextView(ctx).apply {
-                text = item.label
-                textSize = 16f
-                setTextColor(BrowserService.TEXT)
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            })
-            rows += row
-            root.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52)))
+            rows += b
+            light(i, false)
+            row.addView(b, 0, LinearLayout.LayoutParams(dp(BUTTON_W), dp(BUTTON_H)).apply { marginEnd = dp(GAP) })
         }
+        root.addView(row, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT))
         root.setOnTouchListener { _, e ->
             if (e.actionMasked == MotionEvent.ACTION_OUTSIDE) dismiss() // a tap elsewhere, with the tray left open
             false
         }
-        val height = items.size * dp(52) + dp(12)
         val screenH = wm.currentWindowMetrics.bounds.height()
         val lp = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -85,15 +87,16 @@ class Tray(private val ctx: Context, private val items: List<Item>) {
             PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.END
             x = handleWidth + dp(4)
-            this.y = max(dp(40), min((y - height / 2f).roundToInt(), screenH - height - dp(40)))
+            // The buttons' row centred on the press.
+            this.y = max(dp(40), min((y - dp(TIP_H) - dp(BUTTON_H) / 2f).roundToInt(), screenH - dp(TIP_H + BUTTON_H + 8) - dp(40)))
             title = "Otto tray"
             fitInsetsTypes = 0
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         }
-        root.alpha = 0f
-        root.translationX = dp(24).toFloat()
+        row.alpha = 0f
+        row.translationX = dp(24).toFloat()
         wm.addView(root, lp)
-        root.animate().alpha(1f).translationX(0f).setDuration(120)
+        row.animate().alpha(1f).translationX(0f).setDuration(120)
     }
 
     /** The finger at a point on the screen: the item under it lights up (with a tick as it changes). */
@@ -124,24 +127,37 @@ class Tray(private val ctx: Context, private val items: List<Item>) {
         items[i].run()
     }
 
+    /** An item lit (lavender, its name shown above it) or not (dark). */
     private fun light(i: Int, on: Boolean) {
-        val row = rows[i]
-        row.background = if (on) GradientDrawable().apply {
-            setColor(BrowserService.ACCENT)
-            cornerRadius = dp(13).toFloat()
-        } else null
-        val color = if (on) BrowserService.ON_ACCENT else BrowserService.TEXT
-        ((row as LinearLayout).getChildAt(0) as ImageView).imageTintList = ColorStateList.valueOf(color)
-        (row.getChildAt(1) as TextView).setTextColor(color)
+        val b = rows[i] as ImageView
+        b.background = GradientDrawable().apply {
+            setColor(if (on) BrowserService.ACCENT else BrowserService.FIELD)
+            cornerRadius = dp(BUTTON_H / 2).toFloat()
+        }
+        b.imageTintList = ColorStateList.valueOf(if (on) BrowserService.ON_ACCENT else BrowserService.TEXT)
+        if (!on) {
+            if (hot == i || hot < 0) tip.visibility = View.INVISIBLE
+            return
+        }
+        tip.text = items[i].label
+        tip.visibility = View.VISIBLE
+        // Centred over the button, inside the tray's window.
+        tip.post {
+            val centre = (b.parent as View).left + b.left + b.width / 2f
+            tip.x = (centre - tip.width / 2f).coerceIn(0f, (root.width - tip.width).toFloat().coerceAtLeast(0f))
+            tip.y = 0f
+        }
     }
 
     private fun itemAt(x: Float, y: Float): Int {
         val loc = IntArray(2)
         rows.forEachIndexed { i, v ->
             v.getLocationOnScreen(loc)
-            // A little give to the left and right: the finger comes in from the handle, at the tray's edge.
-            if (x >= loc[0] - dp(8) && x < loc[0] + v.width + dp(40) && y >= loc[1] && y < loc[1] + v.height) return i
+            // The row is dragged along sideways: half the gap either side, and plenty of give up and down.
+            val half = dp(GAP) / 2
+            if (x >= loc[0] - half && x < loc[0] + v.width + half && y >= loc[1] - dp(28) && y < loc[1] + v.height + dp(28)) return i
         }
+        // Between the nearest button and the handle: nothing yet.
         return -1
     }
 
@@ -153,6 +169,12 @@ class Tray(private val ctx: Context, private val items: List<Item>) {
     private fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).roundToInt()
 
     companion object {
+        private const val BUTTON_W = 48
+        private const val BUTTON_H = 40
+        private const val GAP = 6
+        private const val TIP_H = 36 // the name's room above the buttons
+        private const val TIP_ROOM = 40 // and to their left, for a name wider than its button
+
         var current: Tray? = null
             private set
     }
