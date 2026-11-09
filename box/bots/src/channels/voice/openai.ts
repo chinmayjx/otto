@@ -1,10 +1,11 @@
 // A voice call through OpenAI's realtime API: a voice model on a WebRTC call with the phone, which handles small talk
 // itself and hands everything else to Otto (the bot's agent) with its ask_brain tool.
 //
-// The phone makes a WebRTC offer and the box creates the call with it (POST /v1/realtime/calls, with the API key and
-// the session: prompt, voice, tool, transcription), so the key never leaves the box. The audio then goes straight
-// between the phone and OpenAI; the box joins the same call on a side connection (wss …/realtime?call_id=), where it
-// sees what's said and done, and answers the tool.
+// The phone makes a WebRTC offer and the box creates the call with it (POST /v1/realtime/calls, with a key and
+// the session: prompt, voice, tool, transcription), so the key never leaves the box. The key is an OpenAI API key,
+// or, with auth "codex", a short-lived realtime key minted from the Codex ChatGPT sign-in for this call. The audio
+// then goes straight between the phone and OpenAI; the box joins the same call on a side connection
+// (wss …/realtime?call_id=), where it sees what's said and done, and answers the tool.
 //
 // ask_brain is fire and forget: the box hands Otto everything said since the last hand-off, and answers the tool at
 // once ("sent"), so the voice says it's on it and stays free. Otto's replies come back on the channel whenever they're
@@ -12,6 +13,7 @@
 // voice's tools off for it.
 import WebSocket from 'ws';
 import { Call, type CallHost, speakable } from './call.js';
+import { codexAccessToken, mintRealtimeKey } from './codex-auth.js';
 
 const API = 'https://api.openai.com/v1/realtime';
 
@@ -44,7 +46,10 @@ const PRICES: Record<string, number[]> = {
 };
 
 export interface OpenAIOptions {
-  apiKey: string;
+  /** An OpenAI API key. Unused when auth is "codex". */
+  apiKey?: string;
+  /** "codex" mints a realtime key from the Codex ChatGPT sign-in. Anything else uses apiKey. */
+  auth?: string;
   model?: string;
   voice?: string;
   instructions?: string;
@@ -56,6 +61,8 @@ export class OpenAICall extends Call {
   readonly mode = 'webrtc';
   private ws: WebSocket | null = null;
   private callId = '';
+  /** The key this call was opened with: the API key, or a realtime key minted for the call. */
+  private key = '';
   private model: string;
   private queue: string[] = []; // Otto's words, waiting for a gap
   private responding = false; // the voice is making an answer
@@ -65,7 +72,7 @@ export class OpenAICall extends Call {
 
   constructor(host: CallHost, private o: OpenAIOptions) {
     super(host);
-    this.model = o.model || 'gpt-realtime-2.1-mini';
+    this.model = o.model || 'gpt-realtime-2.1';
   }
 
   async begin(body: any): Promise<Record<string, unknown>> {
@@ -88,8 +95,9 @@ export class OpenAICall extends Call {
     const form = new FormData();
     form.set('sdp', sdp);
     form.set('session', JSON.stringify(session));
+    this.key = await this.bearer(session);
     const t = Date.now();
-    const r = await fetch(`${API}/calls`, { method: 'POST', headers: { authorization: `Bearer ${this.o.apiKey}` }, body: form });
+    const r = await fetch(`${API}/calls`, { method: 'POST', headers: { authorization: `Bearer ${this.key}` }, body: form });
     const answer = await r.text();
     if (!r.ok) throw new Error(`OpenAI refused the call (${r.status}): ${redact(answer).slice(0, 300)}`);
     this.callId = (r.headers.get('location') ?? '').split('/').pop() ?? '';
@@ -99,9 +107,20 @@ export class OpenAICall extends Call {
     return { sdp: answer };
   }
 
+  /** The API key, or a realtime key just minted from the Codex sign-in. */
+  private async bearer(session: unknown): Promise<string> {
+    if (this.o.auth === 'codex') {
+      const key = await mintRealtimeKey(await codexAccessToken(), session);
+      this.log('minted a realtime key from the Codex sign-in');
+      return key;
+    }
+    if (!this.o.apiKey) throw new Error('no API key');
+    return this.o.apiKey;
+  }
+
   /** The side connection to the call. */
   private join() {
-    const ws = new WebSocket(`${API}?call_id=${encodeURIComponent(this.callId)}`, { headers: { authorization: `Bearer ${this.o.apiKey}` } });
+    const ws = new WebSocket(`${API}?call_id=${encodeURIComponent(this.callId)}`, { headers: { authorization: `Bearer ${this.key}` } });
     this.ws = ws;
     ws.on('open', () => { this.up = true; this.update(); this.log('joined'); });
     ws.on('message', d => {
@@ -239,10 +258,7 @@ export class OpenAICall extends Call {
     if (this.gapTimer) clearTimeout(this.gapTimer);
     const ws = this.ws;
     this.ws = null;
-    if (this.callId) {
-      await fetch(`${API}/calls/${encodeURIComponent(this.callId)}/hangup`, { method: 'POST', headers: { authorization: `Bearer ${this.o.apiKey}` } })
-        .catch(() => {});
-    }
+    if (this.callId) await this.hangUp();
     ws?.close();
     const u = this.usage, p = PRICES[this.model];
     const cost = p ? (u.audioIn * p[0] + u.audioOut * p[1] + u.textIn * p[2] + u.textOut * p[3]) / 1e6 : null;
@@ -251,8 +267,20 @@ export class OpenAICall extends Call {
       + (cost !== null ? `; about $${cost.toFixed(3)} (${(cost / Math.max(mins, 0.1)).toFixed(3)}/min)` : ''));
     return this.queue.splice(0);
   }
+
+  /** Ends the call at OpenAI. A minted key lasts about ten minutes, so a longer call hangs up with the Codex
+   * access token when the key has expired. */
+  private async hangUp() {
+    const url = `${API}/calls/${encodeURIComponent(this.callId)}/hangup`;
+    const send = (key: string) => fetch(url, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
+    try {
+      const r = await send(this.key);
+      if (r.ok || this.o.auth !== 'codex' || r.status !== 401) return;
+      await send(await codexAccessToken());
+    } catch { /* the websocket close below ends our side either way */ }
+  }
 }
 
 function redact(s: string): string {
-  return s.replace(/(sk-[\w-]{6,}|ek_[\w-]{6,})/g, '[key]');
+  return s.replace(/(sk-[\w-]{6,}|ek_[\w-]{6,}|eyJ[\w-]{20,})/g, '[key]');
 }

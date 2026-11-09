@@ -5,7 +5,7 @@
 //
 // A bot is one conversation with any number of channels, by kind:
 //   {"agent": "claude", "session": "…", "channels": {"telegram": {"token": "…", "owner": 123},
-//                                                    "otto_voice": {"provider": "openai-realtime", "apiKey": "…"}}}
+//                                                    "otto_voice": {"provider": "openai-realtime", "apiKey": "…", "auth"?: "api-key"|"codex"}}}
 // The first shape had one channel at the top ({"channel": "telegram", "token", "owner"}); it's read as the new one,
 // and written in the new one at the next save.
 import fs from 'node:fs';
