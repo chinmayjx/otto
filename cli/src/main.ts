@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { bot } from './bots.js';
 import { loadConfig, session, relay, browser, phone, saveShot, desktopShot, pairing, pairingLink, OttoError } from './lib.js';
 
 const HELP = `otto: the phone, its browser and the box's desktop, for agents and people
@@ -56,6 +57,14 @@ Clips (what the user collected on the phone for you: text, screenshots, notes on
   otto clip list [--limit N]               the newest clips
   otto clip rm <id>
 
+Bots (chat bots, each one long-running agent conversation on this box; the otto-bots service runs them):
+  otto bot add <name> --channel telegram [--cwd DIR] [--model M] [--permission-mode MODE]
+                                           the token from @BotFather is read from stdin or a prompt; then pair
+  otto bot pair <name> [--reset]           the link (and code) that makes your account the bot's owner
+  otto bot list
+  otto bot logs <name> [--lines N] [--follow]
+  otto bot rm <name>
+
 Your session comes from OTTO_SESSION (set by your agent's adapter).`;
 
 interface Args { _: string[]; [k: string]: any }
@@ -63,7 +72,7 @@ interface Args { _: string[]; [k: string]: any }
 /** What agents used to Playwright's tools tend to type. */
 const ALIASES: Record<string, string> = { navigate: 'open', goto: 'open', go: 'open', fill: 'type', key: 'press', press_key: 'press', shot: 'screenshot', take_screenshot: 'screenshot', evaluate: 'eval', tab: 'tabs', navigate_back: 'back' };
 
-const BOOLEAN = new Set(['send', 'qr', 'new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json']);
+const BOOLEAN = new Set(['send', 'qr', 'new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json', 'reset', 'follow']);
 
 function parseArgs(argv: string[]): Args {
   const a: Args = { _: [] };
@@ -220,6 +229,9 @@ async function main(argv: string[]) {
       }
       return out(clipText(await (await relay(config, 'GET', `/clips/${encodeURIComponent(cmd)}`)).json()));
     }
+
+    case 'bot': case 'bots':
+      return bot(cmd, a, out);
 
     case 'artifact': {
       // The artifact hub's own CLI, until it moves into hub/artifacts.

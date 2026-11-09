@@ -5,6 +5,7 @@
   "license": "MIT",
   "workspaces": [
     "box/relay",
+    "box/bots",
     "cli",
     "mcp",
     "adapters"

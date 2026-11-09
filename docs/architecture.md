@@ -46,6 +46,7 @@ otto/
   docs/                  architecture, protocols, security, writing an adapter
   box/                   on the box
     relay/               phone tunnel, browser CDP per session, device API, page push   (TypeScript)
+    bots/                chat bots (Telegram), each one agent conversation              (TypeScript)
     services/            files, terminal, desktop                                       (Python, from devbox-hub)
   cli/                   `otto`                                                         (TypeScript)
   mcp/                   the eyes MCP server                                            (TypeScript)
@@ -213,6 +214,10 @@ The Kindle frontend records through the phone's microphone. For now the device a
 ### Box services (`box/services/`)
 
 Files API, terminal (tmux over websocket) and desktop (Xvnc, XFCE, websockify, noVNC) from devbox-hub, minus Claude session cwd lookups, Claude tab titles, the sessions API, Kindle and dictation.
+
+### Bots (`box/bots/`)
+
+A second way to talk to an agent: a chat bot (Telegram first) that is one long-running agent conversation on the box, for when a chat app is the handiest frontend. It's the one place Otto does sit between you and an agent, so it stays small: a channel (receive and send), a core (the owner, the commands, steering, the rule that every message gets a reply), and an agent provider (Claude Code today; the provider is where agent knowledge lives, like an adapter). The agent replies only through two tools, `send_message` and `send_file`, served to it by an MCP server that talks to the bot over a private socket. Setup is in [bots.md](bots.md); the design is in `box/bots/README.md`.
 
 ### Artifact hub (`hub/artifacts/`)
 

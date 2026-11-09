@@ -37,6 +37,7 @@ Everything stays on your [Tailscale](https://tailscale.com) network. Otto never 
 | Directory | What |
 |---|---|
 | `box/relay` | the phone tunnel, the browser per agent session, the device API |
+| `box/bots` | chat bots (Telegram), each one long-running agent conversation: see [docs/bots.md](docs/bots.md) |
 | `box/services` | files, terminal and desktop on the box |
 | `cli` | the `otto` command |
 | `mcp` | the eyes MCP server (screenshots) |

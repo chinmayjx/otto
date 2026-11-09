@@ -1,0 +1,21 @@
+# The bots (box/bots), as a system service on the box. Copy to /etc/systemd/system/, set User and the paths, then
+# systemctl enable --now otto-bots. Bots are added with `otto bot add`, which reloads the service itself.
+[Unit]
+Description=Otto bots: chat bots, each one long-running agent conversation on this box
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+# The agent's own tools (claude, otto, artifact) are found on this PATH.
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /home/ubuntu/code/personal/otto/box/bots/dist/main.js
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=3
+# A stop ends every agent process the bots started, not only the service itself.
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

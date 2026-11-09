@@ -1,0 +1,18 @@
+{
+  "name": "@otto/bots",
+  "private": true,
+  "type": "module",
+  "description": "Chat-channel bots on the box: each one a long-running agent conversation, answered from your phone",
+  "bin": {
+    "otto-bots": "dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/main.js",
+    "test": "npm run build && node --test dist/test/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}
