@@ -1,6 +1,7 @@
 package io.github.otto
 
 import android.annotation.SuppressLint
+import android.animation.ValueAnimator
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -44,6 +45,7 @@ class OverlayService : Service(), Screen.Host {
     private var right: FrameLayout? = null
     private var launching = false // ScreenActivity was asked for and isn't up yet
     private var holding = false // a finger is on the handle
+    private var morph: ValueAnimator? = null // the handle's pill on its way into the tray's edge, or back
 
     override fun onCreate() {
         super.onCreate()
@@ -142,7 +144,7 @@ class OverlayService : Service(), Screen.Host {
             cornerRadius = dp(3).toFloat()
             alpha = 230
         }
-        h.addView(pill, FrameLayout.LayoutParams(dp(5), dp(76), Gravity.CENTER_VERTICAL or Gravity.END).apply { rightMargin = dp(3) })
+        h.addView(pill, FrameLayout.LayoutParams(dp(5), dp(PILL_H), Gravity.CENTER_VERTICAL or Gravity.END).apply { rightMargin = dp(3) })
         h.contentDescription = "Otto"
         h.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(Rect(0, 0, r - l, b - t)) }
         return h
@@ -185,7 +187,7 @@ class OverlayService : Service(), Screen.Host {
                 pill.animate().scaleX(1f).scaleY(1f).setDuration(90)
                 handle.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                 holding = false
-                tray(downY)
+                tray()
             }
 
             override fun onTouch(v: View, e: MotionEvent): Boolean {
@@ -255,14 +257,40 @@ class OverlayService : Service(), Screen.Host {
         wm.addView(handle, rightLp)
     }
 
-    /** The tray, beside the handle at the finger's height: the lens and the assistant. */
-    private fun tray(y: Float) {
+    /**
+     * The tray, out of the handle: the pill shrinks to the tray's height and squares off, becoming its right edge,
+     * and the tray unrolls from it; once the tray has rolled back in, the pill grows back.
+     */
+    private fun tray() {
         val screen = screen
         if (screen == null || screen.isClosed) ScreenActivity.current?.leave() // brought up for this touch, not shown
+        morphPill(true)
         Tray(this, listOf(
             Tray.Item(R.drawable.ccm_lens, "Lens") { lens() },
             Tray.Item(R.drawable.ccm_wave, "Assistant") { VoiceService.start(this) },
-        )).show(y, dp(HANDLE_W))
+        ), HANDLE) { morphPill(false) }.show(rightLp.y + (dp(HANDLE_H) - dp(Tray.SLAB_H)) / 2)
+    }
+
+    /** The handle's pill as the tray's edge (the tray's height, square) or back at rest (taller, rounded). */
+    private fun morphPill(edge: Boolean) {
+        val pill = right?.getChildAt(0) ?: return
+        val shape = pill.background as GradientDrawable
+        val from = pill.layoutParams.height.toFloat()
+        val to = dp(if (edge) Tray.SLAB_H else PILL_H).toFloat()
+        val r0 = shape.cornerRadius
+        val r1 = if (edge) 0f else dp(3).toFloat()
+        morph?.cancel()
+        morph = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = if (edge) 120 else 160
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener {
+                val f = it.animatedFraction
+                pill.layoutParams.height = (from + (to - from) * f).roundToInt()
+                shape.cornerRadius = r0 + (r1 - r0) * f
+                pill.requestLayout()
+            }
+            start()
+        }
     }
 
     /**
@@ -297,7 +325,7 @@ class OverlayService : Service(), Screen.Host {
         running = false
         if (instance === this) instance = null
         Lens.current?.dismiss()
-        Tray.current?.dismiss()
+        Tray.current?.dismiss(false)
         ScreenActivity.current?.finish()
         right?.let { if (it.isAttachedToWindow) wm.removeView(it) }
         screen?.destroy()
@@ -324,6 +352,7 @@ class OverlayService : Service(), Screen.Host {
         const val PREFS = "overlay" // "on": the handle is wanted (BootReceiver brings it back); "y": where it is
         private const val HANDLE_W = 28
         private const val HANDLE_H = 120
+        private const val PILL_H = 76
         private const val LONG_PRESS_MS = 450L
 
         @Volatile

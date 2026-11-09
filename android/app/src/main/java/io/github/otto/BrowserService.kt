@@ -711,6 +711,7 @@ class BrowserService : Service() {
         val LINE = Color.parseColor("#2e2e33")
         val TEXT = Color.parseColor("#edeef0")
         val MUTED = Color.parseColor("#8e949c")
+        val STEEL = Color.parseColor("#c3c8cf") // icons on FIELD
         val ACCENT = Color.parseColor("#ab9cf2") // the one primary button's fill, and marks
         val ON_ACCENT = Color.parseColor("#0b0c0e") // text and icons on ACCENT
         private const val HOME = "https://www.google.com"
