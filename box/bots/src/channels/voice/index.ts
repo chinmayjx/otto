@@ -11,6 +11,7 @@ import type { Channel, Id, Incoming } from '../../channel.js';
 import type { ChannelConfig } from '../../config.js';
 import { AndroidCall } from './android.js';
 import type { Call } from './call.js';
+import type { History } from './history.js';
 import { OpenAICall } from './openai.js';
 
 export const PROVIDERS = ['openai-realtime', 'android'];
@@ -29,6 +30,8 @@ export interface VoiceDeps {
   /** A phone notification; throws when the phone can't be reached. */
   notify(text: string): Promise<void>;
   log(m: string): void;
+  /** Where calls' transcripts are kept (the bot's state folder). */
+  history?: History;
 }
 
 export class Voice implements Channel {
@@ -66,8 +69,10 @@ export class Voice implements Channel {
   async open(body: any): Promise<Record<string, unknown>> {
     await this.hangUp('replaced');
     const host = {
-      toAgent: (text: string, record = false) => this.onMessage?.({ chat: 'user', from: 'user', text, attachments: [], record }),
+      toAgent: (text: string, record = false, delivered?: () => void) =>
+        this.onMessage?.({ chat: 'user', from: 'user', text, attachments: [], record, delivered }),
       log: this.deps.log,
+      history: this.deps.history,
     };
     const call: Call = this.provider === 'android'
       ? new AndroidCall(host)

@@ -26,3 +26,6 @@ artifacts_url = "https://my-hub.tailnet-name.ts.net:8444"   # the artifact hub, 
 # The assistant's voice server (box/bots), which the relay passes the app's /voice/... requests to.
 [voice]
 port = 9336
+# Dictation (the collector's mic) uses OpenAI through the assistant's sign-in; when that can't start, Deepgram, with
+# the key in this file (DEEPGRAM_API_KEY=... or the key alone).
+# deepgram_key_file = "~/.secrets/deepgram/api.env"

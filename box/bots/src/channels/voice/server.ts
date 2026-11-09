@@ -11,11 +11,19 @@
 //   POST /voice/sessions/<id>/heard            android: body {text}, a sentence the phone heard
 //   POST /voice/sessions/<id>/report           android: body {speaking?, hearing?}
 //   POST /voice/sessions/<id>/interrupt        the voice stops talking (a tap on the pill)
+//   POST /voice/sessions/<id>/mute             body {on}: the phone muted or unmuted its microphone (a tap)
 //   POST /voice/sessions/<id>/stop             ends it
+//   WS   /voice/transcribe                     live dictation (transcribe.ts), for the collector's mic: the phone
+//                                              sends 16-bit mono PCM at 24 kHz as binary messages, then {"type":
+//                                              "stop"}; the box sends {type: "ready", engine}, {type: "draft",
+//                                              text} (the phrase so far), {type: "final", text}, {type: "error",
+//                                              message}, and {type: "done"} once the last phrase is in, then closes
 //
 // A call whose phone stops asking for events (gone, or out of signal) for a while is ended, so a lost phone never
 // leaves a call running.
 import http from 'node:http';
+import { WebSocketServer, type WebSocket } from 'ws';
+import { transcriber, type Transcriber } from '../../transcribe.js';
 import { AndroidCall } from './android.js';
 import type { Voice } from './index.js';
 
@@ -32,6 +40,8 @@ export interface ServerDeps {
   /** Makes a bot the assistant; throws with a reason it can't. */
   assign(bot: string): Promise<void>;
   log(m: string): void;
+  /** A Deepgram key's file, for dictation when OpenAI can't start. */
+  deepgramKeyFile?: string;
 }
 
 function send(res: http.ServerResponse, code: number, body: unknown) {
@@ -80,7 +90,7 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
           return send(res, 502, `voice: ${e.message}`);
         }
       }
-      const m = u.pathname.match(/^\/voice\/sessions\/([\w-]+)\/(events|heard|report|interrupt|stop)$/);
+      const m = u.pathname.match(/^\/voice\/sessions\/([\w-]+)\/(events|heard|report|interrupt|mute|stop)$/);
       if (m) {
         const call = a?.voice.call;
         if (!call || call.id !== m[1]) {
@@ -95,6 +105,10 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
         }
         if (m[2] === 'interrupt' && req.method === 'POST') {
           call.interrupt();
+          return send(res, 200, 'ok');
+        }
+        if (m[2] === 'mute' && req.method === 'POST') {
+          call.phoneMuted(!!(await body(req)).on);
           return send(res, 200, 'ok');
         }
         if (req.method === 'POST' && call instanceof AndroidCall) {
@@ -119,9 +133,71 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
     }
   }, 5000).unref();
 
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 20 });
+  server.on('upgrade', (req, sock, head) => {
+    if (new URL(req.url ?? '/', 'http://x').pathname !== '/voice/transcribe') return void sock.destroy();
+    wss.handleUpgrade(req, sock, head, ws => dictate(ws, d));
+  });
+
   server.on('error', e => d.log(`voice server: ${e.message}`));
   server.listen(port, '127.0.0.1', () => d.log(`voice on 127.0.0.1:${port}`));
   return server;
+}
+
+/** One dictation: the phone's audio to a transcriber (the assistant's OpenAI sign-in, or the Codex one when there's no
+ * assistant), its text back as it comes. Audio that arrives while the transcriber starts waits for it. */
+function dictate(ws: WebSocket, d: ServerDeps) {
+  const voice = d.assistant()?.voice.config;
+  const started = Date.now();
+  let t: Transcriber | null = null;
+  let waiting: Buffer[] = [];
+  let bytes = 0, finals = 0, stopping = false;
+  const out = (m: unknown) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m)); };
+  const stop = async () => {
+    if (stopping) return;
+    stopping = true;
+    if (t) await t.finish();
+    out({ type: 'done' });
+    ws.close();
+  };
+  transcriber({
+    auth: voice ? String(voice.auth ?? 'api-key') : 'codex',
+    apiKey: typeof voice?.apiKey === 'string' ? voice.apiKey : undefined,
+    deepgramKeyFile: d.deepgramKeyFile,
+    log: d.log,
+  }, {
+    draft: text => out({ type: 'draft', text }),
+    final: text => { finals++; out({ type: 'final', text }); },
+    error: message => out({ type: 'error', message }),
+  }).then(tr => {
+    if (ws.readyState !== ws.OPEN) return tr.close();
+    t = tr;
+    for (const b of waiting) tr.append(b);
+    waiting = [];
+    out({ type: 'ready', engine: tr.engine });
+    if (stopping) { stopping = false; void stop(); }
+  }, e => {
+    d.log(`transcribe: can't start: ${e.message}`);
+    out({ type: 'error', message: e.message });
+    ws.close();
+  });
+  ws.on('message', (data, binary) => {
+    if (binary) {
+      const b = Buffer.isBuffer(data) ? data : Buffer.concat(data as Buffer[]);
+      bytes += b.length;
+      if (t) t.append(b); else waiting.push(b);
+      return;
+    }
+    let m: any;
+    try { m = JSON.parse(String(data)); } catch { return; }
+    if (m.type === 'stop') {
+      if (t) void stop(); else stopping = true; // stopped before it was up: finished once it is
+    }
+  });
+  ws.on('close', () => {
+    t?.close();
+    d.log(`transcribe: ${Math.round(bytes / 2 / 24_000)} s of audio, ${finals} phrases, ${Math.round((Date.now() - started) / 1000)} s`);
+  });
 }
 
 /** A phone notification, through the relay's local API (the app's device command "notify"). */

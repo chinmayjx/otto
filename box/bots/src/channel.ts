@@ -25,6 +25,8 @@ export interface Incoming {
   attachments: Attachment[];
   /** For the record only: no turn of its own; it goes in front of the agent's next message, from any channel. */
   record?: boolean;
+  /** Runs once the message has been written to the agent (or dropped by /new). */
+  delivered?: () => void;
 }
 
 export interface Command { command: string; description: string }

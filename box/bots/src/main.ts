@@ -11,9 +11,10 @@ import os from 'node:os';
 import { parse } from 'smol-toml';
 import type { Channel } from './channel.js';
 import { Telegram } from './channels/telegram.js';
+import { History } from './channels/voice/history.js';
 import { Voice } from './channels/voice/index.js';
 import { notify, serveVoice } from './channels/voice/server.js';
-import { type BotConfig, load, loadAll, pidFile, save, stateDir, stateRoot, update, VOICE } from './config.js';
+import { type BotConfig, expand, load, loadAll, pidFile, save, stateDir, stateRoot, update, VOICE } from './config.js';
 import { Bot } from './core.js';
 import type { Provider } from './provider.js';
 import { claude } from './providers/claude.js';
@@ -26,9 +27,9 @@ try { otto = parse(fs.readFileSync(process.env.OTTO_CONFIG || path.join(os.homed
 const VOICE_PORT: number = otto.voice?.port ?? 9336;
 const RELAY_PORT: number = otto.relay?.local_port ?? 9334;
 
-const CHANNELS: Record<string, (c: BotConfig['channels'][string], log: (m: string) => void) => Channel> = {
+const CHANNELS: Record<string, (c: BotConfig['channels'][string], log: (m: string) => void, name: string) => Channel> = {
   telegram: (c, log) => new Telegram(String(c.token), log),
-  [VOICE]: (c, log) => new Voice(c, { notify: text => notify(RELAY_PORT, text), log }),
+  [VOICE]: (c, log, name) => new Voice(c, { notify: text => notify(RELAY_PORT, text), log, history: History.in(stateDir(name)) }),
 };
 const PROVIDERS: Record<string, Provider> = { claude };
 const TOOLS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'tools.js');
@@ -74,7 +75,7 @@ function run(name: string, config: BotConfig) {
       if (other) { log(`not taking the voice channel: ${other.bot} has it (only one bot can be the assistant)`); continue; }
     }
     try {
-      const ch = make(c, log);
+      const ch = make(c, log, name);
       channels.push(ch);
       if (ch instanceof Voice) r.voice = ch;
     } catch (e: any) {
@@ -90,6 +91,15 @@ function run(name: string, config: BotConfig) {
     log,
   });
   r.bot = bot;
+  // What was said on calls that never reached the agent (the service stopped first) goes in front of its next
+  // message, whether or not this bot is still the one with the voice.
+  const history = History.in(stateDir(name));
+  const left = history.pending();
+  if (left.lines.length) {
+    log(`voice: ${left.lines.length} lines from an earlier call, for the record`);
+    bot.remember(VOICE, ['Said on an earlier voice call (for the record; it needs no reply):', ...left.lines].join('\n'),
+      () => history.delivered(left.ids));
+  }
   // A bot that can't start (the network isn't up yet, Telegram is down) tries again in a while.
   bot.start().catch(e => {
     log(`can't start: ${e.message}; trying again in 30s`);
@@ -136,7 +146,10 @@ async function assign(name: string) {
 }
 
 fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
-serveVoice(VOICE_PORT, { assistant, bots: () => [...loadAll(() => {}).keys()], assign, log: m => console.log(m) });
+serveVoice(VOICE_PORT, {
+  assistant, bots: () => [...loadAll(() => {}).keys()], assign, log: m => console.log(m),
+  deepgramKeyFile: otto.voice?.deepgram_key_file ? expand(String(otto.voice.deepgram_key_file)) : undefined,
+});
 fs.writeFileSync(pidFile(), String(process.pid));
 process.on('SIGHUP', () => { console.log('reloading'); reload(); });
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {

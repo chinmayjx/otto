@@ -60,10 +60,22 @@ otto bot voice mybot --off
   config. With `--auth codex`, each call mints a short-lived realtime key from the Codex sign-in in
   `~/.codex/auth.json` and opens the call with it; Otto only reads the sign-in; Codex renews it whenever it runs (if it has expired, run any `codex` command). The voice handles small talk itself and hands
   everything else to the bot with its `ask_brain` tool, fire and forget: the bot gets everything said on the call
-  since the last hand-off, and its replies are spoken word for word at the next gap. The voice remembers nothing
+  since the last hand-off, and its replies are spoken word for word at the next gap. After a hand-off the phone mutes
+  its microphone (the pill shows Thinking with a struck-through mic), so noise around it can't start turns while the
+  bot works; tap the pill to talk meanwhile, and the bot's reply unmutes it. The voice remembers nothing
   between calls; it asks the bot. The default model is `gpt-realtime-2.1` (the voice is `marin`). On an API key that is about $0.07 a minute; `gpt-realtime-2.1-mini` is the cheaper one, about $0.02–0.04.
 - **android**: no voice model in between; every sentence the phone hears goes to the bot, and its replies are read
   out by the phone.
+
+What's said on calls is kept in the bot's state folder (`voice-transcript.jsonl`, the last 50 lines, each marked once
+the bot has it). A call's last lines wait, for the record, in front of the bot's next message; if otto-bots stops
+before then, they go to the bot when it starts again.
+
+**Dictation.** The collector (the lens's panel, and the one under the artifact viewer) has a mic: what you say is
+written into its note as you say it, a phrase at a time. The phone streams the audio to the voice server
+(`/voice/transcribe`), which runs an OpenAI realtime transcription session (`gpt-4o-transcribe`) with the assistant's
+key or Codex sign-in (the Codex sign-in when there's no assistant). If that can't start and `[voice]
+deepgram_key_file` names a Deepgram key, Deepgram's live Nova-3 does it instead.
 
 The voice server's port is `[voice] port` in `~/.config/otto/config.toml` (9336); the relay passes the app's
 `/voice/…` requests to it. Notifications go through the relay's local API (`[relay] local_port`).

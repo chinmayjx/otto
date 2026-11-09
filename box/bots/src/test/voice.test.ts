@@ -9,6 +9,10 @@ import { Voice } from '../channels/voice/index.js';
 import { accessTokenUsable, jwtExp } from '../channels/voice/codex-auth.js';
 import { serveVoice } from '../channels/voice/server.js';
 import type { Incoming } from '../channel.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { History } from '../channels/voice/history.js';
 
 test('transcript: each line goes once, in the order said, waiting for words still being transcribed', async () => {
   const t = new Transcript();
@@ -16,12 +20,12 @@ test('transcript: each line goes once, in the order said, waiting for words stil
   t.add('voice', 'Hi there!');
   setTimeout(() => t.fill('u1', 'hello'), 20);
   await t.settled(1000);
-  assert.deepEqual(t.take(), ['User: hello', 'Voice: Hi there!']);
+  assert.deepEqual(t.take().lines, ['User: hello', 'Voice: Hi there!']);
   t.add('otto', 'Done.');
   t.add('user', 'thanks');
   assert.equal(t.unheard, true);
-  assert.deepEqual(t.take(), ['User: thanks'], "Otto's own words aren't sent back");
-  assert.deepEqual(t.take(), []);
+  assert.deepEqual(t.take().lines, ['User: thanks'], "Otto's own words aren't sent back");
+  assert.deepEqual(t.take().lines, []);
   t.hold('u2', 'user');
   assert.equal(await Promise.race([t.settled(30).then(() => 'gave up'), new Promise(r => setTimeout(() => r('hung'), 200))]), 'gave up');
 });
@@ -103,6 +107,78 @@ test("realtime: Otto's message refused while the voice starts an answer is said 
   await wait(400);
   assert.equal(creates(), 2, 'then says it');
   assert.match(sent.filter(e => e.type === 'conversation.item.create').at(-1).item.content[0].text, /The build passed/);
+  call.event({ type: 'response.created' });
+  call.event({ type: 'response.done', response: { output: [] } });
+  clearTimeout(call.gapTimer);
+});
+
+test('history: lines on disk, marked once delivered, the last 50 kept, what never reached the agent left over', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-voice-'));
+  const h = History.in(dir);
+  const t = new Transcript(h);
+  t.add('user', 'remind me to call mum');
+  t.add('voice', "I'll pass that on.");
+  const b = t.take();
+  t.hold('u2', 'user');
+  t.fill('u2', 'and buy milk');
+  t.add('otto', 'Done.');
+  assert.equal((fs.statSync(h.file).mode & 0o777).toString(8), '600');
+  b.delivered();
+  // Read again, as a restarted service would: only what the agent never got is left over.
+  const again = new (History as any)(h.file) as History;
+  assert.deepEqual(again.pending().lines, ['User: and buy milk']);
+  assert.deepEqual(again.all.map(e => e.delivered), [true, true, false, true]);
+
+  for (let i = 0; i < 60; i++) h.add('voice', `line ${i}`, true);
+  assert.equal(h.all.length, 51, 'the last 50, and the line still waiting');
+  assert.equal(h.all[0].text, 'and buy milk');
+
+  // The voice's own words alone aren't worth a record: they're settled, not sent.
+  const h2 = History.in(fs.mkdtempSync(path.join(os.tmpdir(), 'otto-voice-')));
+  h2.add('voice', 'Hello!', false);
+  assert.deepEqual(h2.pending().lines, []);
+  assert.equal(h2.all[0].delivered, true);
+});
+
+test('a call that ends leaves its unheard lines as a record, delivered when the agent gets them', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otto-voice-'));
+  const h = History.in(dir);
+  const got: Incoming[] = [];
+  const voice = new Voice({ provider: 'android' }, { notify: async () => {}, log: () => {}, history: h });
+  await voice.start(m => got.push(m));
+  await voice.open({});
+  (voice.call as any).heard('what is on my calendar');
+  got[0].delivered?.();
+  (voice.call as any).transcript.add('user', 'never mind');
+  await voice.hangUp('test');
+  assert.equal(got.length, 2);
+  assert.equal(got[1].record, true);
+  assert.deepEqual(h.all.map(e => e.delivered), [true, false]);
+  got[1].delivered?.();
+  assert.deepEqual(h.all.map(e => e.delivered), [true, true]);
+});
+
+test('realtime: a hand-off mutes the phone, and Otto\'s answer unmutes it', async () => {
+  const { OpenAICall } = await import('../channels/voice/openai.js');
+  const handed: string[] = [];
+  const call: any = new OpenAICall({ toAgent: t => handed.push(t), log: () => {} }, { apiKey: 'k' });
+  call.ws = { readyState: 1, send: () => {} };
+  call.up = true;
+  const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const types = async () => (await call.poll(0, 0)).events.map((e: any) => e.type).filter((t: string) => t !== 'state');
+  call.event({ type: 'conversation.item.added', item: { id: 'u1', type: 'message', role: 'user', content: [{ type: 'input_audio' }] } });
+  call.event({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'u1', transcript: 'book a table' });
+  call.event({ type: 'response.done', response: { output: [{ type: 'function_call', name: 'ask_brain', call_id: 'c1', arguments: '{"request":"book a table"}' }] } });
+  await wait(20);
+  assert.deepEqual(await types(), ['mute']);
+  assert.equal(call.muted, true);
+  assert.match(handed[0], /User: book a table/);
+  call.phoneMuted(false); // the user tapped the pill
+  call.phoneMuted(true);
+  call.say('Booked for eight.');
+  await wait(20);
+  assert.deepEqual(await types(), ['mute', 'unmute'], 'unmuted as the answer is spoken');
+  assert.equal(call.muted, false);
   call.event({ type: 'response.created' });
   call.event({ type: 'response.done', response: { output: [] } });
   clearTimeout(call.gapTimer);

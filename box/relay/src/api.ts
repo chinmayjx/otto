@@ -16,7 +16,8 @@
 //
 // The box API, served to the app on the pipes it dials itself (tunnel.ts "dial ... box"), never on a port: the
 // clip routes, with POST /clips for uploads (clips.ts), and /voice/…, passed on as it is to the assistant's voice
-// server (box/bots, channels/voice) on 127.0.0.1, which answers 503 here when it isn't running.
+// server (box/bots, channels/voice) on 127.0.0.1, which answers 503 here when it isn't running; its WebSockets
+// (/voice/transcribe) too.
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { Browser, NO_PHONE } from './browser.js';
@@ -25,7 +26,7 @@ import { Driver } from './driver.js';
 import type { Sessions } from './sessions.js';
 import type { Clips } from './clips.js';
 import type { Phone, Tunnel } from './tunnel.js';
-import type net from 'node:net';
+import net from 'node:net';
 
 const SESSION = '[\\w.:@-]{1,200}';
 
@@ -118,6 +119,10 @@ export function serveBox(tunnel: Tunnel, clips: Clips, voicePort: number, log = 
       res.end(e.message + '\n');
     }
   });
+  server.on('upgrade', (req, sock, head) => {
+    if (!req.url?.startsWith('/voice/')) return void sock.destroy();
+    voiceSocket(req, sock as net.Socket, head, voicePort);
+  });
   tunnel.on('dial', (_p: Phone, service: string, s: net.Socket) => {
     if (service !== 'box') return void s.destroy();
     server.emit('connection', s);
@@ -140,6 +145,26 @@ function voice(req: http.IncomingMessage, res: http.ServerResponse, port: number
   // The phone giving up on a long poll ends ours too.
   res.on('close', () => { if (!res.writableFinished) up.destroy() });
   req.pipe(up);
+}
+
+/** A WebSocket for the voice server: the upgrade request passed on as it came, then the bytes both ways. */
+function voiceSocket(req: http.IncomingMessage, sock: net.Socket, head: Buffer, port: number) {
+  const up = net.connect(port, '127.0.0.1', () => {
+    const lines = [`${req.method} ${req.url} HTTP/1.1`];
+    for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+    up.write(lines.join('\r\n') + '\r\n\r\n');
+    if (head.length) up.write(head);
+    up.pipe(sock);
+    sock.pipe(up);
+  });
+  up.on('error', (e: any) => {
+    if (!sock.writable) return void sock.destroy();
+    const text = e.code === 'ECONNREFUSED' ? 'voice: the bots service (otto-bots) is not running\n' : `voice: ${e.message}\n`;
+    sock.end(`HTTP/1.1 503 Service Unavailable\r\ncontent-type: text/plain\r\ncontent-length: ${Buffer.byteLength(text)}\r\n\r\n${text}`);
+  });
+  sock.on('error', () => up.destroy());
+  sock.on('close', () => up.destroy());
+  up.on('close', () => sock.destroy());
 }
 
 async function phone(cmd: string, u: URL, req: http.IncomingMessage, res: http.ServerResponse, device: Device) {

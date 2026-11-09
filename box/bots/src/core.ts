@@ -49,6 +49,8 @@ interface Link {
   pairCode: string | null;
 }
 
+const wrap = (kind: string, text: string) => `<message channel="${kind}">\n${text}\n</message>`;
+
 function instructions(links: Link[], tool: (t: string) => string): string {
   const kinds = links.map(l => l.channel.kind);
   return [
@@ -84,7 +86,7 @@ export class Bot {
   private answered = new Set<string>(); // the channels it has sent something on
   private reminded = false; // the turn in progress was reminded to reply
   private last: string; // the channel of the latest message
-  private records: string[] = []; // for the record, in front of the next message
+  private records: { text: string; delivered?: () => void }[] = []; // for the record, in front of the next message
   private typing: NodeJS.Timeout | null = null;
 
   constructor(o: BotOptions) {
@@ -198,7 +200,7 @@ export class Bot {
         this.finish();
         if (text === '/new') {
           this.config = this.opts.save({ session: null });
-          this.records = [];
+          for (const r of this.records.splice(0)) r.delivered?.(); // dropped with the conversation, not kept for later
           return ch.send(m.chat, '🆕 New conversation.');
         }
         return ch.send(m.chat, was ? '⏹ Stopped.' : 'Nothing running.');
@@ -218,16 +220,21 @@ export class Bot {
     }
     if (!prompt.trim()) return;
     l.chat = m.chat;
-    const wrapped = `<message channel="${kind}">\n${prompt}\n</message>`;
-    if (m.record) {
-      this.records.push(wrapped);
-      return;
-    }
+    if (m.record) return this.remember(kind, prompt, m.delivered);
     this.last = kind;
     if (!this.busy) this.begin(); // otherwise it steers the turn in progress
     this.asked.add(kind);
     this.ping();
-    this.agent.write([...this.records.splice(0), wrapped].join('\n\n'));
+    const records = this.records.splice(0);
+    this.agent.write([...records.map(r => r.text), wrap(kind, prompt)].join('\n\n'));
+    for (const r of records) r.delivered?.();
+    m.delivered?.();
+  }
+
+  /** Something for the record, from a channel (or one the bot had: a voice call's lines left from before a restart):
+   * it starts no turn, and goes in front of the agent's next message. */
+  remember(kind: string, text: string, delivered?: () => void) {
+    this.records.push({ text: wrap(kind, text), delivered });
   }
 
   // --- Turns -------------------------------------------------------------------------------------------------------

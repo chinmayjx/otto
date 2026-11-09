@@ -278,3 +278,16 @@ test('a telegram reply goes to the owner even before they write after a restart'
   assert.deepEqual(t.channel.sent.at(-1), { chat: 42, text: 'here' });
   t.bot.stop();
 });
+
+test("a record's delivery is known once the agent gets it; remember() takes one from outside a channel", async () => {
+  const t = setup({ owner: 42, voice: true });
+  await t.bot.start();
+  const marks: string[] = [];
+  t.bot.remember('otto_voice', 'Said on an earlier voice call', () => marks.push('earlier'));
+  await t.bot.onMessage('speaker', { chat: 'user', from: 'user', text: 'aside', attachments: [], record: true, delivered: () => marks.push('aside') });
+  assert.equal(marks.length, 0, 'not yet: only queued');
+  await t.bot.onMessage('speaker', { chat: 'user', from: 'user', text: 'hi', attachments: [], delivered: () => marks.push('hi') });
+  assert.deepEqual(marks, ['earlier', 'aside', 'hi']);
+  assert.equal(t.agent().writes[0], `${w('Said on an earlier voice call', 'otto_voice')}\n\n${w('aside', 'speaker')}\n\n${w('hi', 'speaker')}`);
+  t.bot.stop();
+});
