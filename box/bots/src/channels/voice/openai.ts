@@ -7,6 +7,9 @@
 // then goes straight between the phone and OpenAI; the box joins the same call on a side connection
 // (wss …/realtime?call_id=), where it sees what's said and done, and answers the tool.
 //
+// A call isn't a blank slate: as the box joins, the voice gets what was said on earlier calls (the bot's saved voice
+// transcript, history.ts) as the conversation so far, between two notes that it's earlier and already dealt with.
+//
 // ask_brain is fire and forget: the box hands Otto everything said since the last hand-off, and answers the tool at
 // once ("sent"), so the voice says it's on it and stays free. Otto's replies come back on the channel whenever they're
 // ready; each is spoken word for word at the next gap (the user not talking, the voice not mid-answer), with the
@@ -17,7 +20,7 @@ import { codexAccessToken, mintRealtimeKey } from './codex-auth.js';
 
 const API = 'https://api.openai.com/v1/realtime';
 
-export const PROMPT = `You are the voice of Otto, the user's personal assistant. You are only Otto's ears and mouth. Otto's brain is a separate agent on the user's computer: it has their files, phone, apps, accounts, notes, calendar, and every earlier conversation with the user. You have none of that, and you remember nothing from before this call.
+export const PROMPT = `You are the voice of Otto, the user's personal assistant. You are only Otto's ears and mouth. Otto's brain is a separate agent on the user's computer: it has their files, phone, apps, accounts, notes, calendar, and every earlier conversation with the user. You have none of that; of earlier calls you have only what was said on them, at the start of this conversation, already dealt with: use it for follow-ups ("where were we?"), never answer it again.
 
 - Small talk and general knowledge (greetings, facts, definitions, quick maths): answer yourself, briefly.
 - Anything about the user, their things or their earlier conversations, or anything that needs doing (looking something up on their computer or phone, sending, scheduling, changing anything): call ask_brain with what the user wants. Never guess, never say you can't access something, never make up an answer: the brain can.
@@ -124,7 +127,13 @@ export class OpenAICall extends Call {
   private join() {
     const ws = new WebSocket(`${API}?call_id=${encodeURIComponent(this.callId)}`, { headers: { authorization: `Bearer ${this.key}` } });
     this.ws = ws;
-    ws.on('open', () => { this.up = true; this.update(); this.log('joined'); this.later(0); }); // Otto may have spoken already
+    ws.on('open', () => {
+      this.remember();
+      this.up = true;
+      this.update();
+      this.log('joined');
+      this.later(0); // Otto may have spoken already
+    });
     ws.on('message', d => {
       let e: any;
       try { e = JSON.parse(String(d)); } catch { return; }
@@ -137,6 +146,25 @@ export class OpenAICall extends Call {
       this.log(`side connection closed (${code})`);
       if (!this.stopping) void this.stop('closed by OpenAI');
     });
+  }
+
+  /** What was said on earlier calls, as the conversation so far. */
+  private remember() {
+    const h = this.host.history;
+    const earlier = (h?.all ?? []).filter(e => e.text && new Date(e.at).getTime() < this.created);
+    if (!earlier.length) return;
+    const mins = Math.round((this.created - new Date(earlier.at(-1)!.at).getTime()) / 60_000);
+    const ago = mins < 2 ? 'a moment ago' : mins < 90 ? `${mins} minutes ago` : `${Math.round(mins / 60)} hours ago`;
+    const note = (text: string) => this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'system', content: [{ type: 'input_text', text }] } });
+    note(`What was said on earlier calls, oldest first (the last call ended ${ago}). It has all been dealt with: don't answer it again.`);
+    for (const e of earlier) {
+      const text = e.role === 'otto' ? `(Otto) ${e.text}` : e.text!;
+      this.send({ type: 'conversation.item.create', item: e.role === 'user'
+        ? { type: 'message', role: 'user', content: [{ type: 'input_text', text }] }
+        : { type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] } });
+    }
+    note('This call starts now.');
+    this.log(`remembered ${earlier.length} lines from earlier calls`);
   }
 
   private send(e: unknown) {

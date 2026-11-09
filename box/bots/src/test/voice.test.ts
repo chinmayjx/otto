@@ -173,3 +173,24 @@ test("acknowledging depends on the voice: a realtime voice already did, the phon
   assert.deepEqual((await call.poll(0, 0)).events.filter((e: any) => e.type !== 'state'), [], 'no mute: the user can talk and interrupt');
   clearTimeout(call.gapTimer);
 });
+
+test('realtime: a new call starts with what was said on earlier calls, marked as earlier', async () => {
+  const { OpenAICall } = await import('../channels/voice/openai.js');
+  const h = History.in(fs.mkdtempSync(path.join(os.tmpdir(), 'otto-voice-')));
+  h.add('user', 'I parked on level three.', true);
+  h.add('voice', 'Got it.', true);
+  h.add('otto', 'Saved it to your notes.', true);
+  await new Promise(r => setTimeout(r, 5));
+  const call: any = new OpenAICall({ toAgent: () => {}, log: () => {}, history: h }, { apiKey: 'k' });
+  const sent: any[] = [];
+  call.ws = { readyState: 1, send: (s: string) => sent.push(JSON.parse(s)) };
+  call.remember();
+  const items = sent.map(e => [e.item.role, e.item.content[0].type, e.item.content[0].text]);
+  assert.match(items[0][2], /earlier calls, oldest first .*don't answer it again/);
+  assert.deepEqual(items.slice(1), [
+    ['user', 'input_text', 'I parked on level three.'],
+    ['assistant', 'output_text', 'Got it.'],
+    ['assistant', 'output_text', '(Otto) Saved it to your notes.'],
+    ['system', 'input_text', 'This call starts now.'],
+  ]);
+});
