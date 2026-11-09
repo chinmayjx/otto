@@ -91,7 +91,7 @@ in and pick Assistant): a call starts, with a pill over every app (tap to mute, 
 hangs up too). Muting mid-sentence counts what you said so far as said; a call left muted for 10 minutes is hung up
 (the next call carries on from the saved transcript). With OpenAI's voice, a horn or a cough doesn't cut it off: what
 the microphone hears while it talks is transcribed second by second, and it stops as soon as that's clear words (two
-real words or more, English or Hindi, heard with confidence, not its own voice coming back), or a stop word ("stop",
+real words or more, heard with confidence, not its own voice coming back), or a stop word ("stop",
 "wait", "no no", "hold on", "ruko", "bas", "ek minute"), or about 5 s of unclear talking over it (`--barge-in S`; 0
 lets any sound stop it). What stopped it is answered once it's done; noise is dropped. The box's log has a line for
 each piece it heard over the voice and what it decided. What

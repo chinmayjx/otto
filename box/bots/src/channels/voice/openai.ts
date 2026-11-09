@@ -18,7 +18,7 @@
 // Talking over the voice: OpenAI stops it at the first sound its turn detection takes for speech, a car horn
 // included; on a WebRTC call it clears the voice's audio then even with interrupt_response off. So the box decides
 // instead (bargeIn > 0; 0 leaves it to OpenAI). While the voice talks, turn detection is off and the box commits
-// what the microphone heard every PIECE_MS, each piece transcribed on its own (English or Hindi). Words heard
+// what the microphone heard every PIECE_MS, each piece transcribed on its own. Words heard
 // cleanly stop the voice at once: a stop word ("wait", "stop", "no no", "ruko"), or two real words or more (not
 // filler, in Latin or Devanagari letters, transcribed with confidence, not a known noise phrase, not the voice's own
 // words coming back). Pieces with words in a row that aren't clean add up, and bargeIn seconds of them stop it too.
@@ -179,7 +179,7 @@ export class OpenAICall extends Call {
       audio: {
         // Noise reduction for a phone on its loudspeaker; it can be changed in the channel's config (noiseReduction).
         input: {
-          transcription: { model: 'gpt-4o-transcribe', prompt: 'English or Hindi, often mixed (Hinglish). Hindi in Latin letters.' },
+          transcription: { model: 'gpt-4o-transcribe' },
           turn_detection: this.turns,
           noise_reduction: this.o.noiseReduction === undefined ? { type: 'far_field' } : this.o.noiseReduction,
         },
