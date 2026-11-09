@@ -258,9 +258,9 @@ test('realtime: talking over the voice: noise dropped; clean words or a stop wor
   heard('u0', 'Hello there');
   assert.equal(count('response.create'), 1);
   voiceTalks();
-  assert.equal(turns(), null, 'turn detection off while it talks');
-  await wait(1100);
-  assert.ok(count('input_audio_buffer.commit') >= 1, 'listening in pieces');
+  assert.equal(turns().type, 'server_vad', 'plain voice detection while it talks');
+  assert.equal(turns().interrupt_response, false);
+  assert.equal(count('input_audio_buffer.commit'), 0, 'nothing committed but speech');
 
   // A horn heard as words: a stray piece, dropped once nothing follows; the voice goes on.
   heard('h', 'Thank you.');
@@ -274,8 +274,6 @@ test('realtime: talking over the voice: noise dropped; clean words or a stop wor
   heard('q2', 'of France?');
   voiceDone();
   assert.equal(turns().type, 'semantic_vad', 'turn detection back on');
-  call.event({ type: 'input_audio_buffer.committed', item_id: 't' }); // the last piece
-  call.event({ type: 'conversation.item.input_audio_transcription.completed', item_id: 't', transcript: '' });
   await wait(900);
   assert.equal(count('response.create'), 2, 'answered after');
 
@@ -297,7 +295,6 @@ test('realtime: talking over the voice: noise dropped; clean words or a stop wor
   voiceDone();
   await wait(900);
   assert.equal(count('response.create'), 2, 'nothing answered');
-  clearInterval(call.pieceTimer);
   clearTimeout(call.gapTimer);
   await wait(900);
 });

@@ -90,11 +90,10 @@ One bot can have the `otto_voice` channel; that bot is your assistant. On the ph
 in and pick Assistant): a call starts, with a pill over every app (tap to mute, × to end; a long press on the handle
 hangs up too). Muting mid-sentence counts what you said so far as said; a call left muted for 10 minutes is hung up
 (the next call carries on from the saved transcript). With OpenAI's voice, a horn or a cough doesn't cut it off: what
-the microphone hears while it talks is transcribed second by second, and it stops as soon as that's clear words (two
+the microphone takes for speech while it talks is transcribed (silence never is), and it stops as soon as that's clear words (two
 real words or more, heard with confidence, not its own voice coming back), or a stop word ("stop",
-"wait", "no no", "hold on", "ruko", "bas", "ek minute"). Nothing else does, as a second of noise often comes
-back as a made-up sentence, with low confidence (`--barge-in 0` instead lets any sound stop it). What stopped it is answered once it's done; noise is dropped. The box's log has a line for
-each piece it heard over the voice and what it decided. What
+"wait", "no no", "hold on", "ruko", "bas", "ek minute"). Nothing else does (`--barge-in 0` instead lets any sound stop it). What stopped it is answered once it's done; noise is dropped. The box's log has a line for
+each thing it heard over the voice and what it decided. What
 the assistant says when no call is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
 
 ```sh

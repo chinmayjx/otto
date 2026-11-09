@@ -16,15 +16,13 @@
 // voice's tools off for it.
 //
 // Talking over the voice: OpenAI stops it at the first sound its turn detection takes for speech, a car horn
-// included; on a WebRTC call it clears the voice's audio then even with interrupt_response off. So the box decides
-// instead (bargeIn > 0; 0 leaves it to OpenAI). While the voice talks, turn detection is off and the box commits
-// what the microphone heard every PIECE_MS, each piece transcribed on its own. Words heard
-// cleanly stop the voice at once: a stop word ("wait", "stop", "no no", "ruko"), or two real words or more (not
-// filler, in Latin or Devanagari letters, transcribed with confidence, not a known noise phrase, not the voice's own
-// words coming back). Nothing else does: a second of noise or silence often comes back as a whole made-up sentence,
-// with low confidence. What stopped the voice is answered once it's done; pieces that never came to anything (no words, filler, a horn
-// heard as "thank you" or in another script) are taken out of the conversation so they're never answered. Every
-// piece and what was decided goes to the log, to tune this by.
+// included. So the box decides instead (bargeIn > 0; 0 leaves it to OpenAI). While the voice talks, turn detection
+// is plain voice detection that neither answers nor stops it (OVER): what it takes for speech is committed and
+// transcribed, and silence never is. An item heard cleanly stops the voice at once: a stop word ("wait", "stop",
+// "no no", "ruko"), or two real words or more (not filler, in Latin or Devanagari letters, transcribed with
+// confidence, not a known noise phrase, not the voice's own words coming back). Nothing else does. What stopped the
+// voice is answered once it's done; other items are taken out of the conversation so they're never answered. Every
+// item heard over the voice, and what was decided, goes to the log, to tune this by.
 import WebSocket from 'ws';
 import { filler } from './android.js';
 import { Call, type CallHost, speakable } from './call.js';
@@ -32,8 +30,9 @@ import { codexAccessToken, mintRealtimeKey } from './codex-auth.js';
 
 const API = 'https://api.openai.com/v1/realtime';
 
-/** While the voice talks, what the microphone heard is committed and transcribed in pieces this long. */
-const PIECE_MS = 1000;
+/** Turn detection while the voice talks: speech is committed after a short pause, for the box to decide on. */
+const OVER = { type: 'server_vad', threshold: 0.6, prefix_padding_ms: 300, silence_duration_ms: 300,
+  interrupt_response: false, create_response: false };
 /** After the voice, how long turn detection gets to notice the user still talking before an answer is asked for. */
 const SETTLE_MS = 800;
 /** Said on their own (repeated or not), these stop the voice at once. */
@@ -142,12 +141,11 @@ export class OpenAICall extends Call {
   /** Talking over the voice (bargeIn > 0): the box answers turns and decides when the voice stops. */
   private readonly barge: number;
   private readonly turns: Record<string, unknown>; // the turn detection the call starts with
-  private deaf = false; // turn detection off while the voice talks; the box listens in pieces
-  private pieceTimer: NodeJS.Timeout | null = null;
+  private deaf = false; // while the voice talks: turn detection that neither answers nor stops it (OVER)
   private pieces = new Map<string, number>(); // pieces committed while the voice talks, by item: when
   private unsure: string[] = []; // pieces with words but not clean, kept only if the user is found to be talking
+  private cut = false; // the box stopped the voice (so a cleared buffer is ours)
   private said = ''; // what the voice is saying now, to tell its echo from the user
-  private tail = false; // the last piece, committed as turn detection comes back on
   private midTurn = false; // the user talked the voice down and is likely still talking: their turn's end answers
   private settleUntil = 0; // turn detection just came back on: a moment for it to hear the user still talking
   private answered = new Set<string>(); // user items an answer has been asked for
@@ -273,7 +271,7 @@ export class OpenAICall extends Call {
       case 'input_audio_buffer.committed':
         if (!this.barge) break;
         // A piece heard while the voice talks: decided once its words are in. Otherwise a turn, answered now.
-        if (this.deaf || this.tail) { this.tail = false; this.pieces.set(e.item_id, Date.now()); }
+        if (this.deaf) this.pieces.set(e.item_id, Date.now());
         else {
           this.midTurn = false;
           if (!this.answered.has(e.item_id)) this.answer();
@@ -312,7 +310,13 @@ export class OpenAICall extends Call {
         this.voiceSpeaking = true;
         if (!this.itemSince) this.itemSince = Date.now();
         break;
-      case 'output_audio_buffer.stopped': case 'output_audio_buffer.cleared':
+      case 'output_audio_buffer.cleared':
+        if (!this.cut) this.log('OpenAI cleared the voice itself (not the box)');
+        this.voiceSpeaking = false;
+        this.cut = false;
+        this.free();
+        break;
+      case 'output_audio_buffer.stopped':
         this.voiceSpeaking = false;
         this.free();
         break;
@@ -324,7 +328,6 @@ export class OpenAICall extends Call {
         this.free();
         break;
       case 'error':
-        if (e.error?.code === 'input_audio_buffer_commit_empty') { this.tail = false; break; } // a piece with no audio
         this.log(`OpenAI: ${e.error?.code ?? ''} ${redact(String(e.error?.message ?? '')).slice(0, 200)}`);
         if (this.answering && e.error?.code === 'conversation_already_has_active_response') {
           // An answer was asked for just as another began: it's asked for again once that one is done.
@@ -390,6 +393,7 @@ export class OpenAICall extends Call {
   /** Stops the voice now: what it had yet to say is cut from its answer, so it knows where it was stopped. */
   interrupt(why = 'interrupted') {
     if (!this.talking) return;
+    this.cut = true;
     this.send({ type: 'response.cancel' });
     this.send({ type: 'output_audio_buffer.clear' });
     if (this.item && this.voiceSpeaking && this.itemSince) {
@@ -482,23 +486,15 @@ export class OpenAICall extends Call {
     this.later(300);
   }
 
-  /** While the voice talks, OpenAI's turn detection is off (it would stop the voice at any sound) and the box
-   * commits what the microphone heard in pieces; after, it's back on, with what's left committed as a last piece. */
+  /** While the voice talks, turn detection is plain voice detection that neither answers nor stops the voice: it
+   * commits only what it takes for speech, and the box decides on each item. After, the call's own is back. */
   private deafen(on: boolean) {
     if (on === this.deaf) return;
     this.deaf = on;
-    if (this.pieceTimer) clearInterval(this.pieceTimer);
-    this.pieceTimer = null;
-    if (on) {
-      this.send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: null } } } });
-      this.pieceTimer = setInterval(() => { if (!this.mutedSince) this.send({ type: 'input_audio_buffer.commit' }); }, PIECE_MS);
-      this.pieceTimer.unref(); // the call's end clears it; a test or a closing process needn't wait for it
-    } else {
-      this.settleUntil = Date.now() + SETTLE_MS;
-      if (!this.mutedSince) { this.tail = true; this.send({ type: 'input_audio_buffer.commit' }); }
-      this.send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: this.turns } } } });
-    }
+    if (!on) this.settleUntil = Date.now() + SETTLE_MS;
+    this.send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: on ? OVER : this.turns } } } });
   }
+
 
   say(text: string) {
     const words = speakable(text);
@@ -536,7 +532,6 @@ export class OpenAICall extends Call {
 
   protected async end(): Promise<string[]> {
     if (this.gapTimer) clearTimeout(this.gapTimer);
-    if (this.pieceTimer) clearInterval(this.pieceTimer);
     const ws = this.ws;
     this.ws = null;
     if (this.callId) await this.hangUp();
