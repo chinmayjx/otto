@@ -13,7 +13,7 @@ import type { Channel } from './channel.js';
 import { Telegram } from './channels/telegram.js';
 import { Voice } from './channels/voice/index.js';
 import { notify, serveVoice } from './channels/voice/server.js';
-import { type BotConfig, configFile, load, loadAll, pidFile, save, stateDir, stateRoot, update, VOICE } from './config.js';
+import { type BotConfig, load, loadAll, pidFile, save, stateDir, stateRoot, update, VOICE } from './config.js';
 import { Bot } from './core.js';
 import type { Provider } from './provider.js';
 import { claude } from './providers/claude.js';
@@ -130,8 +130,7 @@ async function assign(name: string) {
   const rest = { ...fromConfig.channels };
   delete rest[VOICE];
   save(name, { ...load(name), channels: { ...load(name).channels, [VOICE]: voice } });
-  if (Object.keys(rest).length) save(fromName, { ...load(fromName), channels: rest });
-  else fs.rmSync(configFile(fromName)); // a bot that was only a voice: nothing left of it
+  save(fromName, { ...load(fromName), channels: rest }); // a bot that was only a voice is kept, with no channel to run
   console.log(`the assistant is now ${name} (was ${fromName})`);
   reload();
 }

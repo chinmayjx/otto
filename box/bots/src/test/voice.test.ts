@@ -6,7 +6,7 @@ import { Transcript } from '../channels/voice/transcript.js';
 import { speakable } from '../channels/voice/call.js';
 import { normalize } from '../config.js';
 import { Voice } from '../channels/voice/index.js';
-import { accessTokenUsable, applyRefresh, jwtExp } from '../channels/voice/codex-auth.js';
+import { accessTokenUsable, jwtExp } from '../channels/voice/codex-auth.js';
 import { serveVoice } from '../channels/voice/server.js';
 import type { Incoming } from '../channel.js';
 
@@ -45,17 +45,12 @@ test('a Codex access token is used until shortly before it expires', () => {
   assert.equal(accessTokenUsable(jwt(now + 600), now), true);
   assert.equal(accessTokenUsable(jwt(now + 30), now), false);
   assert.equal(accessTokenUsable('not-a-jwt', now), true);
-  const merged = applyRefresh({ auth_mode: 'chatgpt', tokens: { access_token: 'old', refresh_token: 'r', account_id: 'acc' } }, { access_token: 'new' }, new Date('2026-11-09T00:00:00.000Z'));
-  assert.equal(merged.tokens!.access_token, 'new');
-  assert.equal(merged.tokens!.refresh_token, 'r');
-  assert.equal(merged.tokens!.account_id, 'acc');
-  assert.equal(merged.auth_mode, 'chatgpt');
-  assert.equal(merged.last_refresh, '2026-11-09T00:00:00.000Z');
 });
 
 test('config: the first shape reads as the new one', () => {
   assert.deepEqual(normalize({ channel: 'telegram', token: 't', owner: 5, session: 's' }), { session: 's', channels: { telegram: { token: 't', owner: 5 } } });
-  assert.throws(() => normalize({ channels: {} }), /needs a channel/);
+  assert.deepEqual(normalize({ channels: {} }), { channels: {} }, 'a bot with no channel left is kept');
+  assert.throws(() => normalize({ session: 's' }), /needs a channels object/);
 });
 
 test('an android call through the voice server: heard, spoken, ended; a reply with no call is a notification', async () => {
@@ -88,4 +83,27 @@ test('fillers wait for the next real sentence', async () => {
   const { filler } = await import('../channels/voice/android.js');
   for (const t of ['so', 'yeah so', 'Um...', 'and then', 'oh well', '']) assert.equal(filler(t), true, t);
   for (const t of ['yes', 'no', 'okay', 'stop', 'so what time is it', 'of the open work on Iraq']) assert.equal(filler(t), false, t);
+});
+
+test("realtime: Otto's message refused while the voice starts an answer is said after that answer", async () => {
+  const { OpenAICall } = await import('../channels/voice/openai.js');
+  const call: any = new OpenAICall({ toAgent: () => {}, log: () => {} }, { apiKey: 'k' });
+  const sent: any[] = [];
+  call.ws = { readyState: 1, send: (s: string) => sent.push(JSON.parse(s)) };
+  call.up = true;
+  const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+  const creates = () => sent.filter(e => e.type === 'response.create' && e.response?.tool_choice === 'none').length;
+  call.say('The build passed.');
+  await wait(20);
+  assert.equal(creates(), 1);
+  call.event({ type: 'error', error: { code: 'conversation_already_has_active_response', message: 'busy' } });
+  await wait(400);
+  assert.equal(creates(), 1, 'waits for the answer under way');
+  call.event({ type: 'response.done', response: { output: [] } });
+  await wait(400);
+  assert.equal(creates(), 2, 'then says it');
+  assert.match(sent.filter(e => e.type === 'conversation.item.create').at(-1).item.content[0].text, /The build passed/);
+  call.event({ type: 'response.created' });
+  call.event({ type: 'response.done', response: { output: [] } });
+  clearTimeout(call.gapTimer);
 });

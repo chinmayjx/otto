@@ -57,7 +57,8 @@ export function normalize(c: any): BotConfig {
     const { channel, token, owner, ...rest } = c;
     c = { ...rest, channels: { ...(c.channels ?? {}), [channel]: { token, ...(owner !== undefined ? { owner } : {}) } } };
   }
-  if (!c.channels || typeof c.channels !== 'object' || !Object.keys(c.channels).length) throw new Error('needs a channel');
+  // No channels is allowed: a bot whose only channel (the voice) moved to another bot keeps its conversation.
+  if (!c.channels || typeof c.channels !== 'object') throw new Error('needs a channels object');
   return c;
 }
 

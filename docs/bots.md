@@ -58,7 +58,7 @@ otto bot voice mybot --off
 - **openai-realtime**: a realtime voice model is on the call (audio goes straight between the phone and OpenAI; the
   box creates the call with a key and joins it on a side connection). With an API key, that key is the one in the
   config. With `--auth codex`, each call mints a short-lived realtime key from the Codex sign-in in
-  `~/.codex/auth.json` and opens the call with it; the sign-in is refreshed when it's near expiry. The voice handles small talk itself and hands
+  `~/.codex/auth.json` and opens the call with it; Otto only reads the sign-in; Codex renews it whenever it runs (if it has expired, run any `codex` command). The voice handles small talk itself and hands
   everything else to the bot with its `ask_brain` tool, fire and forget: the bot gets everything said on the call
   since the last hand-off, and its replies are spoken word for word at the next gap. The voice remembers nothing
   between calls; it asks the bot. The default model is `gpt-realtime-2.1` (the voice is `marin`). On an API key that is about $0.07 a minute; `gpt-realtime-2.1-mini` is the cheaper one, about $0.02–0.04.

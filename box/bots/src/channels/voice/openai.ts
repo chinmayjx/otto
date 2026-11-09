@@ -67,6 +67,7 @@ export class OpenAICall extends Call {
   private queue: string[] = []; // Otto's words, waiting for a gap
   private responding = false; // the voice is making an answer
   private relaying = false; // the answer being made is one of Otto's messages
+  private asked: string | null = null; // Otto's message just sent to be said, until the voice starts on it
   private gapTimer: NodeJS.Timeout | null = null;
   private usage = { audioIn: 0, audioOut: 0, textIn: 0, textOut: 0 };
 
@@ -122,7 +123,7 @@ export class OpenAICall extends Call {
   private join() {
     const ws = new WebSocket(`${API}?call_id=${encodeURIComponent(this.callId)}`, { headers: { authorization: `Bearer ${this.key}` } });
     this.ws = ws;
-    ws.on('open', () => { this.up = true; this.update(); this.log('joined'); });
+    ws.on('open', () => { this.up = true; this.update(); this.log('joined'); this.later(0); }); // Otto may have spoken already
     ws.on('message', d => {
       let e: any;
       try { e = JSON.parse(String(d)); } catch { return; }
@@ -163,6 +164,7 @@ export class OpenAICall extends Call {
         break;
       case 'response.created':
         this.responding = true;
+        this.asked = null;
         break;
       case 'response.output_audio_transcript.done':
         this.transcript.add(this.relaying ? 'otto' : 'voice', String(e.transcript ?? ''));
@@ -183,6 +185,17 @@ export class OpenAICall extends Call {
         break;
       case 'error':
         this.log(`OpenAI: ${e.error?.code ?? ''} ${redact(String(e.error?.message ?? '')).slice(0, 200)}`);
+        if (this.asked !== null) {
+          // Refused before it started. Most often the voice had just begun an answer of its own: Otto's message
+          // goes back to the front, for the gap after that answer (its response.done). Otherwise there's no
+          // answer under way, and it's tried once more in a moment.
+          const busy = e.error?.code === 'conversation_already_has_active_response';
+          this.queue.unshift(this.asked);
+          this.asked = null;
+          this.relaying = false;
+          this.responding = busy;
+          if (!busy) this.later(1000);
+        }
         break;
     }
     this.update();
@@ -240,6 +253,7 @@ export class OpenAICall extends Call {
     const text = this.queue.shift()!;
     this.responding = true;
     this.relaying = true;
+    this.asked = text;
     this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'system',
       content: [{ type: 'input_text', text: `Message from Otto for the user: ${text}` }] } });
     this.send({ type: 'response.create', response: { tool_choice: 'none',

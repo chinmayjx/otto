@@ -171,7 +171,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
           const v = c.channels[k];
           const via = v.auth === 'codex' ? ', codex' : '';
           return `voice (${v.provider ?? 'openai-realtime'}${via}): assistant`;
-        }).join(', '),
+        }).join(', ') || '(no channels)',
           s?.handle ?? '', s ? 'running' : 'stopped', paired ? 'paired' : 'unpaired',
           c.session ? `session ${String(c.session).slice(0, 8)}` : 'new session', (c.cwd ?? '~/code').replace(home, '~')];
       });
@@ -235,8 +235,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
         const o = normalize(readJson(path.join(configDir(), f)));
         if (!o?.channels?.[VOICE]) continue;
         delete o.channels[VOICE];
-        if (Object.keys(o.channels).length) save(other, o);
-        else fs.rmSync(configFile(other));
+        save(other, o); // kept even with no channel left: its conversation stays
         out(`${other} is no longer your assistant.`);
       }
       c.channels[VOICE] = v;

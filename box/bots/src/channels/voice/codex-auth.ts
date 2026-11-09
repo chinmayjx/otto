@@ -2,17 +2,16 @@
 //
 // A call does not use the access token itself. That token mints a short-lived realtime key
 // (POST /v1/realtime/client_secrets), and the call is opened with the key. The access token lasts
-// days; within two minutes of expiry this refreshes it the way Codex does and writes the new tokens
-// back, so Codex stays signed in. A failed refresh leaves the file alone.
+// days. Only reads the file: Codex itself renews the sign-in whenever it runs. Renewing it here too
+// would race Codex for the one-use refresh token, and a refresh token used twice can get the whole
+// sign-in revoked, signing Codex out.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
-const TOKEN_URL = 'https://auth.openai.com/oauth/token';
 const SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
-/** Refresh this long before the access token actually expires, so a call doesn't start on a dying one. */
-const MARGIN_S = 120;
+/** A token this close to expiry isn't used, so a call doesn't start on a dying one. */
+const MARGIN_S = 60;
 
 export interface CodexAuth {
   auth_mode?: string;
@@ -54,21 +53,6 @@ export function accessTokenUsable(token: string, nowS = Date.now() / 1000): bool
   return exp === null || exp - nowS > MARGIN_S;
 }
 
-/** The auth file with a refresh response merged in. Keeps every field the response doesn't replace. */
-export function applyRefresh(current: CodexAuth, data: { access_token?: string; id_token?: string; refresh_token?: string }, now = new Date()): CodexAuth {
-  if (typeof data.access_token !== 'string' || !data.access_token) throw new Error('Codex refresh returned no access token');
-  return {
-    ...current,
-    tokens: {
-      ...current.tokens,
-      access_token: data.access_token,
-      id_token: typeof data.id_token === 'string' ? data.id_token : current.tokens?.id_token,
-      refresh_token: typeof data.refresh_token === 'string' ? data.refresh_token : current.tokens?.refresh_token,
-    },
-    last_refresh: now.toISOString(),
-  };
-}
-
 function readAuth(): CodexAuth {
   let raw: string;
   try {
@@ -83,56 +67,17 @@ function readAuth(): CodexAuth {
   return o;
 }
 
-function writeAuth(o: CodexAuth): void {
-  const file = authFile();
-  const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(o, null, 2) + '\n', { mode: 0o600 });
-  fs.renameSync(tmp, file);
-}
-
-let pending: Promise<string> | null = null;
-
-/** A usable access token, refreshing the stored one first when it's near expiry. */
+/** The access token, while it's still good for a call that starts now. */
 export function codexAccessToken(): Promise<string> {
-  const token = readAuth().tokens!.access_token!;
-  if (accessTokenUsable(token)) return Promise.resolve(token);
-  return pending ??= refresh().finally(() => { pending = null; });
-}
-
-async function refresh(): Promise<string> {
-  const current = readAuth();
-  const token = current.tokens!.access_token!;
-  if (accessTokenUsable(token)) return token;
-  const refreshToken = current.tokens!.refresh_token;
-  if (typeof refreshToken !== 'string' || !refreshToken) throw new Error('Codex sign-in has expired and has no refresh token. Run `codex login`.');
-  const r = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      client_id: current.tokens!.oauth_provenance?.client_id || CLIENT_ID,
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      scope: 'openid profile email',
-    }),
-  });
-  if (!r.ok) {
-    const again = safeRead();
-    if (again && accessTokenUsable(again.tokens?.access_token || '')) return again.tokens!.access_token!;
-    throw new Error(`Codex sign-in could not be refreshed (${r.status}). Run \`codex login\`.`);
+  try {
+    const token = readAuth().tokens!.access_token!;
+    if (!accessTokenUsable(token)) {
+      throw new Error('The Codex sign-in has expired. Run any codex command (it renews the sign-in), or `codex login`.');
+    }
+    return Promise.resolve(token);
+  } catch (e) {
+    return Promise.reject(e);
   }
-  const data = await r.json().catch(() => ({}));
-  const next = applyRefresh(current, data);
-  // Codex may have refreshed while this request was out. Don't overwrite a newer sign-in.
-  const latest = safeRead();
-  if (latest?.tokens?.refresh_token && latest.tokens.refresh_token !== refreshToken && accessTokenUsable(latest.tokens.access_token || '')) {
-    return latest.tokens.access_token!;
-  }
-  writeAuth(next);
-  return next.tokens!.access_token!;
-}
-
-function safeRead(): CodexAuth | null {
-  try { return readAuth(); } catch { return null; }
 }
 
 /** A short-lived realtime key for this session, minted with the Codex access token. */
