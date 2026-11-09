@@ -47,13 +47,17 @@ class Commands(private val ctx: Context) {
     fun run(cmd: String, args: JSONObject, body: ByteArray?): Reply {
         val t0 = System.currentTimeMillis()
         val summary = cmd + if (args.length() > 0) " " + brief(args) else ""
+        val driving = cmd in DRIVING
         try {
+            if (driving) AgentOverlay.driving(ctx)
             val r = dispatch(cmd, args, body)
             CommandLog.add("$summary  ✓ ${System.currentTimeMillis() - t0} ms")
             return r
         } catch (e: Throwable) {
             CommandLog.add("$summary  ✗ ${e.message ?: e}")
             throw e
+        } finally {
+            if (driving) AgentOverlay.done()
         }
     }
 
@@ -498,6 +502,9 @@ class Commands(private val ctx: Context) {
     }
 
     companion object {
+        /** The commands that use the phone as a finger would (AgentOverlay shows while they come, and Stop refuses them). */
+        private val DRIVING = setOf("tap", "longpress", "swipe", "text", "paste", "clear", "key", "launch")
+
         /** App labels take seconds to load for every app, so they're kept until the app updates. */
         private val labels = ConcurrentHashMap<String, String>()
 

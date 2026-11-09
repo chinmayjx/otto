@@ -126,8 +126,11 @@ class AgentAccessibility : AccessibilityService() {
     /**
      * The screen, as a software bitmap. Blocks, so never on the main thread; the copy out of the hardware buffer runs
      * on [executor] (the main thread's by default; the lens gives its own, so the main thread doesn't stutter).
+     * Without AgentOverlay, which is put out of sight for it.
      */
-    fun screenshot(executor: Executor = mainExecutor): Bitmap {
+    fun screenshot(executor: Executor = mainExecutor): Bitmap = AgentOverlay.hidden { capture(executor) }
+
+    private fun capture(executor: Executor): Bitmap {
         var attempt = 0
         while (true) {
             val f = CompletableFuture<Any?>()
@@ -156,12 +159,14 @@ class AgentAccessibility : AccessibilityService() {
         }
     }
 
-    fun tap(x: Float, y: Float, ms: Long) = gesture(Path().apply { moveTo(x, y) }, ms)
+    fun tap(x: Float, y: Float, ms: Long) = AgentOverlay.touching(x, y, x, y) { gesture(Path().apply { moveTo(x, y) }, ms) }
 
-    fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, ms: Long) = gesture(Path().apply {
-        moveTo(x1, y1)
-        lineTo(x2, y2)
-    }, ms)
+    fun swipe(x1: Float, y1: Float, x2: Float, y2: Float, ms: Long) = AgentOverlay.touching(x1, y1, x2, y2) {
+        gesture(Path().apply {
+            moveTo(x1, y1)
+            lineTo(x2, y2)
+        }, ms)
+    }
 
     private fun gesture(path: Path, ms: Long) {
         val f = CompletableFuture<Boolean>()

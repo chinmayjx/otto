@@ -18,9 +18,12 @@ object UiTree {
         ).joinToString(", ")
     }
 
-    /** Which windows a dump shows: by default app windows and whatever has focus, not the status/nav bars. */
+    /**
+     * Which windows a dump shows: by default app windows and whatever has focus, not the status/nav bars; never
+     * AgentOverlay's (it's the phone telling the user about the agent, not something for the agent to use).
+     */
     fun windows(a: AgentAccessibility, all: Boolean): List<AccessibilityWindowInfo> = a.windowsTopFirst().filter { w ->
-        all || w.type == AccessibilityWindowInfo.TYPE_APPLICATION || w.isActive || w.isFocused
+        (all || w.type == AccessibilityWindowInfo.TYPE_APPLICATION || w.isActive || w.isFocused) && !AgentOverlay.isOurs(w)
     }
 
     fun text(a: AgentAccessibility, all: Boolean): String {
