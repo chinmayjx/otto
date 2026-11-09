@@ -8,10 +8,9 @@
 // (wss …/realtime?call_id=), where it sees what's said and done, and answers the tool.
 //
 // ask_brain is fire and forget: the box hands Otto everything said since the last hand-off, and answers the tool at
-// once ("sent"), so the voice says it's on it. The phone then mutes its microphone, so noise and talk around it
-// don't start turns while Otto works; the user can still tap the pill to talk. Otto's replies come back on the
-// channel whenever they're ready; each is spoken word for word at the next gap (the user not talking, the voice not
-// mid-answer), with the voice's tools off for it, and unmutes the phone so the user can answer.
+// once ("sent"), so the voice says it's on it and stays free. Otto's replies come back on the channel whenever they're
+// ready; each is spoken word for word at the next gap (the user not talking, the voice not mid-answer), with the
+// voice's tools off for it.
 import WebSocket from 'ws';
 import { Call, type CallHost, speakable } from './call.js';
 import { codexAccessToken, mintRealtimeKey } from './codex-auth.js';
@@ -218,7 +217,6 @@ export class OpenAICall extends Call {
     }
     this.send({ type: 'response.create' });
     if (!asks.length) return;
-    this.mute(true);
     await this.transcript.settled(1500);
     const b = this.transcript.take();
     this.log(`hand-off: ${b.lines.length} lines, ${asks.length} asked`);
@@ -226,6 +224,7 @@ export class OpenAICall extends Call {
       b.lines.length ? 'On the call since your last message:' : '',
       ...b.lines,
       ...asks.map(a => `The voice passes on: ${a}`),
+      "(The voice has told the user you're on it: send only the answer, and a progress note only past about 20 s.)",
     ].filter(Boolean).join('\n'), false, b.delivered);
   }
 
@@ -254,7 +253,6 @@ export class OpenAICall extends Call {
     if (!this.queue.length || !this.up || this.stopping) return;
     if (this.userSpeaking || this.responding || this.voiceSpeaking) return; // the events that end these look again
     const text = this.queue.shift()!;
-    this.mute(false);
     this.responding = true;
     this.relaying = true;
     this.asked = text;

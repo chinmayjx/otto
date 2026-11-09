@@ -61,9 +61,7 @@ otto bot voice mybot --off
   config. With `--auth codex`, each call mints a short-lived realtime key from the Codex sign-in in
   `~/.codex/auth.json` and opens the call with it; Otto only reads the sign-in; Codex renews it whenever it runs (if it has expired, run any `codex` command). The voice handles small talk itself and hands
   everything else to the bot with its `ask_brain` tool, fire and forget: the bot gets everything said on the call
-  since the last hand-off, and its replies are spoken word for word at the next gap. After a hand-off the phone mutes
-  its microphone (the pill shows Thinking with a struck-through mic), so noise around it can't start turns while the
-  bot works; tap the pill to talk meanwhile, and the bot's reply unmutes it. The voice remembers nothing
+  since the last hand-off, and its replies are spoken word for word at the next gap. The voice remembers nothing
   between calls; it asks the bot. The default model is `gpt-realtime-2.1` (the voice is `marin`). On an API key that is about $0.07 a minute; `gpt-realtime-2.1-mini` is the cheaper one, about $0.02–0.04.
 - **android**: no voice model in between; every sentence the phone hears goes to the bot, and its replies are read
   out by the phone.

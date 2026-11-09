@@ -158,28 +158,18 @@ test('a call that ends leaves its unheard lines as a record, delivered when the 
   assert.deepEqual(h.all.map(e => e.delivered), [true, true]);
 });
 
-test('realtime: a hand-off mutes the phone, and Otto\'s answer unmutes it', async () => {
+test("acknowledging depends on the voice: a realtime voice already did, the phone's own speech didn't", async () => {
+  const deps = { notify: async () => {}, log: () => {} };
+  assert.match(new Voice({ provider: 'openai-realtime', auth: 'codex' }, deps).formatting, /don't acknowledge/);
+  assert.match(new Voice({ provider: 'android' }, deps).formatting, /first send a short acknowledgement/);
   const { OpenAICall } = await import('../channels/voice/openai.js');
   const handed: string[] = [];
   const call: any = new OpenAICall({ toAgent: t => handed.push(t), log: () => {} }, { apiKey: 'k' });
   call.ws = { readyState: 1, send: () => {} };
   call.up = true;
-  const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
-  const types = async () => (await call.poll(0, 0)).events.map((e: any) => e.type).filter((t: string) => t !== 'state');
-  call.event({ type: 'conversation.item.added', item: { id: 'u1', type: 'message', role: 'user', content: [{ type: 'input_audio' }] } });
-  call.event({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'u1', transcript: 'book a table' });
   call.event({ type: 'response.done', response: { output: [{ type: 'function_call', name: 'ask_brain', call_id: 'c1', arguments: '{"request":"book a table"}' }] } });
-  await wait(20);
-  assert.deepEqual(await types(), ['mute']);
-  assert.equal(call.muted, true);
-  assert.match(handed[0], /User: book a table/);
-  call.phoneMuted(false); // the user tapped the pill
-  call.phoneMuted(true);
-  call.say('Booked for eight.');
-  await wait(20);
-  assert.deepEqual(await types(), ['mute', 'unmute'], 'unmuted as the answer is spoken');
-  assert.equal(call.muted, false);
-  call.event({ type: 'response.created' });
-  call.event({ type: 'response.done', response: { output: [] } });
+  await new Promise(r => setTimeout(r, 20));
+  assert.match(handed[0], /The voice passes on: book a table\n\(The voice has told the user you're on it: send only the answer/);
+  assert.deepEqual((await call.poll(0, 0)).events.filter((e: any) => e.type !== 'state'), [], 'no mute: the user can talk and interrupt');
   clearTimeout(call.gapTimer);
 });

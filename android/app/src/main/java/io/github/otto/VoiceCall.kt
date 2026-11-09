@@ -78,24 +78,13 @@ class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener
         Thread { try { VoiceLink.post("/voice/sessions/$id/interrupt", timeout = 5) } catch (e: Exception) { Log.w(TAG, "interrupt: $e") } }.start()
     }
 
-    /** Mute (a tap on the pill): the microphone's track is turned off, so nothing it hears is sent; the box is told. */
+    /** Mute: the microphone's track is turned off, so nothing it hears is sent. */
     override fun mute(on: Boolean) {
-        setMuted(on)
-        val id = session ?: return
-        Thread {
-            try { VoiceLink.post("/voice/sessions/$id/mute", JSONObject().put("on", on), timeout = 5) } catch (e: Exception) { Log.w(TAG, "mute: $e") }
-        }.start()
-    }
-
-    /** The box mutes the phone after a hand-off to Otto, and unmutes it for Otto's answer. */
-    private fun setMuted(on: Boolean) {
         muted = on
-        try {
-            worker.execute {
-                mic?.setEnabled(!on)
-                adm?.setMicrophoneMute(on)
-            }
-        } catch (_: Exception) {} // ended
+        worker.execute {
+            mic?.setEnabled(!on)
+            adm?.setMicrophoneMute(on)
+        }
     }
 
     /** Ends the call here and on the box. */
@@ -174,11 +163,7 @@ class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener
         if (ended) return // end() is queued behind this, and stops it on the box too
         Sdp().also { pc.setRemoteDescription(it, SessionDescription(SessionDescription.Type.ANSWER, o.getString("sdp"))) }.await()
         val events = VoiceEvents(o.getString("id"), { ended }, ::fail) { e ->
-            when (e.optString("type")) {
-                "state" -> boxState = e.optString("state")
-                "mute" -> setMuted(true)
-                "unmute" -> setMuted(false)
-            }
+            if (e.optString("type") == "state") boxState = e.optString("state")
         }
         poll = events
         Thread(events::run, "voice-events").start()

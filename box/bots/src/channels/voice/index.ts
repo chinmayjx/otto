@@ -26,6 +26,15 @@ const FORMATTING = [
   'another channel or publish an artifact, and say so here in a sentence.',
 ].join(' ');
 
+/** Whether to acknowledge first, by what's on the call. Unlike other channels, a realtime voice already tells the user
+ * it's on it; the phone's own speech has nothing in between. */
+const ACK: Record<string, string> = {
+  'openai-realtime': 'The voice has already told the user you\'re on it, so don\'t acknowledge or send a heads-up here: '
+    + 'send only the answer, with a short progress note only if the work runs past about 20 seconds.',
+  android: 'The user\'s words come straight through, with no voice in between: if the answer will take more than a few '
+    + 'seconds, first send a short acknowledgement here.',
+};
+
 export interface VoiceDeps {
   /** A phone notification; throws when the phone can't be reached. */
   notify(text: string): Promise<void>;
@@ -37,7 +46,7 @@ export interface VoiceDeps {
 export class Voice implements Channel {
   readonly kind = 'otto_voice';
   readonly label = 'Otto voice';
-  readonly formatting = FORMATTING;
+  readonly formatting: string;
   readonly owned = false;
   readonly handle = null;
   call: Call | null = null;
@@ -46,6 +55,7 @@ export class Voice implements Channel {
   constructor(readonly config: ChannelConfig, private deps: VoiceDeps) {
     const p = config.provider ?? 'openai-realtime';
     if (!PROVIDERS.includes(String(p))) throw new Error(`unknown voice provider "${p}" (known: ${PROVIDERS.join(', ')})`);
+    this.formatting = `${FORMATTING} ${ACK[String(p)]}`;
     if (p === 'openai-realtime') {
       const auth = String(config.auth ?? 'api-key');
       if (!AUTHS.includes(auth)) throw new Error(`unknown voice auth "${auth}" (known: ${AUTHS.join(', ')})`);

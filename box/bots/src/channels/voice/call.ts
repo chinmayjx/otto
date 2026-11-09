@@ -4,8 +4,6 @@
 // Events, each with a number n:
 //   {type: "state", state}    connecting, listening, thinking (Otto is working on something), speaking, error, ended
 //   {type: "speak", text}     android: words for the phone to say
-//   {type: "mute"}            the call handed something to Otto: the phone stops sending the microphone until
-//   {type: "unmute"}          Otto's answer comes (or the user taps the pill: POST …/mute tells the box)
 //   {type: "error", message}
 // Transcripts never go to the log: states, timings and sizes only.
 import crypto from 'node:crypto';
@@ -35,8 +33,6 @@ export abstract class Call {
   seen = Date.now();
   state: State = 'connecting';
   readonly transcript: Transcript;
-  /** The phone isn't sending the microphone. */
-  muted = false;
   /** What the implementation reports: the user talking, the voice talking. */
   protected userSpeaking = false;
   protected voiceSpeaking = false;
@@ -62,21 +58,6 @@ export abstract class Call {
   protected abstract end(): Promise<string[]>;
   /** The user wants the voice to stop talking (a tap on the pill). */
   interrupt(): void {}
-  /** The phone muted or unmuted itself (a tap on the pill). */
-  phoneMuted(on: boolean) {
-    if (on === this.muted) return;
-    this.muted = on;
-    this.log(on ? 'muted by the user' : 'unmuted by the user');
-  }
-
-  /** Tells the phone to mute or unmute its microphone. */
-  protected mute(on: boolean) {
-    if (on === this.muted || this.stopping) return;
-    this.muted = on;
-    this.log(on ? 'muted after a hand-off' : 'unmuted for Otto');
-    this.push({ type: on ? 'mute' : 'unmute' });
-  }
-
   /** The phone heard the user say something (android). */
   heard(_text: string): void { throw new Error('this call hears for itself'); }
 

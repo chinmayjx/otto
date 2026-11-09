@@ -11,7 +11,6 @@
 //   POST /voice/sessions/<id>/heard            android: body {text}, a sentence the phone heard
 //   POST /voice/sessions/<id>/report           android: body {speaking?, hearing?}
 //   POST /voice/sessions/<id>/interrupt        the voice stops talking (a tap on the pill)
-//   POST /voice/sessions/<id>/mute             body {on}: the phone muted or unmuted its microphone (a tap)
 //   POST /voice/sessions/<id>/stop             ends it
 //   WS   /voice/transcribe                     live dictation (transcribe.ts), for the collector's mic: the phone
 //                                              sends 16-bit mono PCM at 24 kHz as binary messages, then {"type":
@@ -90,7 +89,7 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
           return send(res, 502, `voice: ${e.message}`);
         }
       }
-      const m = u.pathname.match(/^\/voice\/sessions\/([\w-]+)\/(events|heard|report|interrupt|mute|stop)$/);
+      const m = u.pathname.match(/^\/voice\/sessions\/([\w-]+)\/(events|heard|report|interrupt|stop)$/);
       if (m) {
         const call = a?.voice.call;
         if (!call || call.id !== m[1]) {
@@ -105,10 +104,6 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
         }
         if (m[2] === 'interrupt' && req.method === 'POST') {
           call.interrupt();
-          return send(res, 200, 'ok');
-        }
-        if (m[2] === 'mute' && req.method === 'POST') {
-          call.phoneMuted(!!(await body(req)).on);
           return send(res, 200, 'ok');
         }
         if (req.method === 'POST' && call instanceof AndroidCall) {

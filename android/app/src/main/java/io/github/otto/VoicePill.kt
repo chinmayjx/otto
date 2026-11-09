@@ -50,8 +50,6 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
         THINKING("Thinking", colors("#ab9cf2", "#6aa0ff", "#f29cd8")),
         SPEAKING("Speaking", colors("#ab9cf2", "#f29cd8", "#d6c8ff")),
         MUTED("Muted", colors("#5b6068", "#4a4e55", "#5b6068")),
-        /** Muted after a hand-off while Otto works: it thinks, with the mic struck through; a tap talks. */
-        WAITING("Thinking", colors("#ab9cf2", "#6aa0ff", "#f29cd8")),
         ERROR("Tap to retry", colors("#ff6b81", "#c2485b", "#ff6b81")),
     }
 
@@ -187,7 +185,6 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
         return when {
             error != null -> Look.ERROR
             c == null || !c.connected || c.boxState == "connecting" -> Look.CONNECTING
-            c.muted && c.working -> Look.WAITING
             c.muted -> Look.MUTED
             c.outLevel > 0.08f || c.boxState == "speaking" -> Look.SPEAKING
             c.working -> Look.THINKING
@@ -201,7 +198,6 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
         pill.contentDescription = when (l) {
             Look.ERROR -> "Assistant: ${error ?: "stopped"}. Tap to retry"
             Look.MUTED -> "Assistant: muted. Tap to unmute"
-            Look.WAITING -> "Assistant: thinking, microphone off. Tap to talk"
             else -> "Assistant: ${l.label.lowercase()}. Tap to mute"
         }
     }
@@ -336,7 +332,7 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
             val still = l == Look.MUTED || l == Look.ERROR
             val live = when (l) {
                 Look.LISTENING, Look.SPEAKING -> lv
-                Look.THINKING, Look.WAITING -> 0.35f
+                Look.THINKING -> 0.35f
                 Look.CONNECTING -> 0.12f + 0.08f * sin(t * 2)
                 else -> 0f
             }
@@ -362,7 +358,7 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
             fill.shader = null
             fill.color = GLASS
             c.drawCircle(x, y, rs, fill)
-            val spin = if (l == Look.THINKING || l == Look.WAITING) t * 2.4f else t * 0.5f
+            val spin = if (l == Look.THINKING) t * 2.4f else t * 0.5f
             val tt = if (still) 0f else t
             for (i in 0 until 3) {
                 val a = spin + i * 2.09f
@@ -396,7 +392,7 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
                 c.drawCircle(x, y, rs + ringOff, line)
                 line.pathEffect = null
             }
-            if (l == Look.THINKING || l == Look.WAITING) {
+            if (l == Look.THINKING) {
                 // An arc running round, fading out towards its tail.
                 val deg = Math.toDegrees((t * 4.2f).toDouble()).toFloat() % 360
                 val sweep = SweepGradient(x, y,
@@ -410,11 +406,11 @@ class VoicePill(private val ctx: Context, private val tap: () -> Unit, private v
                 c.drawArc(r, deg, Math.toDegrees(1.9).toFloat(), false, line)
                 line.shader = null
             }
-            // Muted (and waiting, muted): a microphone struck through; after an error, a retry arrow.
+            // Muted: a microphone struck through; after an error, a retry arrow.
             val s = radius / 26
             line.color = BrowserService.TEXT
             line.strokeWidth = 1.5f * d
-            if (l == Look.MUTED || l == Look.WAITING) {
+            if (l == Look.MUTED) {
                 r.set(x - 4 * s, y - 9 * s, x + 4 * s, y + 4 * s)
                 c.drawRoundRect(r, 4 * s, 4 * s, line)
                 r.set(x - 8 * s, y - 9 * s, x + 8 * s, y + 7 * s)
