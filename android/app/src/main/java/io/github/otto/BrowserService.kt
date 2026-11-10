@@ -164,6 +164,8 @@ class BrowserService : Service() {
                 MSG_DESKTOP -> current?.let { if (it.web != null) setDesktop(it, b.getString("on") != null) }
                 MSG_RELOAD -> current?.web?.reload()
                 MSG_BACK -> current?.web?.let { if (it.canGoBack()) it.goBack() }
+                MSG_FORWARD -> current?.web?.let { if (it.canGoForward()) it.goForward() }
+                MSG_FIND -> current?.web?.let { find(it, b.getString("q") ?: "", b.getString("dir") ?: "next") }
                 MSG_ACTIVE -> BrowserLink.send("active")
                 MSG_HIDE_KEYBOARD -> hideKeyboard()
                 MSG_SUGGEST -> {
@@ -566,6 +568,34 @@ class BrowserService : Service() {
         progress.animate().scaleX(max(0.05f, p / 100f)).setDuration(150).start()
     }
 
+    private var finding: String? = null // the find's query, on the page it ran on
+
+    /** Find in page: a new query searches the page; the same one steps through the matches; clear ends it. */
+    private fun find(web: WebView, q: String, dir: String) {
+        web.setFindListener { at, count, done ->
+            if (!done) return@setFindListener
+            val m = Message.obtain(null, MSG_FOUND)
+            m.data.putInt("index", at)
+            m.data.putInt("count", count)
+            try {
+                client?.send(m)
+            } catch (_: Exception) {
+            }
+        }
+        when {
+            dir == "clear" || q.isEmpty() -> {
+                finding = null
+                web.clearMatches()
+                if (dir != "clear") web.findAllAsync("") // no query: no matches, and the count says so
+            }
+            q != finding -> {
+                finding = q
+                web.findAllAsync(q)
+            }
+            else -> web.findNext(dir != "prev")
+        }
+    }
+
     /** Tell Screen what the tabs are (it draws the tab block and the tab menu), and save them soon. */
     private fun publish() {
         saveSoon()
@@ -579,6 +609,7 @@ class BrowserService : Service() {
             val state = JSONObject().put("tabs", list).put("groups", gs)
                 .put("current", cur?.id ?: "")
                 .put("canGoBack", cur?.web?.canGoBack() == true)
+                .put("canGoForward", cur?.web?.canGoForward() == true)
                 .put("desktop", cur?.desktop == true)
             val m = Message.obtain(null, MSG_TABS)
             m.data.putString("json", state.toString())
@@ -699,6 +730,11 @@ class BrowserService : Service() {
         const val MSG_BACK_KEY = 15
         const val MSG_HIDE_KEYBOARD = 16
         const val MSG_CLIENT = 17
+        const val MSG_FORWARD = 18
+        /** Find in page: "q" (a new search, or the same one), "dir" next / prev / clear. Answered with MSG_FOUND. */
+        const val MSG_FIND = 19
+        /** The find's matches: "index" (0-based) of "count". */
+        const val MSG_FOUND = 20
 
         /** Start command: keep it in the foreground (OverlayService, while the handle is on). */
         const val ACTION_KEEP = "keep"

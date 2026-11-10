@@ -1,5 +1,8 @@
 package io.github.otto
 
+import android.widget.Toast
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.text.style.ForegroundColorSpan
 import android.text.Spanned
 import android.text.style.DynamicDrawableSpan
@@ -124,6 +127,12 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private val tabHost: TextView
     private val tabMark: TextView
     private val tabCount: TextView
+    private val tabsButton = FrameLayout(ctx) // Browser: the tabs, as their count in a box; a tap lists them
+    private val tabsCount: TextView
+    private val findRow = LinearLayout(ctx) // Browser: find in page, in place of the address while it's on
+    private val findField = EditText(ctx)
+    private val findCount: TextView
+    private var finding = false
     private val surface = SurfaceView(ctx)
     private val compose = ComposeHost() // the native sections' lifecycle: the screen's
     private val ops = Ops()
@@ -154,6 +163,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private var tabState = JSONObject() // BrowserService's TABS
     private var menu: Dialog? = null // a dialog, not a PopupWindow: a popup can't show text selection's toolbar
     private var tabList: LinearLayout? = null // the open tab menu's list, refreshed as the tabs change
+    private var addressOpen = false // the address menu is open (its list is the query's suggestions, not the tabs)
     private var typed: String? = null // what's typed in the tab menu's address bar, while it's a query (then the list suggests)
     private var suggestSeq = 0
     private var tab = ARTIFACTS
@@ -278,10 +288,68 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             when {
                 viewer != null -> viewerBar?.onLabel?.invoke()
                 tab == TERMINAL -> terminalMenu()
-                else -> tabMenu()
+                else -> addressMenu()
             }
         }
         bar.addView(tabBlock, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
+        // Browser: the tabs as their count in a box (a tap lists them), after the address.
+        tabsCount = label("1", 12)
+        tabsCount.setTextColor(BrowserService.TEXT)
+        tabsCount.gravity = Gravity.CENTER
+        tabsCount.typeface = Typeface.DEFAULT_BOLD
+        tabsCount.background = GradientDrawable().apply {
+            cornerRadius = dp(5).toFloat()
+            setStroke(max(1, dp(3) / 2), BrowserService.TEXT)
+        }
+        tabsButton.addView(tabsCount, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+        tabsButton.background = pressable(dp(20))
+        tabsButton.contentDescription = "Tabs"
+        onPress(tabsButton) { tabsMenu() }
+        bar.addView(tabsButton, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(2) })
+        // Browser: find in page: the query, "2 of 5", previous, next, done.
+        findRow.gravity = Gravity.CENTER_VERTICAL
+        findRow.visibility = View.GONE
+        findField.isSingleLine = true
+        findField.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        findField.setTextColor(BrowserService.TEXT)
+        findField.setHintTextColor(BrowserService.MUTED)
+        findField.hint = "Find in page"
+        findField.imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_FULLSCREEN
+        findField.inputType = EditorInfo.TYPE_CLASS_TEXT
+        findField.setPadding(dp(11), 0, dp(6), 0)
+        findField.background = null
+        findField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
+            override fun onTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
+            override fun afterTextChanged(e: Editable) {
+                if (!finding) return
+                findCount.text = ""
+                send2(BrowserService.MSG_FIND, "q" to e.toString(), "dir" to "next")
+            }
+        })
+        findField.setOnEditorActionListener { _, _, _ ->
+            send2(BrowserService.MSG_FIND, "q" to findField.text.toString(), "dir" to "next")
+            true
+        }
+        val findBox = LinearLayout(ctx)
+        findBox.gravity = Gravity.CENTER_VERTICAL
+        findBox.background = rounded(BrowserService.FIELD, dp(9))
+        findBox.addView(findField, LinearLayout.LayoutParams(0, dp(40), 1f))
+        findCount = line(12f, BrowserService.MUTED)
+        findCount.setPadding(0, 0, dp(10), 0)
+        findBox.addView(findCount)
+        findRow.addView(findBox, LinearLayout.LayoutParams(0, dp(40), 1f))
+        fun findButton(res: Int, label: String, act: () -> Unit) = icon(res, BrowserService.TEXT).also {
+            it.scaleType = ImageView.ScaleType.CENTER
+            it.background = pressable(dp(20))
+            it.contentDescription = label
+            it.setOnClickListener { act() }
+            findRow.addView(it, LinearLayout.LayoutParams(dp(36), dp(40)).apply { marginStart = dp(2) })
+        }
+        findButton(R.drawable.ccm_chevron_up, "Previous match") { send2(BrowserService.MSG_FIND, "q" to findField.text.toString(), "dir" to "prev") }
+        findButton(R.drawable.ccm_chevron_next, "Next match") { send2(BrowserService.MSG_FIND, "q" to findField.text.toString(), "dir" to "next") }
+        findButton(R.drawable.ccm_close, "Done") { endFind() }
+        bar.addView(findRow, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
         home = icon(R.drawable.ccm_home, BrowserService.TEXT)
         home.scaleType = ImageView.ScaleType.CENTER
         home.background = pressable(dp(20))
@@ -464,6 +532,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             }
         }
         when {
+            finding -> endFind()
             NativeBack.handle() -> {} // a sheet in a native screen
             viewer != null -> when {
                 under.isNotEmpty() -> display(under.removeLast()) // the viewer it was opened from
@@ -819,13 +888,18 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         titleText.text = NAMES[section]
         titleIcon.setImageResource(ICONS[section])
         titleIcon.contentDescription = NAMES[section]
-        tabBlock.visibility = if (v || tab == BROWSER || tab == TERMINAL) View.VISIBLE else View.GONE
-        // A viewer's tab is just its title and version, on the bar itself; Browser's and Terminal's are blocks.
+        val browser = !v && tab == BROWSER
+        if (!browser && finding) endFind()
+        tabBlock.visibility = if (v || (browser && !finding) || tab == TERMINAL) View.VISIBLE else View.GONE
+        // A viewer's tab is just its title and version, on the bar itself; Browser's address and Terminal's
+        // windows are blocks.
         tabBlock.background = if (v) pressable(dp(9)) else rounded(BrowserService.FIELD, dp(9))
-        tabChevron.visibility = if (v) View.GONE else View.VISIBLE
+        tabChevron.visibility = if (!v && tab == TERMINAL) View.VISIBLE else View.GONE
+        tabsButton.visibility = if (browser && !finding) View.VISIBLE else View.GONE
+        findRow.visibility = if (browser && finding) View.VISIBLE else View.GONE
         filesButtons.visibility = if (!v && tab == FILES) View.VISIBLE else View.GONE
         home.visibility = if (v) View.VISIBLE else View.GONE
-        more.visibility = if ((v && viewerBar != null) || (!v && tab == BROWSER)) View.VISIBLE else View.GONE
+        more.visibility = if ((v && viewerBar != null) || (browser && !finding)) View.VISIBLE else View.GONE
         if (v) showViewerTab() else if (tab == TERMINAL) showTerminals() else if (tab == BROWSER) showTabs()
     }
 
@@ -834,6 +908,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         val b = viewerBar
         tabMark.visibility = View.GONE
         tabCount.visibility = View.GONE
+        tabTitle.hint = null
         tabTitle.text = b?.title ?: ""
         // The second line: Public (a globe and the word, in the accent) when it's shared, then the version.
         val line = SpannableStringBuilder()
@@ -1112,12 +1187,13 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         val t = currentTab()
         val g = t?.let { groupOf(it.optString("group")) }
         tabMark.visibility = if (g != null && g.optString("owner") == BrowserService.AGENT) View.VISIBLE else View.GONE
-        tabTitle.text = if (t == null) "New tab" else tabName(t)
-        val host = if (t == null) "" else host(t.optString("url"))
-        tabHost.text = host
-        tabHost.visibility = if (host.isEmpty()) View.GONE else View.VISIBLE
-        tabCount.text = (tabState.optJSONArray("tabs")?.length() ?: 1).toString()
-        tabCount.visibility = View.VISIBLE
+        // The address, on one line: the site and the path, without the scheme (a tap edits it).
+        tabTitle.hint = "Search or type a URL"
+        tabTitle.setHintTextColor(BrowserService.MUTED)
+        tabTitle.text = shownUrl(t?.optString("url") ?: "")
+        tabHost.visibility = View.GONE
+        tabCount.visibility = View.GONE
+        tabsCount.text = (tabState.optJSONArray("tabs")?.length() ?: 1).toString()
         if (tabList != null && typed == null) fillTabList()
     }
 
@@ -1126,6 +1202,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         val windows = state?.optJSONArray("windows")
         val current = state?.optString("current") ?: ""
         tabMark.visibility = View.GONE
+        tabTitle.hint = null
         tabTitle.text = "Terminal"
         tabHost.text = if (state != null && state.has("error")) state.optString("error") else "Connecting…"
         tabHost.visibility = View.VISIBLE
@@ -1271,29 +1348,63 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         val list = menuBox()
         val url = currentTab()?.optString("url") ?: ""
         val host = host(url)
-        val on = tabState.optBoolean("desktop")
-        val desktopRow = menuItem(R.drawable.ccm_tab_desktop, "Desktop site",
-            if (host.isEmpty()) null else (if (on) "On for " else "For ") + host.replaceFirst(Regex("^www\\."), ""), false, {
+        val page = host.isNotEmpty()
+        // The page's own buttons, in a row: back, forward, reload, copy the link.
+        val row = LinearLayout(ctx)
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(dp(4), dp(2), dp(4), dp(6))
+        fun button(res: Int, label: String, on: Boolean, act: () -> Unit) {
+            val b = icon(res, BrowserService.TEXT)
+            b.scaleType = ImageView.ScaleType.CENTER
+            b.background = rounded(BrowserService.BG, dp(9))
+            b.foreground = pressable(dp(9))
+            b.contentDescription = label
+            b.isEnabled = on
+            b.alpha = if (on) 1f else 0.35f
+            b.setOnClickListener {
                 menu?.dismiss()
-                send(BrowserService.MSG_DESKTOP, "on", if (on) null else "1")
+                act()
+            }
+            row.addView(b, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginStart = dp(3); marginEnd = dp(3) })
+        }
+        button(R.drawable.ccm_back, "Back", tabState.optBoolean("canGoBack")) { send(BrowserService.MSG_BACK) }
+        button(R.drawable.ccm_forward, "Forward", tabState.optBoolean("canGoForward")) { send(BrowserService.MSG_FORWARD) }
+        button(R.drawable.ccm_reload, "Reload", page) { send(BrowserService.MSG_RELOAD) }
+        button(R.drawable.ccm_link, "Copy link", page) {
+            ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Link", url))
+            Toast.makeText(ctx, "Link copied", Toast.LENGTH_SHORT).show()
+        }
+        list.addView(row)
+        fun item(res: Int, name: String, sub: String?, on: Boolean, act: () -> Unit): LinearLayout {
+            val r = menuItem(res, name, sub, false, {
+                menu?.dismiss()
+                act()
             }, null) as LinearLayout
+            r.isEnabled = on
+            r.alpha = if (on) 1f else 0.4f
+            list.addView(r)
+            return r
+        }
+        item(R.drawable.ccm_plus, "New tab", null, true) { newTab() }
+        item(R.drawable.ccm_find, "Find in page", null, page) { startFind() }
+        item(R.drawable.ccm_share, "Share…", null, page) {
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
+            ctx.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            hide() // the share sheet opens under the second screen
+        }
+        val on = tabState.optBoolean("desktop")
+        val desktopRow = item(R.drawable.ccm_tab_desktop, "Desktop site",
+            if (!page) null else (if (on) "On for " else "For ") + host.replaceFirst(Regex("^www\\."), ""), page) {
+            send(BrowserService.MSG_DESKTOP, "on", if (on) null else "1")
+        }
         val check = icon(R.drawable.ccm_check, BrowserService.ACCENT)
         check.visibility = if (on) View.VISIBLE else View.INVISIBLE
         desktopRow.addView(check, LinearLayout.LayoutParams(dp(20), dp(20)))
-        desktopRow.isEnabled = host.isNotEmpty()
-        desktopRow.alpha = if (host.isEmpty()) 0.4f else 1f
-        list.addView(desktopRow)
-        val chrome = menuItem(R.drawable.ccm_tab_browser, "Open in Chrome", null, false, {
-            menu?.dismiss()
-            openOutside(url)
-        }, null)
-        chrome.isEnabled = host.isNotEmpty()
-        chrome.alpha = if (host.isEmpty()) 0.4f else 1f
-        list.addView(chrome)
-        showMenu(list, dp(250), false)
+        item(R.drawable.ccm_open, "Open in Chrome", null, page) { openOutside(url) }
+        showMenu(list, dp(264), false)
         menu?.window?.let { w ->
             val lp = w.attributes
-            lp.x = max(dp(8), lp.x + bar.width - dp(16) - dp(250)) // under ⋮, at the bar's right end
+            lp.x = max(dp(8), lp.x + bar.width - dp(16) - dp(264)) // under ⋮, at the bar's right end
             w.attributes = lp
         }
     }
@@ -1309,12 +1420,12 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         animateTo(0f)
     }
 
-    /** The tab menu, under the tab block: the address bar, then the tabs (yours, then each group's). */
-    private fun tabMenu() {
+    /**
+     * The address, edited: a field over the bar's address (the keyboard up, the address selected), and under it what
+     * the query suggests (open tabs, then pages from history).
+     */
+    private fun addressMenu() {
         val box = menuBox()
-        val row = LinearLayout(ctx)
-        row.gravity = Gravity.CENTER_VERTICAL
-        row.setPadding(dp(4), dp(4), 0, dp(6))
         val address = EditText(ctx)
         address.setText(currentTab()?.optString("url") ?: "")
         address.isSingleLine = true
@@ -1323,11 +1434,10 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         address.setHintTextColor(BrowserService.MUTED)
         address.hint = "Search or type a URL"
         address.setSelectAllOnFocus(true)
-        address.focusOnlyOnTouch() // the menu opens without the keyboard
-        address.imeOptions = EditorInfo.IME_ACTION_GO
+        address.imeOptions = EditorInfo.IME_ACTION_GO or EditorInfo.IME_FLAG_NO_FULLSCREEN
         address.inputType = EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_URI
-        address.setPadding(dp(14), 0, dp(14), 0)
-        address.background = rounded(BrowserService.BG, dp(19)).apply { setStroke(max(1, dp(1)), BrowserService.LINE) }
+        address.setPadding(dp(12), 0, dp(12), 0)
+        address.background = rounded(BrowserService.BG, dp(9)).apply { setStroke(max(1, dp(1)), BrowserService.LINE) }
         val initial = address.text.toString()
         address.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
@@ -1335,9 +1445,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             override fun afterTextChanged(e: Editable) {
                 val q = e.toString()
                 typed = if (q.isBlank() || q == initial) null else q
-                if (tabList == null) return
                 val t = typed
-                if (t == null) fillTabList() else suggest(t)
+                if (t == null) tabList?.removeAllViews() else suggest(t)
             }
         })
         address.setOnEditorActionListener { _, _, _ ->
@@ -1345,19 +1454,39 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             menu?.dismiss()
             true
         }
-        row.addView(address, LinearLayout.LayoutParams(0, dp(40), 1f))
-        val reload = icon(R.drawable.ccm_reload, BrowserService.TEXT)
-        reload.scaleType = ImageView.ScaleType.CENTER
-        reload.background = pressable(dp(20))
-        reload.contentDescription = "Reload"
-        reload.setOnClickListener {
-            send(BrowserService.MSG_RELOAD)
-            menu?.dismiss()
+        box.addView(address, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
+        val scroll = maxHeightScroll((panel.height * 0.5f).toInt())
+        val list = LinearLayout(ctx)
+        list.orientation = LinearLayout.VERTICAL
+        list.setPadding(0, dp(4), 0, 0)
+        tabList = list
+        scroll.addView(list)
+        box.addView(scroll)
+        showMenu(box, bar.width - dp(16), true)
+        // Over the bar's address, from the section icon's end to the bar's.
+        menu?.window?.let { w ->
+            val at = IntArray(2)
+            tabBlock.getLocationOnScreen(at)
+            val lp = w.attributes
+            lp.x = at[0] - dp(6)
+            lp.y = at[1] - dp(6)
+            lp.width = bar.width - (at[0] - dp(6)) - dp(8)
+            w.attributes = lp
         }
-        row.addView(reload, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(4) })
-        box.addView(row)
+        addressOpen = true
+        menu?.setOnDismissListener {
+            addressOpen = false
+            tabList = null
+            typed = null
+        }
+        address.requestFocus()
+        address.selectAll()
+        address.post { ctx.getSystemService(InputMethodManager::class.java).showSoftInput(address, 0) }
+    }
 
-        // The list's first heading, "Your tabs", fixed above it (however long the list), with + for a new tab.
+    /** The tabs, from the tab count: yours (with + for a new one), then each group's. */
+    private fun tabsMenu() {
+        val box = menuBox()
         val head = LinearLayout(ctx)
         head.gravity = Gravity.CENTER_VERTICAL
         head.setPadding(dp(10), dp(2), 0, 0)
@@ -1369,12 +1498,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         plus.scaleType = ImageView.ScaleType.CENTER
         plus.background = pressable(dp(18))
         plus.contentDescription = "New tab"
-        plus.setOnClickListener {
-            send(BrowserService.MSG_NEW)
-            address.setText("")
-            address.focusNow()
-            ctx.getSystemService(InputMethodManager::class.java).showSoftInput(address, 0)
-        }
+        plus.setOnClickListener { newTab() }
         head.addView(plus, LinearLayout.LayoutParams(dp(40), dp(36)))
         box.addView(head)
 
@@ -1385,11 +1509,39 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         scroll.addView(list)
         box.addView(scroll)
         fillTabList()
-        showMenu(box, bar.width - dp(16), true)
+        showMenu(box, bar.width - dp(16), false)
         menu?.setOnDismissListener {
             tabList = null
             typed = null
         }
+    }
+
+    /** A new tab, with its address ready to type in. */
+    private fun newTab() {
+        menu?.dismiss()
+        send(BrowserService.MSG_NEW)
+        bar.postDelayed({ if (tab == BROWSER && viewer == null) addressMenu() }, 150) // once the new tab is the current one
+    }
+
+    /** Find in page: the find row in place of the address, its field focused. */
+    private fun startFind() {
+        finding = true
+        findField.setText("")
+        findCount.text = ""
+        syncBar()
+        surface.clearFocus()
+        findField.requestFocus()
+        findField.post { ctx.getSystemService(InputMethodManager::class.java).showSoftInput(findField, 0) }
+    }
+
+    private fun endFind() {
+        if (!finding) return
+        finding = false
+        send2(BrowserService.MSG_FIND, "q" to "", "dir" to "clear")
+        ctx.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(findField.windowToken, 0)
+        findField.clearFocus()
+        syncBar()
+        if (isOpen) focusTab()
     }
 
     private fun maxHeightScroll(maxHeight: Int) = object : ScrollView(ctx) {
@@ -1400,6 +1552,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
 
     private fun fillTabList() {
         val tabList = tabList ?: return
+        if (addressOpen) return // the address menu's list is its suggestions
         tabList.removeAllViews()
         val all = tabState.optJSONArray("tabs") ?: return
         val tabs = (0 until all.length()).map { all.optJSONObject(it) }
@@ -1586,11 +1739,13 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 }
             }
             BrowserService.MSG_TABS -> {
+                val was = tabState.optString("current")
                 try {
                     tabState = JSONObject(m.data.getString("json") ?: "{}")
                 } catch (e: Exception) {
                     Log.d(TAG, "tabs: $e")
                 }
+                if (finding && tabState.optString("current") != was) endFind() // the find was on the other tab's page
                 showTabs()
             }
             BrowserService.MSG_SUGGESTIONS -> {
@@ -1602,6 +1757,10 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                     }
                 }
             }
+            BrowserService.MSG_FOUND -> if (finding) {
+                val n = m.data.getInt("count")
+                findCount.text = if (findField.text.isEmpty()) "" else if (n == 0) "0/0" else "${m.data.getInt("index") + 1}/$n"
+            }
             BrowserService.MSG_SHOW -> {
                 closeViewer()
                 select(BROWSER)
@@ -1610,6 +1769,17 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             BrowserService.MSG_BACK_KEY -> if (isOpen) back()
         }
         return true
+    }
+
+    private fun send2(what: Int, vararg data: Pair<String, String>) {
+        val svc = service ?: return
+        val m = Message.obtain(null, what)
+        for ((k, v) in data) m.data.putString(k, v)
+        try {
+            svc.send(m)
+        } catch (e: Exception) {
+            Log.e(TAG, "send", e)
+        }
     }
 
     private fun send(what: Int, key: String? = null, value: String? = null) {
@@ -1651,6 +1821,9 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             if (title.isNotEmpty() && title != url && !url.endsWith(title)) return title
             return host(url).ifEmpty { "New tab" }
         }
+
+        /** An address as the bar shows it: no scheme, no "www.", no trailing slash. */
+        private fun shownUrl(url: String): String = url.replaceFirst(Regex("^https?://(www\\.)?"), "").replaceFirst(Regex("/$"), "")
 
         private fun host(url: String?): String = if (url.isNullOrEmpty()) "" else Uri.parse(url).host ?: ""
     }
