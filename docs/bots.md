@@ -105,7 +105,9 @@ otto bot voice mybot --off
   config. With `--auth codex`, each call mints a short-lived realtime key from the Codex sign-in in
   `~/.codex/auth.json` and opens the call with it; Otto only reads the sign-in; Codex renews it whenever it runs (if it has expired, run any `codex` command). The voice handles small talk itself and hands
   everything else to the bot with its `ask_brain` tool, fire and forget: the bot gets everything said on the call
-  since the last hand-off, and its replies are spoken word for word at the next gap. A new call isn't a blank slate: the voice starts
+  since the last hand-off, and its replies are spoken word for word at the next gap. To tell one of the user's Claude
+  Code sessions something directly, it has `list_sessions` and `send_to_session` (`otto sessions list|send`): the
+  session gets the message headed with who it's from and how to answer (`otto send otto_voice`). A new call isn't a blank slate: the voice starts
   with what was said on earlier calls (the saved transcript below) as the conversation so far, for follow-ups;
   anything that needs facts still goes to the bot. The default model is `gpt-realtime-2.1` (the voice is `marin`). On an API key that is about $0.07 a minute; `gpt-realtime-2.1-mini` is the cheaper one, about $0.02–0.04.
 - **android**: no voice model in between; every sentence the phone hears goes to the bot, and its replies are read

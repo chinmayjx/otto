@@ -10,6 +10,9 @@
 // A call isn't a blank slate: as the box joins, the voice gets what was said on earlier calls (the bot's saved voice
 // transcript, history.ts) as the conversation so far, between two notes that it's earlier and already dealt with.
 //
+// list_sessions and send_to_session (sessions.ts) let the voice find one of the user's Claude Code sessions on the box
+// and say something to it directly; they answer when done, and the voice says what happened.
+//
 // ask_brain is fire and forget: the box hands Otto everything said since the last hand-off, and answers the tool at
 // once ("sent"), so the voice says it's on it and stays free. Otto's replies come back on the channel whenever they're
 // ready; each is spoken word for word at the next gap (the user not talking, the voice not mid-answer), with the
@@ -17,6 +20,7 @@
 import WebSocket from 'ws';
 import { Call, type CallHost, speakable } from './call.js';
 import { codexAccessToken, mintRealtimeKey } from './codex-auth.js';
+import { isSessionTool, SESSION_TOOLS, sessionTool } from './sessions.js';
 import { tap, watching } from './watch.js';
 
 const API = 'https://api.openai.com/v1/realtime';
@@ -28,6 +32,7 @@ export const PROMPT = `You are the voice of Otto, the user's personal assistant.
 - Every request for information or action goes to ask_brain, even one that repeats an earlier question: things may have changed. Never wrap up the conversation instead of answering.
 - ask_brain returns at once; the answer comes later. After calling it, say once, in a few words, that you're on it. Then be quiet until Otto's message arrives: don't fill the silence, don't say you're still checking. If the user asks how it's going, say once that it's still working. They can talk about other things meanwhile.
 - Background noise, a cough, or a fragment like "so" or "um" is not a question: don't answer it, wait for the user to finish.
+- The user's Claude Code sessions on their computer: when the user asks to tell a specific session (chat) something, find it with list_sessions and pass the message on with send_to_session. If the match isn't obvious, say the session's name and check with the user before sending. The session replies to the user through Otto on its own. For anything else about those sessions, use ask_brain.
 - When you're asked to say a message from Otto, say it.
 - To the user, you and the brain are one: Otto. Never mention a brain; say "let me check", not "I've asked the brain".
 
@@ -99,7 +104,7 @@ export class OpenAICall extends Call {
         },
         output: { voice: this.o.voice || 'marin' },
       },
-      tools: [TOOL], tool_choice: 'auto',
+      tools: [TOOL, ...SESSION_TOOLS], tool_choice: 'auto',
     };
     const form = new FormData();
     form.set('sdp', sdp);
@@ -276,20 +281,24 @@ export class OpenAICall extends Call {
     this.update();
   }
 
-  /** The voice's tool calls in one answer: hand Otto everything said since last time, with what the voice asks, and
-   * tell the voice at once that it's sent. */
+  /** The voice's tool calls in one answer. ask_brain: hand Otto everything said since last time, with what the voice
+   * asks, and tell the voice at once that it's sent. The session tools answer when they're done. */
   private async tools(calls: any[]) {
     if (!calls.length) return;
     const asks: string[] = [];
+    let answered = false;
     for (const c of calls) {
-      let request = '';
-      try { request = String(JSON.parse(c.arguments || '{}').request ?? ''); } catch {}
+      let args: any = {};
+      try { args = JSON.parse(c.arguments || '{}'); } catch {}
+      if (isSessionTool(c.name)) { void this.sessionTool(c.call_id, c.name, args); continue; }
+      const request = String(args.request ?? '');
       const ok = c.name === 'ask_brain';
       if (ok && request) asks.push(request);
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id,
         output: ok ? "Sent to Otto. The answer comes later as a message; tell the user you're on it." : `There is no tool ${c.name}.` } });
+      answered = true;
     }
-    this.send({ type: 'response.create' });
+    if (answered) this.send({ type: 'response.create' });
     if (!asks.length) return;
     await this.transcript.settled(1500);
     const b = this.transcript.take();
@@ -300,6 +309,17 @@ export class OpenAICall extends Call {
       ...asks.map(a => `The voice passes on: ${a}`),
       "(The voice has told the user you're on it: send only the answer, and a progress note only past about 20 s.)",
     ].filter(Boolean).join('\n'), false, b.delivered);
+  }
+
+  /** list_sessions or send_to_session, run; its result goes to the voice when it's free to answer. */
+  private async sessionTool(callId: string, name: string, args: any) {
+    const t = Date.now();
+    const output = await sessionTool(name, args);
+    this.log(`${name} in ${Date.now() - t} ms${output.startsWith('Failed') ? `: ${output.slice(0, 200)}` : ''}`);
+    while (!this.stopping && (this.responding || this.userSpeaking)) await new Promise(r => setTimeout(r, 300));
+    if (this.stopping) return;
+    this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output } });
+    this.send({ type: 'response.create' });
   }
 
   /** Muting mid-sentence sends no more audio, so the voice would never hear the pause that ends the sentence: what
