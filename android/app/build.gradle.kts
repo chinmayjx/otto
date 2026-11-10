@@ -32,6 +32,8 @@ android {
         manifestPlaceholders["appLabel"] = "Otto"
         manifestPlaceholders["pairScheme"] = "otto"
         buildConfigField("String", "PAIR_SCHEME", "\"otto\"")
+        // -Pabi=arm64-v8a builds for that one CPU only (a smaller, quicker build for one phone).
+        (findProperty("abi") as String?)?.let { ndk { abiFilters += it.split(",") } }
     }
     buildFeatures {
         buildConfig = true
