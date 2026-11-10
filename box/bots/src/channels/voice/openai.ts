@@ -125,6 +125,9 @@ export interface OpenAIOptions {
   instructions?: string;
   turnDetection?: Record<string, unknown>;
   noiseReduction?: Record<string, unknown> | null;
+  /** The language the user's words are written down in (ISO 639-1), "en" unless set; "auto" lets the transcription
+   * guess for each bit of speech, which turns noise and overlapped speech into words of any language. */
+  language?: string;
   /** Seconds of the user's speech that stop the voice mid-sentence; 0 lets OpenAI stop it at any sound. */
   bargeIn?: number | 'off';
 }
@@ -186,7 +189,7 @@ export class OpenAICall extends Call {
       audio: {
         // Noise reduction for a phone on its loudspeaker; it can be changed in the channel's config (noiseReduction).
         input: {
-          transcription: { model: 'gpt-4o-transcribe' },
+          transcription: { model: 'gpt-4o-transcribe', ...(this.o.language === 'auto' ? {} : { language: this.o.language || 'en' }) },
           turn_detection: this.turns,
           noise_reduction: this.o.noiseReduction === undefined ? { type: 'far_field' } : this.o.noiseReduction,
         },
