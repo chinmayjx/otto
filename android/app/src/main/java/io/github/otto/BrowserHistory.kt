@@ -55,6 +55,15 @@ class BrowserHistory(context: Context) : SQLiteOpenHelper(context, "history.db",
         return out
     }
 
+    /** The pages visited last, newest first: pairs of (url, title). */
+    fun recent(limit: Int): List<Pair<String, String>> {
+        val out = ArrayList<Pair<String, String>>()
+        readableDatabase.rawQuery("SELECT url, title FROM history ORDER BY last DESC LIMIT $limit", null).use { c ->
+            while (c.moveToNext()) out.add(c.getString(0) to c.getString(1))
+        }
+        return out
+    }
+
     companion object {
         private const val KEEP = 5000
         fun worthKeeping(url: String?) = url != null && (url.startsWith("http://") || url.startsWith("https://"))

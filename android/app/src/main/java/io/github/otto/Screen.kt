@@ -163,7 +163,12 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private var tabState = JSONObject() // BrowserService's TABS
     private var menu: Dialog? = null // a dialog, not a PopupWindow: a popup can't show text selection's toolbar
     private var tabList: LinearLayout? = null // the open tab menu's list, refreshed as the tabs change
-    private var addressOpen = false // the address menu is open (its list is the query's suggestions, not the tabs)
+    private var editing = false // the address is being edited: its field in the bar, suggestions over the page
+    private val addressRow = LinearLayout(ctx) // Browser: the address field, in the bar while editing
+    private val addressField = EditText(ctx)
+    private val editPanel = ScrollView(ctx) // Browser, while editing: this page, then suggestions, over the page
+    private val editCurrent = LinearLayout(ctx) // the page open now (copy, share), while nothing is typed
+    private val editList = LinearLayout(ctx)
     private var typed: String? = null // what's typed in the tab menu's address bar, while it's a query (then the list suggests)
     private var suggestSeq = 0
     private var tab = ARTIFACTS
@@ -240,6 +245,19 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         surface.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
             if (r - l != or - ol || b - t != ob - ot) attachOrResize()
         }
+        // Editing the address: the page open now, then what was visited last (or what the query suggests), over the
+        // page (the surface steps aside meanwhile: it's drawn on top of the window).
+        val editBox = LinearLayout(ctx)
+        editBox.orientation = LinearLayout.VERTICAL
+        editBox.setPadding(dp(8), dp(6), dp(8), dp(8))
+        editCurrent.orientation = LinearLayout.VERTICAL
+        editBox.addView(editCurrent)
+        editList.orientation = LinearLayout.VERTICAL
+        editBox.addView(editList)
+        editPanel.addView(editBox)
+        editPanel.setBackgroundColor(BrowserService.BG)
+        editPanel.visibility = View.GONE
+        body.addView(editPanel, underBar())
         // The top bar, over the sections: the title, then (Browser) the tab block.
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setPadding(dp(BAR_START), 0, dp(8), 0)
@@ -288,7 +306,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             when {
                 viewer != null -> viewerBar?.onLabel?.invoke()
                 tab == TERMINAL -> terminalMenu()
-                else -> addressMenu()
+                else -> startEdit()
             }
         }
         bar.addView(tabBlock, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
@@ -350,6 +368,44 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         findButton(R.drawable.ccm_chevron_next, "Next match") { send2(BrowserService.MSG_FIND, "q" to findField.text.toString(), "dir" to "next") }
         findButton(R.drawable.ccm_close, "Done") { endFind() }
         bar.addView(findRow, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
+        // Browser: the address, edited in place: the field where the address was, × to empty it.
+        addressRow.gravity = Gravity.CENTER_VERTICAL
+        addressRow.visibility = View.GONE
+        addressRow.background = rounded(BrowserService.FIELD, dp(9))
+        addressField.isSingleLine = true
+        addressField.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        addressField.setTextColor(BrowserService.TEXT)
+        addressField.setHintTextColor(BrowserService.MUTED)
+        addressField.hint = "Search or type a URL"
+        addressField.imeOptions = EditorInfo.IME_ACTION_GO or EditorInfo.IME_FLAG_NO_FULLSCREEN
+        addressField.inputType = EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_URI
+        addressField.setPadding(dp(11), 0, dp(4), 0)
+        addressField.background = null
+        addressField.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
+            override fun onTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
+            override fun afterTextChanged(e: Editable) {
+                if (!editing) return
+                val q = e.toString()
+                typed = if (q.isBlank() || q == currentTab()?.optString("url")) null else q
+                editCurrent.visibility = if (typed == null) View.VISIBLE else View.GONE
+                suggest(typed ?: "")
+            }
+        })
+        addressField.setOnEditorActionListener { _, _, _ ->
+            val q = addressField.text.toString()
+            endEdit()
+            send(BrowserService.MSG_LOAD, "url", q)
+            true
+        }
+        addressRow.addView(addressField, LinearLayout.LayoutParams(0, dp(40), 1f))
+        val clear = icon(R.drawable.ccm_close, BrowserService.MUTED)
+        clear.scaleType = ImageView.ScaleType.CENTER
+        clear.background = pressable(dp(18))
+        clear.contentDescription = "Clear"
+        clear.setOnClickListener { addressField.setText("") }
+        addressRow.addView(clear, LinearLayout.LayoutParams(dp(36), dp(40)))
+        bar.addView(addressRow, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
         home = icon(R.drawable.ccm_home, BrowserService.TEXT)
         home.scaleType = ImageView.ScaleType.CENTER
         home.background = pressable(dp(20))
@@ -533,6 +589,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         }
         when {
             finding -> endFind()
+            editing -> endEdit()
             NativeBack.handle() -> {} // a sheet in a native screen
             viewer != null -> when {
                 under.isNotEmpty() -> display(under.removeLast()) // the viewer it was opened from
@@ -890,16 +947,20 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         titleIcon.contentDescription = NAMES[section]
         val browser = !v && tab == BROWSER
         if (!browser && finding) endFind()
-        tabBlock.visibility = if (v || (browser && !finding) || tab == TERMINAL) View.VISIBLE else View.GONE
+        if (!browser && editing) endEdit()
+        val plain = browser && !finding && !editing // the browser's usual bar: address, tabs, ⋮
+        tabBlock.visibility = if (v || plain || tab == TERMINAL) View.VISIBLE else View.GONE
         // A viewer's tab is just its title and version, on the bar itself; Browser's address and Terminal's
         // windows are blocks.
         tabBlock.background = if (v) pressable(dp(9)) else rounded(BrowserService.FIELD, dp(9))
         tabChevron.visibility = if (!v && tab == TERMINAL) View.VISIBLE else View.GONE
-        tabsButton.visibility = if (browser && !finding) View.VISIBLE else View.GONE
+        tabsButton.visibility = if (plain) View.VISIBLE else View.GONE
         findRow.visibility = if (browser && finding) View.VISIBLE else View.GONE
+        addressRow.visibility = if (browser && editing) View.VISIBLE else View.GONE
+        editPanel.visibility = addressRow.visibility
         filesButtons.visibility = if (!v && tab == FILES) View.VISIBLE else View.GONE
         home.visibility = if (v) View.VISIBLE else View.GONE
-        more.visibility = if ((v && viewerBar != null) || (browser && !finding)) View.VISIBLE else View.GONE
+        more.visibility = if ((v && viewerBar != null) || plain) View.VISIBLE else View.GONE
         if (v) showViewerTab() else if (tab == TERMINAL) showTerminals() else if (tab == BROWSER) showTabs()
     }
 
@@ -955,7 +1016,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
      * surface is drawn above the window, so out of sight has to mean off the screen.
      */
     private fun placeSurface() {
-        surface.translationX = if (tab == BROWSER && viewer == null) 0f else 4f * max(surface.width, dp(400))
+        surface.translationX = if (tab == BROWSER && viewer == null && !editing) 0f else 4f * max(surface.width, dp(400))
     }
 
     private fun sectionView(): View = when (tab) {
@@ -1284,6 +1345,16 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private fun showSuggestions(list: JSONArray) {
         val tabList = tabList ?: return
         tabList.removeAllViews()
+        val q = typed
+        if (editing && q != null) tabList.addView(menuItem(R.drawable.ccm_find, q, null, false, {
+            endEdit()
+            send(BrowserService.MSG_LOAD, "url", q)
+        }, null))
+        else if (editing && list.length() > 0) tabList.addView(line(11f, BrowserService.MUTED).apply {
+            text = "RECENT"
+            letterSpacing = 0.04f
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+        })
         for (i in 0 until list.length()) {
             val s = list.optJSONObject(i)
             val url = s.optString("url")
@@ -1295,11 +1366,13 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 tabList.addView(menuItem(R.drawable.ccm_tab_browser, name, "Switch to tab · $host", false, {
                     send(BrowserService.MSG_SELECT, "id", id)
                     menu?.dismiss()
+                    endEdit()
                 }, null))
             } else {
                 tabList.addView(menuItem(R.drawable.ccm_history, name, shown, false, {
                     send(BrowserService.MSG_LOAD, "url", url)
                     menu?.dismiss()
+                    endEdit()
                 }, null))
             }
         }
@@ -1421,67 +1494,68 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     }
 
     /**
-     * The address, edited: a field over the bar's address (the keyboard up, the address selected), and under it what
-     * the query suggests (open tabs, then pages from history).
+     * The address, edited in place, as Chrome does: the field in the bar (the address selected, the keyboard up), and
+     * over the page the page open now (copy its link, share it), then the pages visited last, or what the query
+     * suggests (open tabs, then pages from history).
      */
-    private fun addressMenu() {
-        val box = menuBox()
-        val address = EditText(ctx)
-        address.setText(currentTab()?.optString("url") ?: "")
-        address.isSingleLine = true
-        address.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        address.setTextColor(BrowserService.TEXT)
-        address.setHintTextColor(BrowserService.MUTED)
-        address.hint = "Search or type a URL"
-        address.setSelectAllOnFocus(true)
-        address.imeOptions = EditorInfo.IME_ACTION_GO or EditorInfo.IME_FLAG_NO_FULLSCREEN
-        address.inputType = EditorInfo.TYPE_CLASS_TEXT or EditorInfo.TYPE_TEXT_VARIATION_URI
-        address.setPadding(dp(12), 0, dp(12), 0)
-        address.background = rounded(BrowserService.BG, dp(9)).apply { setStroke(max(1, dp(1)), BrowserService.LINE) }
-        val initial = address.text.toString()
-        address.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
-            override fun onTextChanged(c: CharSequence?, a: Int, b: Int, d: Int) {}
-            override fun afterTextChanged(e: Editable) {
-                val q = e.toString()
-                typed = if (q.isBlank() || q == initial) null else q
-                val t = typed
-                if (t == null) tabList?.removeAllViews() else suggest(t)
-            }
-        })
-        address.setOnEditorActionListener { _, _, _ ->
-            send(BrowserService.MSG_LOAD, "url", address.text.toString())
-            menu?.dismiss()
-            true
+    private fun startEdit() {
+        if (editing) return
+        menu?.dismiss()
+        editing = true
+        typed = null
+        tabList = editList
+        editList.removeAllViews()
+        fillEditCurrent()
+        val url = currentTab()?.optString("url") ?: ""
+        addressField.setText(url)
+        syncBar()
+        placeSurface()
+        surface.clearFocus()
+        addressField.requestFocus()
+        addressField.selectAll()
+        addressField.post { ctx.getSystemService(InputMethodManager::class.java).showSoftInput(addressField, 0) }
+        suggest("") // the pages visited last
+    }
+
+    private fun endEdit() {
+        if (!editing) return
+        editing = false
+        typed = null
+        tabList = null
+        ctx.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(addressField.windowToken, 0)
+        addressField.clearFocus()
+        syncBar()
+        placeSurface()
+        if (isOpen) focusTab()
+    }
+
+    /** The page open now, at the top while nothing is typed: its title and address, copy the link, share it. */
+    private fun fillEditCurrent() {
+        editCurrent.removeAllViews()
+        val t = currentTab() ?: return
+        val url = t.optString("url")
+        if (host(url).isEmpty()) return
+        val row = menuItem(R.drawable.ccm_tab_browser, tabName(t), shownUrl(url), false, { endEdit() }, null) as LinearLayout
+        fun act(res: Int, label: String, f: () -> Unit) = icon(res, BrowserService.TEXT).also {
+            it.scaleType = ImageView.ScaleType.CENTER
+            it.background = pressable(dp(18))
+            it.contentDescription = label
+            it.setOnClickListener { f() }
+            row.addView(it, LinearLayout.LayoutParams(dp(40), dp(36)))
         }
-        box.addView(address, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
-        val scroll = maxHeightScroll((panel.height * 0.5f).toInt())
-        val list = LinearLayout(ctx)
-        list.orientation = LinearLayout.VERTICAL
-        list.setPadding(0, dp(4), 0, 0)
-        tabList = list
-        scroll.addView(list)
-        box.addView(scroll)
-        showMenu(box, bar.width - dp(16), true)
-        // Over the bar's address, from the section icon's end to the bar's.
-        menu?.window?.let { w ->
-            val at = IntArray(2)
-            tabBlock.getLocationOnScreen(at)
-            val lp = w.attributes
-            lp.x = at[0] - dp(6)
-            lp.y = at[1] - dp(6)
-            lp.width = bar.width - (at[0] - dp(6)) - dp(8)
-            w.attributes = lp
+        act(R.drawable.ccm_copy, "Copy link") {
+            ctx.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Link", url))
+            Toast.makeText(ctx, "Link copied", Toast.LENGTH_SHORT).show()
         }
-        addressOpen = true
-        menu?.setOnDismissListener {
-            addressOpen = false
-            tabList = null
-            typed = null
+        act(R.drawable.ccm_share, "Share") {
+            endEdit()
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
+            ctx.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            hide()
         }
-        address.requestFocus()
-        address.selectAll()
-        address.post { ctx.getSystemService(InputMethodManager::class.java).showSoftInput(address, 0) }
+        editCurrent.addView(row)
+        editCurrent.addView(View(ctx).apply { setBackgroundColor(BrowserService.LINE) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, max(1, dp(1) / 2 + 1)).apply { topMargin = dp(6); bottomMargin = dp(6) })
     }
 
     /** The tabs, from the tab count: yours (with + for a new one), then each group's. */
@@ -1520,7 +1594,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private fun newTab() {
         menu?.dismiss()
         send(BrowserService.MSG_NEW)
-        bar.postDelayed({ if (tab == BROWSER && viewer == null) addressMenu() }, 150) // once the new tab is the current one
+        bar.postDelayed({ if (tab == BROWSER && viewer == null) startEdit() }, 150) // once the new tab is the current one
     }
 
     /** Find in page: the find row in place of the address, its field focused. */
@@ -1552,7 +1626,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
 
     private fun fillTabList() {
         val tabList = tabList ?: return
-        if (addressOpen) return // the address menu's list is its suggestions
+        if (editing) return // the list is the address's suggestions
         tabList.removeAllViews()
         val all = tabState.optJSONArray("tabs") ?: return
         val tabs = (0 until all.length()).map { all.optJSONObject(it) }
@@ -1749,7 +1823,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 showTabs()
             }
             BrowserService.MSG_SUGGESTIONS -> {
-                if (m.data.getInt("seq") == suggestSeq && tabList != null && typed != null) {
+                if (m.data.getInt("seq") == suggestSeq && tabList != null && (typed != null || editing)) {
                     try {
                         showSuggestions(JSONArray(m.data.getString("json")))
                     } catch (e: Exception) {

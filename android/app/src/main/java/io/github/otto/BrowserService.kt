@@ -623,7 +623,13 @@ class BrowserService : Service() {
     private fun suggest(query: String): JSONArray {
         val out = JSONArray()
         val q = query.trim().lowercase(Locale.ROOT)
-        if (q.isEmpty()) return out
+        if (q.isEmpty()) { // nothing typed yet: the pages visited last
+            for ((url, title) in history.recent(12)) {
+                if (out.length() >= 8) break
+                if (url != current?.url) out.put(JSONObject().put("title", title).put("url", url))
+            }
+            return out
+        }
         val words = q.split(Regex("\\s+"))
         val open = HashSet<String>()
         for (t in tabs) {
