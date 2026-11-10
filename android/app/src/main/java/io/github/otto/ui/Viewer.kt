@@ -169,8 +169,8 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
 
     val title = cur?.title ?: hint?.title ?: ""
     val behind = cur != null && cur.pinned && cur.version < cur.latest
-    // "v1 of 3": which version, and that there are newer ones. The bar adds the ▾.
-    val label = if (cur != null && cur.versions.size > 1) "v${cur.version} of ${cur.latest}" else null
+    // "v1 of 3": which version, and whether there are newer ones; always, as the tab's second line. The bar adds the ▾.
+    val label = cur?.let { "v${it.version} of ${it.latest}" }
     val clip = remember(cur?.artifactId) { cur?.let { ArtifactClip(ctx, it.artifactId) } }
     var clipping by remember { mutableStateOf(false) }
     var area by remember { mutableStateOf<android.graphics.Rect?>(null) } // the body, in the window's pixels
