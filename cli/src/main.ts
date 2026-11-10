@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { bot } from './bots.js';
 import { channel, schedule, send } from './schedules.js';
+import { sessions } from './sessions.js';
 import { loadConfig, session, relay, browser, phone, saveShot, desktopShot, pairing, pairingLink, OttoError } from './lib.js';
 
 const HELP = `otto: the phone, its browser and the box's desktop, for agents and people
@@ -77,6 +78,15 @@ Schedules (a prompt run at a time, as a fresh session on this box; times in [sch
   otto schedule run <name>                 run it now
   otto schedule runs [<name>] [--limit N]  recent runs: when, status, transcript
   otto schedule runs <name> <run>          what that run did
+
+Sessions (the user's Claude Code sessions on this box, read from what Claude Code keeps on disk):
+  otto sessions list [--all] [--limit N] [--json]
+                                           running ones and those active in the last 3 days (--all: every one),
+                                           newest first: id, name and title, folder, last active, busy/idle/not
+                                           running, remote (a Remote Control chat)
+  otto sessions send <id|name> [text]      a message into that session (text from stdin when not given), headed
+                                           with who sent it and how to reply (otto send otto_voice): live into a
+                                           running one, else it's continued in the background (claude --bg --resume)
 
 Bots (chat bots, each one long-running agent conversation on this box; the otto-bots service runs them):
   otto bot add <name> --channel telegram [--cwd DIR] [--model M] [--permission-mode MODE]
@@ -265,6 +275,9 @@ async function main(argv: string[]) {
 
     case 'schedule': case 'schedules':
       return schedule(config, cmd, a, out);
+
+    case 'sessions': case 'session':
+      return sessions(config, cmd, a, out);
 
     case 'artifact': {
       // The artifact hub's own CLI, until it moves into hub/artifacts.

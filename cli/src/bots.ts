@@ -12,7 +12,7 @@ import { OttoError } from './lib.js';
 
 const home = os.homedir();
 const expand = (p: string) => p.replace(/^~(?=\/|$)/, home);
-const configDir = () => expand(process.env.OTTO_BOTS_CONFIG || '~/.config/otto/bots');
+export const configDir = () => expand(process.env.OTTO_BOTS_CONFIG || '~/.config/otto/bots');
 const stateRoot = () => expand(process.env.OTTO_BOTS_STATE || '~/.local/state/otto/bots');
 const configFile = (name: string) => path.join(configDir(), `${name}.json`);
 const stateDir = (name: string) => path.join(stateRoot(), name);

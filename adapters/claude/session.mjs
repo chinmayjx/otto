@@ -8,7 +8,8 @@
 // lasts, and its session id now, whose transcript gives the title.
 import fs from 'node:fs';
 import path from 'node:path';
-import { HOME, titleOf } from '../lib.mjs';
+import { HOME } from '../lib.mjs';
+import { title } from './sessions.mjs';
 
 const SESSIONS = path.join(HOME, '.claude/sessions');
 
@@ -20,28 +21,6 @@ function claudeSession() {
     try { pid = +fs.readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].split(' ')[1]; } catch { break; }
   }
   return null;
-}
-
-/** The first line of the session's first prompt (after a compaction, the first one after the summary). */
-function title(id) {
-  const root = path.join(HOME, '.claude/projects');
-  try {
-    for (const dir of fs.readdirSync(root)) {
-      const file = path.join(root, dir, `${id}.jsonl`);
-      if (!fs.existsSync(file)) continue;
-      for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-        let e;
-        try { e = JSON.parse(line); } catch { continue; }
-        let text = null;
-        if (e.type === 'queue-operation' && e.operation === 'enqueue') text = e.content;
-        else if (e.type === 'user' && typeof e.message?.content === 'string') text = e.message.content;
-        if (typeof text !== 'string' || /^\s*</.test(text) || /^This session is being continued/.test(text)) continue;
-        const t = titleOf(text);
-        if (t) return t;
-      }
-    }
-  } catch {}
-  return 'Claude';
 }
 
 const s = claudeSession();
