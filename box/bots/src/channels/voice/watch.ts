@@ -6,16 +6,17 @@ import type http from 'node:http';
 
 export const watching = process.env.OTTO_VOICE_WATCH === '1';
 
-interface Line { t: number; call: string; kind: string; text: string; lp?: number }
+interface Line { t: number; call: string; kind: string; text: string; lp?: number; id?: string; role?: string }
 const recent: Line[] = [];
 const clients = new Set<http.ServerResponse>();
 
-/** One line for the page: kind is user, user-partial, voice, voice-partial, vad or log. */
-export function tap(call: string, kind: string, text: string, lp?: number) {
+/** One line for the page: kind is user, user-partial, voice, voice-partial, vad or log; or, for the voice model's
+ * conversation, item (a new item: id, role, text), item-text (an item's text once known) or item-gone (deleted). */
+export function tap(call: string, kind: string, text: string, lp?: number, id?: string, role?: string) {
   if (!watching) return;
-  const l: Line = { t: Date.now(), call, kind, text, ...(lp === undefined ? {} : { lp }) };
+  const l: Line = { t: Date.now(), call, kind, text, ...(lp === undefined ? {} : { lp }), ...(id ? { id } : {}), ...(role ? { role } : {}) };
   recent.push(l);
-  if (recent.length > 400) recent.shift();
+  if (recent.length > 2000) recent.shift();
   const data = `data: ${JSON.stringify(l)}\n\n`;
   for (const c of clients) c.write(data);
 }
@@ -50,13 +51,35 @@ section{display:flex;flex-direction:column;min-height:0;border-right:1px solid v
 h2{margin:0;padding:6px 12px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line)}
 .scroll{flex:1;overflow-y:auto;padding:10px 12px}
 #words{font-size:17px;line-height:1.6}#words .w.bad{color:var(--bad)}#words .w.partial{opacity:.55}
-#logs{font:12px/1.45 ui-monospace,Menlo,monospace}.l{white-space:pre-wrap;word-break:break-word}
+#logs{font:12px/1.45 ui-monospace,Menlo,monospace}
+.tabs{display:flex;border-bottom:1px solid var(--line)}.tabs button{flex:1;background:none;border:0;color:var(--dim);padding:6px;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.tabs button.on{color:var(--fg);box-shadow:inset 0 -2px 0 var(--voice)}
+.it{margin:0 0 8px;padding:6px 9px;border-radius:8px;background:#8881}.it .r{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.it.user{border-left:3px solid var(--fg)}.it.assistant{border-left:3px solid var(--voice)}.it.system{border-left:3px solid var(--dim)}
+.it.function_call,.it.function_call_output{border-left:3px solid var(--vad)}.it.gone{opacity:.45;text-decoration:line-through}.it .x{white-space:pre-wrap;word-break:break-word}.l{white-space:pre-wrap;word-break:break-word}
 .t{color:var(--dim)}.voice{color:var(--voice)}.vad{color:var(--vad)}.log{color:var(--dim)}.user{color:var(--fg)}.bad{color:var(--bad)}
 </style></head><body><header><b>Voice watch</b><span id="st">connecting…</span><button id="clr">clear</button></header>
 <main><section><h2>Heard (as OpenAI writes it down; red: low confidence)</h2><div class="scroll" id="wbox"><div id="words"></div></div></section>
-<section><h2>Log</h2><div class="scroll" id="lbox"><div id="logs"></div></div></section></main><script>
+<section><div class="tabs"><button id="tc" class="on">Voice model's conversation</button><button id="tl">Log</button></div>
+<div class="scroll" id="cbox"><div id="conv"></div></div><div class="scroll" id="lbox" style="display:none"><div id="logs"></div></div></section></main><script>
 const words=document.getElementById('words'),logs=document.getElementById('logs'),wbox=document.getElementById('wbox'),lbox=document.getElementById('lbox');
-let partial=null;
+let partial=null;const items={};const conv=document.getElementById('conv'),cbox=document.getElementById('cbox');
+const tc=document.getElementById('tc'),tl=document.getElementById('tl');
+tc.onclick=()=>{tc.className='on';tl.className='';cbox.style.display='';lbox.style.display='none'};
+tl.onclick=()=>{tl.className='on';tc.className='';lbox.style.display='';cbox.style.display='none'};
+const ROLE={user:'you',assistant:'voice',system:'system note',function_call:'hand-off to Otto',function_call_output:'tool result'};
+function item(l){
+  const keep=stick(cbox);let el=items[l.id];
+  if(l.kind==='item'){
+    if(!el){el=document.createElement('div');items[l.id]=el;el.innerHTML='<div class="r"></div><div class="x"></div>';conv.appendChild(el)}
+    el.className='it '+(l.role||'');el.querySelector('.r').textContent=(ROLE[l.role]||l.role||'item')+' · '+fmt(l.t);
+    if(l.text)el.querySelector('.x').textContent=l.text;else if(l.role==='user')el.querySelector('.x').textContent='…';
+  }else if(el){
+    if(l.kind==='item-gone'){el.classList.add('gone');el.querySelector('.r').textContent+=' · dropped'}
+    else{el.querySelector('.x').textContent=l.text+(l.lp===undefined?'':'  (lp '+l.lp.toFixed(2)+')');if(l.lp!==undefined&&l.lp<-0.5)el.querySelector('.x').classList.add('bad')}
+  }
+  if(keep)cbox.scrollTop=cbox.scrollHeight;
+}
 const fmt=t=>new Date(t).toLocaleTimeString([], {hour12:false})+'.'+String(t%1000).padStart(3,'0');
 const stick=b=>b.scrollTop+b.clientHeight>=b.scrollHeight-60;
 function word(l){
@@ -78,8 +101,8 @@ function line(l){
   el.append(t,s);logs.appendChild(el);
   if(keep)lbox.scrollTop=lbox.scrollHeight;
 }
-function show(l){ if(l.kind==='user'||l.kind==='user-partial')word(l); if(l.kind!=='user-partial')line(l) }
-document.getElementById('clr').onclick=()=>{words.innerHTML='';logs.innerHTML='';partial=null};
+function show(l){ if(l.kind.startsWith('item'))return item(l); if(l.kind==='user'||l.kind==='user-partial')word(l); if(l.kind!=='user-partial')line(l) }
+document.getElementById('clr').onclick=()=>{words.innerHTML='';logs.innerHTML='';conv.innerHTML='';partial=null;for(const k in items)delete items[k]};
 const st=document.getElementById('st');const es=new EventSource('/voice/watch/events');
 es.onopen=()=>st.textContent='live';es.onerror=()=>st.textContent='reconnecting…';es.onmessage=e=>show(JSON.parse(e.data));
 </script></body></html>`;

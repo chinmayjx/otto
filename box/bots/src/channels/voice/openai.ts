@@ -417,13 +417,25 @@ export class OpenAICall extends Call {
       case 'conversation.item.input_audio_transcription.completed': {
         this.heardSoFar.delete(e.item_id);
         const lp: number[] = (e.logprobs ?? []).map((x: any) => Number(x.logprob)).filter((n: number) => Number.isFinite(n));
-        return tap(this.id, 'user', String(e.transcript ?? '') || '(nothing)', lp.length ? lp.reduce((a, b) => a + b, 0) / lp.length : undefined);
+        const mean = lp.length ? lp.reduce((a, b) => a + b, 0) / lp.length : undefined;
+        tap(this.id, 'item-text', String(e.transcript ?? '') || '(nothing)', mean, e.item_id);
+        return tap(this.id, 'user', String(e.transcript ?? '') || '(nothing)', mean);
       }
+      case 'conversation.item.added': {
+        const i = e.item ?? {};
+        const text = i.type === 'function_call' ? `${i.name ?? 'tool'}(${i.arguments ?? ''})`
+          : i.type === 'function_call_output' ? `→ ${i.output ?? ''}`
+          : (i.content ?? []).map((c: any) => c.text ?? c.transcript ?? '').join(' ').trim();
+        return tap(this.id, 'item', text, undefined, i.id, i.type === 'message' ? i.role : i.type);
+      }
+      case 'conversation.item.deleted': return tap(this.id, 'item-gone', '', undefined, e.item_id);
       case 'response.output_audio_transcript.delta':
         this.voiceSoFar += String(e.delta ?? '');
+        tap(this.id, 'item-text', this.voiceSoFar, undefined, e.item_id);
         return tap(this.id, 'voice-partial', this.voiceSoFar);
       case 'response.output_audio_transcript.done':
         this.voiceSoFar = '';
+        tap(this.id, 'item-text', String(e.transcript ?? ''), undefined, e.item_id);
         return tap(this.id, 'voice', String(e.transcript ?? ''));
       case 'input_audio_buffer.speech_started': return tap(this.id, 'vad', 'OpenAI: speech start');
       case 'input_audio_buffer.speech_stopped': return tap(this.id, 'vad', 'OpenAI: speech stop');
