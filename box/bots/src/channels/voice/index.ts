@@ -3,7 +3,7 @@
 //
 // The channel's config picks what does the listening and speaking:
 //   {"provider": "openai-realtime", "apiKey": "sk-…", "model"?: "gpt-realtime-2.1", "voice"?: "marin", "bargeIn"?: 5,
-//    "language"?: "en"}
+//    "language"?: "en", "transcription"?: {OpenAI's transcription settings}, "turnDetection"?: {…}, "noiseReduction"?: {…}}
 //   {"provider": "openai-realtime", "auth": "codex", …}  the Codex ChatGPT sign-in; a realtime key is minted per call
 //   {"provider": "android"}       the phone's own speech recognizer and text-to-speech
 //
@@ -95,6 +95,7 @@ export class Voice implements Channel {
         turnDetection: this.config.turnDetection as Record<string, unknown> | undefined,
         noiseReduction: this.config.noiseReduction as Record<string, unknown> | null | undefined,
         language: typeof this.config.language === 'string' ? this.config.language : undefined,
+        transcription: this.config.transcription as Record<string, unknown> | undefined,
         bargeIn: this.config.bargeIn === undefined ? undefined : this.config.bargeIn === 'off' ? 'off' : Number(this.config.bargeIn),
       });
     this.call = call;

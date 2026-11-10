@@ -128,6 +128,9 @@ export interface OpenAIOptions {
   /** The language the user's words are written down in (ISO 639-1), "en" unless set; "auto" lets the transcription
    * guess for each bit of speech, which turns noise and overlapped speech into words of any language. */
   language?: string;
+  /** OpenAI's transcription settings as they are (model, language or languages, keywords, prompt, delay), over the
+   * defaults: for trying their options from the channel's config without a new build. */
+  transcription?: Record<string, unknown>;
   /** Seconds of the user's speech that stop the voice mid-sentence; 0 lets OpenAI stop it at any sound. */
   bargeIn?: number | 'off';
 }
@@ -189,7 +192,8 @@ export class OpenAICall extends Call {
       audio: {
         // Noise reduction for a phone on its loudspeaker; it can be changed in the channel's config (noiseReduction).
         input: {
-          transcription: { model: 'gpt-4o-transcribe', ...(this.o.language === 'auto' ? {} : { language: this.o.language || 'en' }) },
+          transcription: this.o.transcription ? { model: 'gpt-4o-transcribe', ...this.o.transcription }
+            : { model: 'gpt-4o-transcribe', ...(this.o.language === 'auto' ? {} : { language: this.o.language || 'en' }) },
           turn_detection: this.turns,
           noise_reduction: this.o.noiseReduction === undefined ? { type: 'far_field' } : this.o.noiseReduction,
         },
