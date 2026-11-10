@@ -196,7 +196,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         terminal = AppWeb.create(ctx, object : AppWeb.Ops {
             override fun terminalBar(state: JSONObject?) {
                 terminalState = state
-                if (tab == TERMINAL) showTerminals()
+                if (tab == TERMINAL && viewer == null) showTerminals()
             }
         })
         body.addView(terminal, underBar())
@@ -1035,7 +1035,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
 
     /** The tab block: the current tab's title and site, and how many tabs there are. */
     private fun showTabs() {
-        if (tab == TERMINAL) return
+        if (tab == TERMINAL || viewer != null) return // an open viewer has the bar
         tabBlock.contentDescription = "Tabs"
         val t = currentTab()
         val g = t?.let { groupOf(it.optString("group")) }
