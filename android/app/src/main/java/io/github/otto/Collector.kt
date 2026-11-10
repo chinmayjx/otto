@@ -13,6 +13,8 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.text.style.ForegroundColorSpan
+import android.text.Spanned
 import android.text.Editable
 import android.text.InputType
 import android.text.TextUtils
@@ -142,7 +144,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     private val whole = ImageView(ctx)
     private val close = ImageView(ctx)
     private val mic = ImageView(ctx)
-    private val heard = TextView(ctx)
     private var busy = false
     private var dictation: Dictation? = null
     /** The user has put the cursor somewhere: dictation goes there, not at the end. */
@@ -236,19 +237,6 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
             rightMargin = dp(14)
         })
 
-        // The phrase being dictated, until its final text goes into the note.
-        heard.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        heard.setTextColor(PLACEHOLDER)
-        heard.setTypeface(heard.typeface, Typeface.ITALIC)
-        heard.maxLines = 2
-        heard.ellipsize = TextUtils.TruncateAt.START
-        heard.visibility = GONE
-        addView(heard, LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            topMargin = dp(4)
-            leftMargin = dp(16)
-            rightMargin = dp(16)
-        })
-
         // The note: one full-width rounded strip that grows to four lines, its caret in the accent.
         note.setHintTextColor(PLACEHOLDER)
         note.setTextColor(BrowserService.TEXT)
@@ -312,19 +300,17 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
     private fun dictate() {
         status.visibility = GONE
         val d = Dictation(context, object : Dictation.Listener {
-            override fun draft(text: String) {
-                heard.text = text
-                heard.visibility = if (text.isBlank()) GONE else VISIBLE
-            }
+            override fun draft(text: String) = showDraft(text)
 
             override fun final(text: String) {
-                heard.visibility = GONE
+                val at = clearDraft()
+                if (at >= 0) note.setSelection(at)
                 insert(text)
             }
 
             override fun ended(error: String?) {
                 dictation = null
-                heard.visibility = GONE
+                clearDraft()
                 micShown()
                 if (error != null) {
                     copyAfter = false
@@ -339,6 +325,32 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
         dictation = d
         micShown()
         d.start()
+    }
+
+    /** The phrase being written down, faded, in the note itself where it will go: nothing above the note grows and
+     * shrinks as it changes. */
+    private val draftMark = ForegroundColorSpan(PLACEHOLDER)
+
+    private fun showDraft(text: String) {
+        val e = note.text ?: return
+        var at = clearDraft()
+        if (text.isBlank()) return
+        if (at < 0) at = if (placed) note.selectionEnd.coerceIn(0, e.length) else e.length
+        val shown = (if (at > 0 && !e[at - 1].isWhitespace()) " " else "") + text
+        e.insert(at, shown)
+        e.setSpan(draftMark, at, at + shown.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        note.setSelection(at + shown.length)
+    }
+
+    /** The draft out of the note; where it was, or -1 if there was none. */
+    private fun clearDraft(): Int {
+        val e = note.text ?: return -1
+        val a = e.getSpanStart(draftMark)
+        val b = e.getSpanEnd(draftMark)
+        e.removeSpan(draftMark)
+        if (a < 0 || b < a) return -1
+        e.delete(a, b)
+        return a
     }
 
     /** A phrase into the note, at the cursor, spaced from the words around it; the cursor then after it. */

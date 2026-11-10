@@ -113,6 +113,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private val titleText: TextView
     private val titleIcon: ImageView // the section, as its icon: what the bar shows (the name is in the menu)
     private var viewerBar: ViewerBarState? = null // the open viewer's title and actions, in the bar
+    private lateinit var tabChevron: ImageView
     private val tabTitle: TextView
     private val tabHost: TextView
     private val tabMark: TextView
@@ -262,7 +263,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabCount.setPadding(dp(4), 0, dp(4), 0)
         tabCount.minWidth = dp(18)
         tabBlock.addView(tabCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(17)).apply { marginStart = dp(8) })
-        tabBlock.addView(icon(R.drawable.ccm_chevron_down, BrowserService.MUTED), LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(6) })
+        tabChevron = icon(R.drawable.ccm_chevron_down, BrowserService.MUTED)
+        tabBlock.addView(tabChevron, LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(6) })
         onPress(tabBlock) {
             when {
                 viewer != null -> viewerBar?.onLabel?.invoke()
@@ -760,6 +762,9 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         titleIcon.setImageResource(ICONS[section])
         titleIcon.contentDescription = NAMES[section]
         tabBlock.visibility = if (v || tab == BROWSER || tab == TERMINAL) View.VISIBLE else View.GONE
+        // A viewer's tab is just its title and version, on the bar itself; Browser's and Terminal's are blocks.
+        tabBlock.background = if (v) pressable(dp(9)) else rounded(BrowserService.FIELD, dp(9))
+        tabChevron.visibility = if (v) View.GONE else View.VISIBLE
         filesButtons.visibility = if (!v && tab == FILES) View.VISIBLE else View.GONE
         more.visibility = if ((v && viewerBar != null) || (!v && tab == BROWSER)) View.VISIBLE else View.GONE
         if (v) showViewerTab() else if (tab == TERMINAL) showTerminals() else if (tab == BROWSER) showTabs()
@@ -771,7 +776,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabMark.visibility = View.GONE
         tabCount.visibility = View.GONE
         tabTitle.text = b?.title ?: ""
-        tabHost.text = b?.label ?: ""
+        tabHost.text = b?.label?.let { "$it ▾" } ?: ""
         tabHost.visibility = if (b?.label.isNullOrEmpty()) View.GONE else View.VISIBLE
         tabBlock.contentDescription = if (b?.label != null) "${b.title}, ${b.label}: other versions" else b?.title ?: ""
     }
@@ -788,6 +793,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         b.onDownload?.let { item(R.drawable.ccm_download, "Download", it) }
         if (b.label != null) item(R.drawable.ccm_history, "Versions", b.onLabel)
         b.onMore?.let { item(R.drawable.ccm_more, "More…", it) }
+        for (a in b.actions) item(a.icon, a.name, a.run)
         showMenu(list, dp(220), false)
         menu?.window?.let { w ->
             val lp = w.attributes

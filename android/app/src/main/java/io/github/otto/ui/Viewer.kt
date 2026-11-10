@@ -1,5 +1,7 @@
 package io.github.otto.ui
 
+import io.github.otto.R
+import kotlinx.coroutines.CoroutineScope
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -120,9 +122,10 @@ fun Viewer(target: Target, hint: ArtifactItem?) {
  */
 @Composable
 private fun ViewerBar(title: String, label: String?, progress: Float?, onLabel: () -> Unit, onDownload: (() -> Unit)?, onMore: (() -> Unit)?,
-                      clipping: Boolean? = null, onClip: () -> Unit = {}, @Suppress("UNUSED_PARAMETER") home: String = "") {
+                      clipping: Boolean? = null, onClip: () -> Unit = {}, @Suppress("UNUSED_PARAMETER") home: String = "",
+                      actions: List<ViewerAction> = emptyList()) {
     val ops = LocalOps.current
-    SideEffect { ops.viewerBar(ViewerBarState(title, label, onLabel, onDownload, onMore, clipping, onClip)) }
+    SideEffect { ops.viewerBar(ViewerBarState(title, label, onLabel, onDownload, onMore, clipping, onClip, actions)) }
     Box(Modifier.fillMaxWidth().height(2.dp)) {
         if (progress != null) {
             if (progress < 0f) LinearProgressIndicator(Modifier.fillMaxSize()) else LinearProgressIndicator({ progress }, Modifier.fillMaxSize())
@@ -166,7 +169,8 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
 
     val title = cur?.title ?: hint?.title ?: ""
     val behind = cur != null && cur.pinned && cur.version < cur.latest
-    val label = if (cur != null && cur.versions.size > 1) "v${cur.version}${if (behind) " (not latest)" else ""} ▾" else null
+    // "v1 of 3": which version, and that there are newer ones. The bar adds the ▾.
+    val label = if (cur != null && cur.versions.size > 1) "v${cur.version} of ${cur.latest}" else null
     val clip = remember(cur?.artifactId) { cur?.let { ArtifactClip(ctx, it.artifactId) } }
     var clipping by remember { mutableStateOf(false) }
     var area by remember { mutableStateOf<android.graphics.Rect?>(null) } // the body, in the window's pixels
@@ -178,7 +182,8 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
         ViewerBar(title, label, progress,
             onLabel = { if (cur != null) sheets.show { VersionsSheet(cur, sheets) { target = it } } },
             onDownload = cur?.let { { ops.download("${ArtifactsApi.files(ctx, it)}/download", it.filename) } },
-            onMore = cur?.let { { sheets.show { ArtifactMoreSheet(it, sheets) } } },
+            onMore = null,
+            actions = cur?.let { artifactActions(ctx, scope, ops, sheets, it) } ?: emptyList(),
             clipping = if (cur != null) clipping else null,
             onClip = {
                 clipping = !clipping
@@ -482,18 +487,14 @@ private fun VersionsSheet(v: ArtifactVersion, sheets: Sheets, go: (Target) -> Un
     }
 }
 
-@Composable
-private fun ArtifactMoreSheet(v0: ArtifactVersion, sheets: Sheets) {
-    val ctx = LocalContext.current
-    val ops = LocalOps.current
-    val scope = rememberCoroutineScope()
-    val v = v0
+/** An artifact's own actions, for the bar's ⋮: share (making the public link), stop sharing, copy link, open with,
+ * open in the browser, delete. */
+private fun artifactActions(ctx: Context, scope: CoroutineScope, ops: ScreenOps, sheets: Sheets, v: ArtifactVersion): List<ViewerAction> {
     val n = v.versions.size
     val pub = publicArtifactsBase(ctx)
     fun failed() = toast(ctx, "That didn't work. Is Tailscale on?")
-    SheetTitle("${v.type} · v${v.version}${if (v.public) " · shared" else ""}")
-    SheetRow(Ic.share, "Share", if (v.public) "Its public link" else "Makes a public link anyone can open") {
-        sheets.dismiss()
+    val list = mutableListOf<ViewerAction>()
+    list += ViewerAction(R.drawable.ccm_share, if (v.public) "Share" else "Share (makes a public link)") {
         scope.launch {
             try {
                 if (!v.public) ArtifactsApi.setPublic(ctx, v.artifactId, true)
@@ -503,8 +504,7 @@ private fun ArtifactMoreSheet(v0: ArtifactVersion, sheets: Sheets) {
             }
         }
     }
-    if (v.public) SheetRow(Ic.lock, "Stop sharing", "The public link stops working") {
-        sheets.dismiss()
+    if (v.public) list += ViewerAction(R.drawable.ccm_lock, "Stop sharing") {
         scope.launch {
             try {
                 ArtifactsApi.setPublic(ctx, v.artifactId, false)
@@ -514,20 +514,15 @@ private fun ArtifactMoreSheet(v0: ArtifactVersion, sheets: Sheets) {
             }
         }
     }
-    SheetRow(Ic.link, "Copy link", "Always opens the latest version") {
-        sheets.dismiss()
-        copyText(ctx, "$pub/a/${v.artifactId}", "Link copied")
-    }
-    SheetRow(Ic.open, "Open with…", "Another app on this phone") {
-        sheets.dismiss()
+    list += ViewerAction(R.drawable.ccm_link, "Copy link") { copyText(ctx, "$pub/a/${v.artifactId}", "Link copied") }
+    list += ViewerAction(R.drawable.ccm_open, "Open with…") {
         openWith(ctx, scope, ops, "${ArtifactsApi.files(ctx, v)}/download", v.filename)
     }
-    SheetRow(Ic.open, "Open in Browser", "The hub's own page") {
-        sheets.dismiss()
+    list += ViewerAction(R.drawable.ccm_tab_browser, "Open in Browser") {
         ops.closeViewer()
         ops.openInBrowser("${artifactsBase(ctx)}/a/${v.artifactId}" + if (v.pinned) "/v${v.version}" else "")
     }
-    SheetRow(Ic.trash, "Delete", if (n > 1) "All $n versions" else "For good", danger = true) {
+    list += ViewerAction(R.drawable.ccm_trash, if (n > 1) "Delete (all $n versions)" else "Delete") {
         sheets.ask("Delete \"${v.title}\"?", if (n > 1) "All $n versions go, for good." else "It goes for good.", "Delete") {
             scope.launch {
                 try {
@@ -541,6 +536,7 @@ private fun ArtifactMoreSheet(v0: ArtifactVersion, sheets: Sheets) {
             }
         }
     }
+    return list
 }
 
 // --- Files on the box -------------------------------------------------------------------------------------------

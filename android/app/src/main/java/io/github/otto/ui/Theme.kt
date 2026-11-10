@@ -133,7 +133,12 @@ class ViewerBarState(
     /** The collector: null where there's none, else whether it's open. */
     val clipping: Boolean?,
     val onClip: () -> Unit,
+    /** More of the viewer's actions, listed in ⋮ after its own (share, copy link, delete…). */
+    val actions: List<ViewerAction> = emptyList(),
 )
+
+/** One of the viewer's actions in the bar's ⋮: icon a drawable. */
+class ViewerAction(val icon: Int, val name: String, val run: () -> Unit)
 
 val LocalOps = staticCompositionLocalOf<ScreenOps> { error("no ScreenOps") }
 
