@@ -38,6 +38,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.CompositionLocalProvider
@@ -62,6 +63,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -87,6 +89,9 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+
+/** How long the docked collector keeps a new height before the artifact above makes room for it. */
+private const val ROOM_MS = 600L
 /**
  * The viewer, native: an artifact (any version) or a file on the box, over the whole second screen. PDFs and
  * office files (their PDF) through PdfRenderer, images zoomable, audio and video through Media3, markdown through
@@ -204,7 +209,18 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
                 if (!clipping) clip?.save()
             },
         )
-        Box(Modifier.weight(1f).clipToBounds().onGloballyPositioned { c ->
+        // The collector is docked over the bottom of the body, and the body makes room for it only once it has kept a
+        // height for a moment: a new line in the note then doesn't make the artifact lay itself out again at once.
+        var dock by remember { mutableIntStateOf(0) } // the collector's height, px
+        var room by remember { mutableIntStateOf(0) } // the room the body leaves it, px
+        val docked = clipping && cur != null && clip != null
+        LaunchedEffect(dock, docked) {
+            val want = if (docked) dock else 0
+            if (want > room) delay(ROOM_MS)
+            room = want
+        }
+        Box(Modifier.weight(1f).clipToBounds()) {
+        Box(Modifier.fillMaxSize().padding(bottom = with(LocalDensity.current) { room.toDp() }).onGloballyPositioned { c ->
             val b = c.boundsInWindow()
             area = android.graphics.Rect(b.left.roundToInt(), b.top.roundToInt(), b.right.roundToInt(), b.bottom.roundToInt())
         }) {
@@ -222,15 +238,17 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
                 }
             }
         }
-        if (clipping && cur != null && clip != null) {
-            // Docked: part of the layout, so the artifact above shrinks rather than going under it.
+        if (docked) {
             AndroidView(
-                factory = { c -> Collector(c, docked = true).also { clip.attach(it) } },
+                factory = { c -> Collector(c, docked = true).also { clip!!.attach(it) } },
                 update = {
                     it.frozen = frozen != null
                 },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().onSizeChanged { dock = it.height },
             )
+        }
+        }
+        if (clipping && cur != null && clip != null) {
             LaunchedEffect(clip) {
                 // The body's pixels as they are on screen.
                 fun take(then: (Bitmap) -> Unit) {
