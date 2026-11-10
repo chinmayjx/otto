@@ -302,7 +302,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabBlock.addView(tabCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(17)).apply { marginStart = dp(8) })
         tabChevron = icon(R.drawable.ccm_chevron_down, BrowserService.MUTED)
         tabBlock.addView(tabChevron, LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(6) })
-        onPress(tabBlock) {
+        // The browser's address opens for editing on a tap (as the finger lifts), so a pull down on it reloads.
+        onPress(tabBlock, tapOnly = { viewer == null && tab == BROWSER }) {
             when {
                 viewer != null -> viewerBar?.onLabel?.invoke()
                 tab == TERMINAL -> terminalMenu()
@@ -638,7 +639,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
      * moves still come here, as the menu's window appeared after it began.
      */
     @SuppressLint("ClickableViewAccessibility")
-    private fun onPress(v: View, open: () -> Unit) {
+    private fun onPress(v: View, tapOnly: () -> Boolean = { false }, open: () -> Unit) {
         v.setOnClickListener { open() } // for accessibility
         v.setOnTouchListener(object : View.OnTouchListener {
             var hot: View? = null // the item under the finger
@@ -655,7 +656,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                         entered = false
                         downX = e.rawX
                         downY = e.rawY
-                        open()
+                        if (!tapOnly()) open()
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val item = menuItemAt(e.rawX, e.rawY)
@@ -677,6 +678,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                         val item = menuItemAt(e.rawX, e.rawY)
                         val moved = max(abs(e.rawX - downX), abs(e.rawY - downY)) > slop
                         when {
+                            tapOnly() -> if (!moved) open() // opens as the finger lifts: a pull down on it reloads
                             item != null -> item.performClick()
                             entered || moved -> menu?.dismiss() // dragged off, onto nothing
                             else -> {} // a tap: the menu stays, to tap an item
