@@ -64,6 +64,6 @@ function show(l){
   if(innerHeight+scrollY>=document.body.scrollHeight-80)scrollTo(0,document.body.scrollHeight);
 }
 clr.onclick=()=>{box.innerHTML='';partial={}};
-const es=new EventSource(location.pathname.replace(/\/$/,'')+'/events');es.onopen=()=>st.textContent='live';es.onerror=()=>st.textContent='reconnecting…';
+const es=new EventSource('/voice/watch/events');es.onopen=()=>st.textContent='live';es.onerror=()=>st.textContent='reconnecting…';
 es.onmessage=e=>show(JSON.parse(e.data));
 </script></body></html>`;
