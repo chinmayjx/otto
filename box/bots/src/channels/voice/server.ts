@@ -29,6 +29,7 @@ import { transcriber, type Transcriber } from '../../transcribe.js';
 import { AndroidCall } from './android.js';
 import { OpenAICall } from './openai.js';
 import type { Voice } from './index.js';
+import { serveWatch } from './watch.js';
 
 const POLL_MS = 25_000;
 const UNWATCHED_MS = 45_000;
@@ -74,6 +75,7 @@ function body(req: http.IncomingMessage, max = 1 << 20): Promise<any> {
 export function serveVoice(port: number, d: ServerDeps): http.Server {
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url ?? '/', 'http://x');
+    if (serveWatch(req, res, u.pathname)) return;
     try {
       const a = d.assistant();
       if (u.pathname === '/voice/assistant') {

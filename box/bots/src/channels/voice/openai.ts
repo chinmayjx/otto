@@ -28,6 +28,7 @@ import WebSocket from 'ws';
 import { filler } from './android.js';
 import { Call, type CallHost, speakable } from './call.js';
 import { codexAccessToken, mintRealtimeKey } from './codex-auth.js';
+import { tap, watching } from './watch.js';
 
 const API = 'https://api.openai.com/v1/realtime';
 
@@ -269,6 +270,7 @@ export class OpenAICall extends Call {
   }
 
   private event(e: any) {
+    this.watch(e);
     switch (e.type) {
       case 'input_audio_buffer.speech_started':
         this.userSpeaking = true;
@@ -399,6 +401,35 @@ export class OpenAICall extends Call {
     if (!this.barge && !this.responding) this.send({ type: 'response.create' });
     this.log('muted mid-sentence: taken as said');
     this.update();
+  }
+
+  /** What the call hears and says, word by word, for the watch page (watch.ts). */
+  private heardSoFar = new Map<string, string>();
+  private voiceSoFar = '';
+  private watch(e: any) {
+    if (!watching) return;
+    switch (e.type) {
+      case 'conversation.item.input_audio_transcription.delta': {
+        const t = (this.heardSoFar.get(e.item_id) ?? '') + String(e.delta ?? '');
+        this.heardSoFar.set(e.item_id, t);
+        return tap(this.id, 'user-partial', t);
+      }
+      case 'conversation.item.input_audio_transcription.completed': {
+        this.heardSoFar.delete(e.item_id);
+        const lp: number[] = (e.logprobs ?? []).map((x: any) => Number(x.logprob)).filter((n: number) => Number.isFinite(n));
+        return tap(this.id, 'user', String(e.transcript ?? '') || '(nothing)', lp.length ? lp.reduce((a, b) => a + b, 0) / lp.length : undefined);
+      }
+      case 'response.output_audio_transcript.delta':
+        this.voiceSoFar += String(e.delta ?? '');
+        return tap(this.id, 'voice-partial', this.voiceSoFar);
+      case 'response.output_audio_transcript.done':
+        this.voiceSoFar = '';
+        return tap(this.id, 'voice', String(e.transcript ?? ''));
+      case 'input_audio_buffer.speech_started': return tap(this.id, 'vad', 'OpenAI: speech start');
+      case 'input_audio_buffer.speech_stopped': return tap(this.id, 'vad', 'OpenAI: speech stop');
+      case 'input_audio_buffer.committed': return tap(this.id, 'vad', 'committed');
+      case 'output_audio_buffer.cleared': return tap(this.id, 'vad', 'voice audio cleared');
+    }
   }
 
   /** Stops the voice now: what it had yet to say is cut from its answer, so it knows where it was stopped. */

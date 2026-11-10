@@ -11,6 +11,7 @@
 import crypto from 'node:crypto';
 import type { History } from './history.js';
 import { Transcript } from './transcript.js';
+import { tap } from './watch.js';
 
 export type State = 'connecting' | 'listening' | 'thinking' | 'speaking' | 'error' | 'ended';
 export interface CallEvent { n: number; type: string; [k: string]: unknown }
@@ -70,7 +71,10 @@ export abstract class Call {
   /** The phone heard the user say something (android). */
   heard(_text: string): void { throw new Error('this call hears for itself'); }
 
-  protected log(m: string) { this.host.log(`voice [${this.id}] ${m}`); }
+  protected log(m: string) {
+    this.host.log(`voice [${this.id}] ${m}`);
+    tap(this.id, 'log', m);
+  }
 
   protected push(e: { type: string; [k: string]: unknown }) {
     this.events.push({ n: ++this.n, ...e });
