@@ -38,6 +38,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -113,43 +114,18 @@ fun Viewer(target: Target, hint: ArtifactItem?) {
 }
 
 /**
- * The viewer's bar, one line, as tall as the second screen's own: home (Up), the title (ellipsized), the version
- * right after it in the accent (it picks a version, and never shrinks: the title does), then the collector's switch,
- * download and ⋮. Loading shows as a thin line along its bottom edge.
+ * The viewer's part of the second screen's top bar: its title, the version (it picks a version) and its actions (the
+ * collector's switch, download, more) go to the bar (ScreenOps.viewerBar), where the section switcher stays. Here
+ * only loading shows, as a thin line along the top.
  */
 @Composable
 private fun ViewerBar(title: String, label: String?, progress: Float?, onLabel: () -> Unit, onDownload: (() -> Unit)?, onMore: (() -> Unit)?,
-                      clipping: Boolean? = null, onClip: () -> Unit = {}, home: String = "Artifacts home") {
+                      clipping: Boolean? = null, onClip: () -> Unit = {}, @Suppress("UNUSED_PARAMETER") home: String = "") {
     val ops = LocalOps.current
-    val cs = MaterialTheme.colorScheme
-    Surface(color = cs.surfaceContainer) {
-        Box(Modifier.fillMaxWidth().height(48.dp)) {
-            Row(Modifier.fillMaxSize().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                // Up, as a home: always the section's home (the Artifacts list, the file's folder). System Back is
-                // contextual instead (ScreenOps.up, Screen.back).
-                IconButton(onClick = { ops.up() }) { Icon(painterResource(io.github.otto.R.drawable.ccm_home), home, Modifier.size(22.dp)) }
-                Row(Modifier.weight(1f).padding(start = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis)
-                    if (label != null) {
-                        Text(label, Modifier.padding(start = 6.dp).clip(RoundedCornerShape(6.dp)).clickable(onClick = onLabel)
-                            .padding(horizontal = 4.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelLarge, color = cs.primary, maxLines = 1, softWrap = false)
-                    }
-                }
-                // A tight group: 40dp targets, 22dp icons.
-                val tight = Modifier.size(40.dp)
-                // A plain button like its neighbours: the open collector shows that it's on.
-                if (clipping != null) IconButton(onClick = onClip, modifier = tight) {
-                    Icon(Ic.clipboard, if (clipping) "Close the collector" else "Collect notes and parts for your agent", Modifier.size(22.dp))
-                }
-                if (onDownload != null) IconButton(onClick = onDownload, modifier = tight) { Icon(Ic.download, "Download", Modifier.size(22.dp)) }
-                if (onMore != null) IconButton(onClick = onMore, modifier = tight) { Icon(Ic.more, "More", Modifier.size(22.dp)) }
-            }
-            if (progress != null) {
-                val m = Modifier.fillMaxWidth().height(2.dp).align(Alignment.BottomCenter)
-                if (progress < 0f) LinearProgressIndicator(m) else LinearProgressIndicator({ progress }, m)
-            }
+    SideEffect { ops.viewerBar(ViewerBarState(title, label, onLabel, onDownload, onMore, clipping, onClip)) }
+    Box(Modifier.fillMaxWidth().height(2.dp)) {
+        if (progress != null) {
+            if (progress < 0f) LinearProgressIndicator(Modifier.fillMaxSize()) else LinearProgressIndicator({ progress }, Modifier.fillMaxSize())
         }
     }
 }

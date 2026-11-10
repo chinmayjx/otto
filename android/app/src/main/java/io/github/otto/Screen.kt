@@ -66,6 +66,7 @@ import io.github.otto.ui.NativeBack
 import io.github.otto.ui.ScreenOps
 import io.github.otto.ui.Target
 import io.github.otto.ui.Viewer
+import io.github.otto.ui.ViewerBarState
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -110,6 +111,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private val filesHome: ImageView
     private val filesHidden: ImageView
     private val titleText: TextView
+    private val titleIcon: ImageView // the section, as its icon: what the bar shows (the name is in the menu)
+    private var viewerBar: ViewerBarState? = null // the open viewer's title and actions, in the bar
     private val tabTitle: TextView
     private val tabHost: TextView
     private val tabMark: TextView
@@ -226,7 +229,10 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         title.setPadding(dp(TITLE_PAD), 0, dp(TITLE_PAD), 0)
         title.background = pressable(dp(8))
         titleText = titleLabel()
+        titleText.visibility = View.GONE
         title.addView(titleText)
+        titleIcon = icon(ICONS[ARTIFACTS], BrowserService.TEXT)
+        title.addView(titleIcon, LinearLayout.LayoutParams(dp(22), dp(22)))
         title.addView(icon(R.drawable.ccm_chevron_down, BrowserService.MUTED), LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(5) })
         title.contentDescription = "Switch section"
         onPress(title) { sectionMenu() }
@@ -257,13 +263,19 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabCount.minWidth = dp(18)
         tabBlock.addView(tabCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(17)).apply { marginStart = dp(8) })
         tabBlock.addView(icon(R.drawable.ccm_chevron_down, BrowserService.MUTED), LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(6) })
-        onPress(tabBlock) { if (tab == TERMINAL) terminalMenu() else tabMenu() }
+        onPress(tabBlock) {
+            when {
+                viewer != null -> viewerBar?.onLabel?.invoke()
+                tab == TERMINAL -> terminalMenu()
+                else -> tabMenu()
+            }
+        }
         bar.addView(tabBlock, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
         more = icon(R.drawable.ccm_more, BrowserService.TEXT)
         more.scaleType = ImageView.ScaleType.CENTER
         more.background = pressable(dp(20))
         more.contentDescription = "Options"
-        onPress(more) { optionsMenu() }
+        onPress(more) { if (viewer != null) viewerMenu() else optionsMenu() }
         bar.addView(more, LinearLayout.LayoutParams(dp(36), dp(40)).apply { marginStart = dp(2) })
         // Files' buttons, on the right: each runs the page's ccmFiles(action). They keep their places (Up and Home dim
         // when they don't apply) so nothing moves under a finger; the page says what applies (AppWeb op "filesBar").
@@ -652,7 +664,11 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
 
     private fun putViewer(v: View) {
         viewer = v
-        body.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        viewerBar = null
+        // Under the top bar, which stays: the viewer puts its title and actions in it (ScreenOps.viewerBar).
+        body.addView(v, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply { topMargin = dp(BAR_DP) })
+        bar.bringToFront()
+        syncBar()
         placeSurface()
         if (isOpen) focusTab()
     }
@@ -673,7 +689,9 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         if (v is WebView) v.destroy() else (v as? ComposeView)?.disposeComposition()
         viewer = null
         viewerTarget = null
+        viewerBar = null
         shown = null
+        syncBar()
         placeSurface()
         if (isOpen) focusTab()
     }
@@ -699,6 +717,10 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             closeViewer(refresh = false)
             select(DEVBOX)
         }
+        override fun viewerBar(bar: ViewerBarState) {
+            viewerBar = bar
+            if (viewer != null) syncBar()
+        }
     }
 
     private fun select(which: Int) {
@@ -708,11 +730,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         if (which == SCHEDULES) schedulesModel.refresh()
         tab = which
         devboxModel.shown(which == DEVBOX && position > 0f)
-        titleText.text = NAMES[which]
-        tabBlock.visibility = if (which == BROWSER || which == TERMINAL) View.VISIBLE else View.GONE
-        if (which == TERMINAL) showTerminals() else if (which == BROWSER) showTabs()
-        filesButtons.visibility = if (which == FILES) View.VISIBLE else View.GONE
-        more.visibility = if (which == BROWSER) View.VISIBLE else View.GONE
+        syncBar()
         files.visibility = if (which == FILES) View.VISIBLE else View.GONE
         artifacts.visibility = if (which == ARTIFACTS) View.VISIBLE else View.GONE
         desktop.visibility = if (which == DESKTOP) View.VISIBLE else View.GONE
@@ -724,6 +742,58 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         schedules.visibility = if (which == SCHEDULES) View.VISIBLE else View.GONE
         placeSurface()
         if (isOpen) focusTab()
+    }
+
+    /**
+     * The top bar for what's in view: the section's icon (the viewer's section while it's open), then the section's
+     * own block (Browser's tabs, Terminal's windows, Files' buttons), or the open viewer's tab: its title and version,
+     * with its actions under ⋮.
+     */
+    private fun syncBar() {
+        val v = viewer != null
+        val section = if (v) when (viewerTarget) {
+            is Target.File -> FILES
+            is Target.Clip -> CLIPBOARD
+            else -> ARTIFACTS
+        } else tab
+        titleText.text = NAMES[section]
+        titleIcon.setImageResource(ICONS[section])
+        titleIcon.contentDescription = NAMES[section]
+        tabBlock.visibility = if (v || tab == BROWSER || tab == TERMINAL) View.VISIBLE else View.GONE
+        filesButtons.visibility = if (!v && tab == FILES) View.VISIBLE else View.GONE
+        more.visibility = if ((v && viewerBar != null) || (!v && tab == BROWSER)) View.VISIBLE else View.GONE
+        if (v) showViewerTab() else if (tab == TERMINAL) showTerminals() else if (tab == BROWSER) showTabs()
+    }
+
+    /** The tab block as the open viewer's tab: its title, and its version under it. */
+    private fun showViewerTab() {
+        val b = viewerBar
+        tabMark.visibility = View.GONE
+        tabCount.visibility = View.GONE
+        tabTitle.text = b?.title ?: ""
+        tabHost.text = b?.label ?: ""
+        tabHost.visibility = if (b?.label.isNullOrEmpty()) View.GONE else View.VISIBLE
+        tabBlock.contentDescription = if (b?.label != null) "${b.title}, ${b.label}: other versions" else b?.title ?: ""
+    }
+
+    /** The open viewer's actions, under ⋮. */
+    private fun viewerMenu() {
+        val b = viewerBar ?: return
+        val list = menuBox()
+        fun item(icon: Int, name: String, act: () -> Unit) = list.addView(menuItem(icon, name, null, false, {
+            menu?.dismiss()
+            act()
+        }, null))
+        if (b.clipping != null) item(R.drawable.ccm_tab_clipboard, if (b.clipping) "Close the clip" else "Clip", b.onClip)
+        b.onDownload?.let { item(R.drawable.ccm_download, "Download", it) }
+        if (b.label != null) item(R.drawable.ccm_history, "Versions", b.onLabel)
+        b.onMore?.let { item(R.drawable.ccm_more, "More…", it) }
+        showMenu(list, dp(220), false)
+        menu?.window?.let { w ->
+            val lp = w.attributes
+            lp.x = max(dp(8), lp.x + bar.width - dp(16) - dp(220)) // under ⋮, at the bar's right end
+            w.attributes = lp
+        }
     }
 
     /**
@@ -969,6 +1039,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabHost.text = host
         tabHost.visibility = if (host.isEmpty()) View.GONE else View.VISIBLE
         tabCount.text = (tabState.optJSONArray("tabs")?.length() ?: 1).toString()
+        tabCount.visibility = View.VISIBLE
         if (tabList != null && typed == null) fillTabList()
     }
 
@@ -982,6 +1053,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabHost.visibility = View.VISIBLE
         tabBlock.contentDescription = "Terminal windows"
         tabCount.text = (windows?.length() ?: 0).toString()
+        tabCount.visibility = View.VISIBLE
         for (i in 0 until (windows?.length() ?: 0)) {
             val w = windows!!.optJSONObject(i)
             if (current != w.optString("target")) continue
@@ -1097,8 +1169,9 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         val all = tabState.optJSONArray("tabs")
         for (i in intArrayOf(ARTIFACTS, BROWSER, FILES, CLIPBOARD, SCHEDULES, DESKTOP, TERMINAL, DEVBOX)) {
             val sub = if (i == BROWSER && all != null) "${all.length()} " + (if (all.length() == 1) "tab" else "tabs") else null
-            list.addView(menuItem(ICONS[i], NAMES[i], sub, i == tab, {
+            list.addView(menuItem(ICONS[i], NAMES[i], sub, i == tab && viewer == null, {
                 menu?.dismiss()
+                closeViewer(refresh = false) // a section, at its home: from an artifact, Artifacts is the list
                 select(i)
             }, null))
         }

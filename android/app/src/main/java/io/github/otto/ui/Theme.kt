@@ -118,7 +118,22 @@ interface ScreenOps {
 
     /** The Devbox section. */
     fun showDevbox() {}
+
+    /** What the open viewer puts in the second screen's top bar: its title and version, and its actions for ⋮. */
+    fun viewerBar(bar: ViewerBarState) {}
 }
+
+/** The open viewer in the top bar: the title and the version (a tap picks another), and what ⋮ offers. */
+class ViewerBarState(
+    val title: String,
+    val label: String?,
+    val onLabel: () -> Unit,
+    val onDownload: (() -> Unit)?,
+    val onMore: (() -> Unit)?,
+    /** The collector: null where there's none, else whether it's open. */
+    val clipping: Boolean?,
+    val onClip: () -> Unit,
+)
 
 val LocalOps = staticCompositionLocalOf<ScreenOps> { error("no ScreenOps") }
 
