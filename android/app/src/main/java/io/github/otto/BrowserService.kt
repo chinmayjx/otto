@@ -552,20 +552,54 @@ class BrowserService : Service() {
 
     fun byTarget(targetId: String): Tab? = tabs.firstOrNull { it.targetId == targetId }
 
+    private var progressAt = 0f // where the loading line is heading: it only moves forward during a load
+    /** A load still going a moment after it began: the line appears. */
+    private val showLine = Runnable {
+        if ((current?.progress ?: 100) < 100 && progress.visibility != View.VISIBLE) {
+            progress.alpha = 1f
+            progress.scaleX = 0.05f
+            progressAt = 0.05f
+            progress.visibility = View.VISIBLE
+            showProgress()
+        }
+    }
+
+    /**
+     * The loading line, as Chrome's: it only grows during a load (WebView's percent can drop back, with redirects
+     * and new requests), fills and fades out at the end, and a load done within a moment never shows it.
+     */
     private fun showProgress() {
         val p = current?.progress ?: 100
         if (p >= 100) {
-            if (progress.visibility == View.VISIBLE) {
-                progress.animate().scaleX(1f).setDuration(120).withEndAction { progress.visibility = View.GONE }.start()
+            main.removeCallbacks(showLine)
+            if (progress.visibility == View.VISIBLE && progressAt < 1f) {
+                progressAt = 1f
+                progress.animate().cancel()
+                progress.animate().scaleX(1f).setDuration(120).withEndAction {
+                    progress.animate().alpha(0f).setDuration(220).withEndAction {
+                        progress.visibility = View.GONE
+                        progress.alpha = 1f
+                        progressAt = 0f
+                    }.start()
+                }.start()
             }
             return
         }
-        if (progress.visibility != View.VISIBLE) {
-            progress.scaleX = 0.05f
-            progress.visibility = View.VISIBLE
+        if (progress.visibility != View.VISIBLE || progressAt >= 1f) {
+            // A new load: shown only if it's still going a moment from now.
+            if (progress.visibility == View.VISIBLE) progress.animate().cancel() else {
+                if (!main.hasCallbacks(showLine)) main.postDelayed(showLine, 150)
+                return
+            }
+            progress.alpha = 1f
+            progressAt = 0.05f
         }
+        val to = max(progressAt, p / 100f)
+        if (to == progressAt && progress.scaleX == to) return
+        progressAt = to
         progress.animate().cancel()
-        progress.animate().scaleX(max(0.05f, p / 100f)).setDuration(150).start()
+        progress.alpha = 1f
+        progress.animate().scaleX(to).setDuration(150).start()
     }
 
     private var finding: String? = null // the find's query, on the page it ran on
