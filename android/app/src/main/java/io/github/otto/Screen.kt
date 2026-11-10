@@ -835,19 +835,19 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabMark.visibility = View.GONE
         tabCount.visibility = View.GONE
         tabTitle.text = b?.title ?: ""
-        // The second line: the version, and Public (in the accent) when it's shared.
-        val line = SpannableStringBuilder(b?.label?.let { "$it ▾" } ?: "")
+        // The second line: Public (a globe and the word, in the accent) when it's shared, then the version.
+        val line = SpannableStringBuilder()
         if (b?.public == true) {
-            if (line.isNotEmpty()) line.append("   ") // a gap, not a dot: after the ▾, a dot read as noise
             val globe = ctx.getDrawable(R.drawable.ccm_tab_browser)!!.mutate()
             val size = (tabHost.textSize * 0.95f).toInt()
             globe.setBounds(0, 0, size, size)
             globe.setTint(BrowserService.ACCENT)
-            val at = line.length
-            line.append("Public \u00a0") // the globe after the word, as the ▾ after the version; it takes the no-break space
-            line.setSpan(ImageSpan(globe, DynamicDrawableSpan.ALIGN_CENTER), line.length - 1, line.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            line.setSpan(ForegroundColorSpan(BrowserService.ACCENT), at, line.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            line.append("\u00a0 Public") // the globe takes the no-break space
+            line.setSpan(ImageSpan(globe, DynamicDrawableSpan.ALIGN_CENTER), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            line.setSpan(ForegroundColorSpan(BrowserService.ACCENT), 0, line.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (b.label != null) line.append("  ·  ")
         }
+        b?.label?.let { line.append("$it ▾") }
         tabHost.text = line
         tabHost.visibility = if (line.isEmpty()) View.GONE else View.VISIBLE
         tabBlock.contentDescription = listOfNotNull(b?.title, b?.label?.let { "$it: other versions" }, if (b?.public == true) "public" else null).joinToString(", ")
