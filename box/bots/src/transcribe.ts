@@ -24,6 +24,9 @@ export interface TranscribeOptions {
   auth?: string;
   apiKey?: string;
   model?: string;
+  /** The language spoken, as an ISO 639-1 code ("en": English, any Hindi in it written in Latin letters); "auto" lets
+   * the engine guess, which can write English in Devanagari. */
+  language?: string;
   /** A file holding a Deepgram key (DEEPGRAM_API_KEY=…, or the key alone), for when OpenAI can't start. */
   deepgramKeyFile?: string;
   log(m: string): void;
@@ -83,13 +86,20 @@ function connect(url: string, headers: Record<string, string>): Promise<WebSocke
   });
 }
 
+/** The language part of the transcription settings: English by default, with Hindi words kept in Latin letters. */
+function language(o: TranscribeOptions): Record<string, string> {
+  const l = o.language ?? 'en';
+  if (l === 'auto') return {};
+  return l === 'en' ? { language: 'en', prompt: 'English, sometimes with Hindi words; write everything in Latin letters.' } : { language: l };
+}
+
 async function openai(o: TranscribeOptions, on: Heard): Promise<Transcriber> {
   const session = {
     type: 'transcription',
     audio: {
       input: {
         format: { type: 'audio/pcm', rate: RATE },
-        transcription: { model: o.model || 'gpt-4o-transcribe' },
+        transcription: { model: o.model || 'gpt-4o-transcribe', ...language(o) },
         turn_detection: { type: 'server_vad', silence_duration_ms: 500 },
         noise_reduction: { type: 'near_field' },
       },

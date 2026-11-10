@@ -30,6 +30,9 @@ port = 9336
 # Dictation (the collector's mic) uses OpenAI through the assistant's sign-in; when that can't start, Deepgram, with
 # the key in this file (DEEPGRAM_API_KEY=... or the key alone).
 # deepgram_key_file = "~/.secrets/deepgram/api.env"
+# Dictation's language: "en" (the default; Hindi words in it come out in Latin letters), another ISO 639-1 code, or
+# "auto" to let it guess (it can then write English in Devanagari).
+# dictation_language = "en"
 
 [schedules]
 # Schedules' times (otto schedule) are in this time zone; the box itself may run on UTC.

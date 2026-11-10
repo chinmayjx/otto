@@ -185,6 +185,7 @@ fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
 serveVoice(VOICE_PORT, {
   assistant, bots: () => [...loadAll(() => {}).keys()], assign, log: m => console.log(m),
   deepgramKeyFile: otto.voice?.deepgram_key_file ? expand(String(otto.voice.deepgram_key_file)) : undefined,
+  dictationLanguage: otto.voice?.dictation_language ? String(otto.voice.dictation_language) : undefined,
   route: (req, res, u) => local(req, res, u, { send, scheduler }),
 });
 fs.writeFileSync(pidFile(), String(process.pid));

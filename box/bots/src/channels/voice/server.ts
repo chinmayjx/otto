@@ -47,6 +47,8 @@ export interface ServerDeps {
   log(m: string): void;
   /** A Deepgram key's file, for dictation when OpenAI can't start. */
   deepgramKeyFile?: string;
+  /** Dictation's language ([voice] dictation_language): "en" unless set, "auto" to let the engine guess. */
+  dictationLanguage?: string;
   /** otto-bots' other routes (local.ts): true when it answered. */
   route?(req: http.IncomingMessage, res: http.ServerResponse, u: URL): Promise<boolean>;
 }
@@ -179,6 +181,7 @@ function dictate(ws: WebSocket, d: ServerDeps) {
     auth: voice ? String(voice.auth ?? 'api-key') : 'codex',
     apiKey: typeof voice?.apiKey === 'string' ? voice.apiKey : undefined,
     deepgramKeyFile: d.deepgramKeyFile,
+    language: d.dictationLanguage,
     log: d.log,
   }, {
     draft: text => out({ type: 'draft', text }),
