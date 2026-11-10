@@ -26,6 +26,7 @@ import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
@@ -38,6 +39,10 @@ import kotlin.math.sqrt
  *
  * What the pill shows is read from here each frame: [boxState], [working], [connected], [muted], and the levels of
  * the microphone ([micLevel]) and of the voice ([outLevel]), 0 to 1. WebRTC work runs on one thread of its own.
+ *
+ * The phone also tells the box when the user is speaking ([Speech], from the microphone's level after the phone's
+ * echo cancellation): while the voice talks, OpenAI's own detection is off (it would cut the voice at any sound),
+ * and the box goes by this instead.
  */
 class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener) : VoiceLink {
     @Volatile override var boxState = "connecting"; private set
@@ -49,6 +54,8 @@ class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener
     @Volatile var ended = false; private set
 
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "voice") }
+    private val reports = Executors.newSingleThreadExecutor { Thread(it, "voice-speech") }
+    private val speech = Speech { on -> report(on) }
     private val http = Clips.client()
     private val audio = ctx.getSystemService(AudioManager::class.java)
     private var adm: JavaAudioDeviceModule? = null
@@ -106,6 +113,20 @@ class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener
             release()
         }
         worker.shutdown()
+        reports.shutdown()
+    }
+
+    /** The user started or stopped speaking: the box is told, in order, off the audio thread. */
+    private fun report(on: Boolean) {
+        val id = session ?: return
+        if (ended) return
+        try {
+            reports.execute {
+                try { VoiceLink.post("/voice/sessions/$id/report", JSONObject().put("speech", on), timeout = 5) } catch (e: Exception) {
+                    Log.w(TAG, "speech: $e")
+                }
+            }
+        } catch (_: Exception) {} // shut down: the call is over
     }
 
     private fun fail(message: String) {
@@ -125,7 +146,10 @@ class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener
             .setAudioAttributes(AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-            .setSamplesReadyCallback { s -> micLevel = if (muted) 0f else level(s.data) }
+            .setSamplesReadyCallback { s ->
+                micLevel = if (muted) 0f else level(s.data)
+                speech.feed(s.data, s.sampleRate * s.channelCount, muted)
+            }
             .createAudioDeviceModule()
         this.adm = adm
         val factory = PeerConnectionFactory.builder().setAudioDeviceModule(adm).createPeerConnectionFactory()
@@ -300,6 +324,50 @@ class VoiceCall(private val ctx: Context, private val events: VoiceLink.Listener
             }
             val rms = sqrt(sum / n) / 32768.0
             return min(1.0, sqrt(rms) * 2.2).toFloat()
+        }
+    }
+}
+
+/**
+ * Whether the user is speaking, from the microphone's loudness: louder than the background (a running floor that
+ * drops at once and creeps up slowly, so steady street hiss or a fan becomes the floor) by [MARGIN] dB, and above
+ * [MIN] dBFS, for [START_MS]; and stopped after [STOP_MS] below that. [changed] is called on each change, on the
+ * audio thread.
+ */
+private class Speech(private val changed: (Boolean) -> Unit) {
+    private var floor = -60.0
+    private var on = false
+    private var aboveMs = 0.0
+    private var belowMs = 0.0
+
+    fun feed(pcm: ByteArray, samplesPerSecond: Int, muted: Boolean) {
+        if (samplesPerSecond <= 0) return
+        val ms = pcm.size / 2 * 1000.0 / samplesPerSecond
+        val db = if (muted) -100.0 else dbfs(pcm)
+        floor = if (db < floor) floor + (db - floor) * 0.3 else floor + RISE_DB_PER_S * ms / 1000
+        floor = floor.coerceIn(-80.0, -30.0)
+        val loud = db > max(floor + MARGIN, MIN)
+        if (loud) { aboveMs += ms; belowMs = 0.0 } else { belowMs += ms; aboveMs = 0.0 }
+        if (!on && aboveMs >= START_MS) { on = true; changed(true) }
+        else if (on && belowMs >= STOP_MS) { on = false; changed(false) }
+    }
+
+    companion object {
+        const val MARGIN = 15.0 // dB over the background
+        const val MIN = -45.0 // dBFS, below which nothing counts as speech
+        const val START_MS = 150.0
+        const val STOP_MS = 500.0
+        const val RISE_DB_PER_S = 1.0
+
+        private fun dbfs(pcm: ByteArray): Double {
+            var sum = 0.0
+            val n = pcm.size / 2
+            if (n == 0) return -100.0
+            for (i in 0 until n) {
+                val v = ((pcm[2 * i + 1].toInt() shl 8) or (pcm[2 * i].toInt() and 0xff)).toShort().toDouble()
+                sum += v * v
+            }
+            return 10 * kotlin.math.log10(sum / n / (32768.0 * 32768.0) + 1e-10)
         }
     }
 }
