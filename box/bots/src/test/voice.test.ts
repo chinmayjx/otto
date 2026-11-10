@@ -205,11 +205,9 @@ test('realtime: muting mid-sentence takes what was said as the turn; muted for l
   call.mute(false);
   assert.equal(sent.length, 0, 'muting in silence sends nothing');
   assert.equal(call.mutedSince, 0);
-  call.event({ type: 'input_audio_buffer.speech_started', item_id: 'u1', audio_start_ms: 0 });
+  call.event({ type: 'input_audio_buffer.speech_started' });
   call.mute(true);
-  assert.deepEqual(sent.map(e => e.type), ['input_audio_buffer.commit']);
-  call.event({ type: 'input_audio_buffer.committed', item_id: 'u1' });
-  assert.deepEqual(sent.map(e => e.type), ['input_audio_buffer.commit', 'response.create'], 'answered as any turn');
+  assert.deepEqual(sent.map(e => e.type), ['input_audio_buffer.commit', 'response.create']);
   assert.ok(call.mutedSince > 0);
   clearTimeout(call.gapTimer);
 
@@ -222,85 +220,4 @@ test('realtime: muting mid-sentence takes what was said as the turn; muted for l
   const bye = events.findIndex(e => e.type === 'bye'), ended = events.findIndex(e => e.type === 'state' && e.state === 'ended');
   assert.ok(bye >= 0 && bye < ended);
   assert.equal(events[bye].message, 'Hung up after 10 minutes on mute.');
-});
-
-test('stop words: on their own, in English or Hindi; not inside a sentence', async () => {
-  const { stopWord } = await import('../channels/voice/openai.js');
-  for (const t of ['Wait.', 'wait, wait', 'Stop!', 'Hold on', 'Ruko', 'bas', 'Ek minute.', 'रुको।', 'Otto, wait', 'wait please']) assert.ok(stopWord(t), t);
-  for (const t of ['Wait, what time is it?', 'I said stop the music', 'okay', '', 'Thank you.']) assert.ok(!stopWord(t), t);
-});
-
-test('realtime: talking over the voice: noise dropped; clean words or a stop word stop it, unsure pieces never', async () => {
-  const { OpenAICall } = await import('../channels/voice/openai.js');
-  const call: any = new OpenAICall({ toAgent: () => {}, log: () => {} }, { apiKey: 'k', bargeIn: 1.5 });
-  const sent: any[] = [];
-  call.ws = { readyState: 1, send: (s: string) => sent.push(JSON.parse(s)) };
-  call.up = true;
-  const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
-  const count = (t: string) => sent.filter(e => e.type === t).length;
-  const turns = () => sent.filter(e => e.type === 'session.update').at(-1).session.audio.input.turn_detection;
-  const heard = (id: string, text: string) => {
-    call.event({ type: 'input_audio_buffer.committed', item_id: id });
-    call.event({ type: 'conversation.item.added', item: { id, type: 'message', role: 'user', content: [{ type: 'input_audio' }] } });
-    call.event({ type: 'conversation.item.input_audio_transcription.completed', item_id: id, transcript: text });
-  };
-  const voiceTalks = () => {
-    call.event({ type: 'response.created' });
-    call.event({ type: 'response.output_item.added', item: { id: 'a1', type: 'message' } });
-    call.event({ type: 'output_audio_buffer.started' });
-  };
-  const voiceDone = () => {
-    call.event({ type: 'output_audio_buffer.stopped' });
-    call.event({ type: 'response.done', response: { output: [] } });
-  };
-
-  // Not talking: a turn is answered at once.
-  heard('u0', 'Hello there');
-  assert.equal(count('response.create'), 1);
-  voiceTalks();
-  assert.equal(turns(), null, "OpenAI's turn detection off while it talks");
-  assert.equal(count('input_audio_buffer.commit'), 0, 'nothing committed but speech');
-  // The phone says when the user speaks: their speech is committed when they stop; silence is cleared away.
-  call.speech(true);
-  call.speech(false);
-  assert.equal(count('input_audio_buffer.commit'), 1, 'committed at the end of speech');
-  await wait(2100);
-  assert.ok(count('input_audio_buffer.clear') >= 1, 'silence cleared');
-
-  // A horn heard as words: a stray piece, dropped once nothing follows; the voice goes on.
-  heard('h', 'Thank you.');
-  heard('n', '');
-  assert.equal(count('conversation.item.delete'), 2);
-  assert.equal(count('response.cancel'), 0);
-
-  // A short question heard cleanly stops it at once, and is answered once it's done.
-  heard('q1', "What's the capital");
-  assert.equal(count('response.cancel'), 1);
-  heard('q2', 'of France?');
-  voiceDone();
-  assert.equal(turns().type, 'semantic_vad', 'turn detection back on');
-  await wait(900);
-  assert.equal(count('response.create'), 2, 'answered after');
-
-  // "Stop." or "No, no." stops it at once, and isn't answered; what it never said is cut.
-  voiceTalks();
-  heard('w', 'No, no.');
-  assert.equal(count('response.cancel'), 2);
-  assert.equal(count('conversation.item.truncate'), 2);
-  voiceDone();
-
-  // Pieces that aren't clean (a second of noise made into a sentence, unsure) never stop it, and are dropped.
-  voiceTalks();
-  heard('l1', 'Sim.');
-  await wait(600);
-  call.event({ type: 'input_audio_buffer.committed', item_id: 'l2' });
-  call.event({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'l2', transcript: 'Mujhe aapki madad chahiye.',
-    logprobs: [{ logprob: -1.2 }, { logprob: -0.9 }] });
-  assert.equal(count('response.cancel'), 2);
-  voiceDone();
-  await wait(900);
-  assert.equal(count('response.create'), 2, 'nothing answered');
-  clearTimeout(call.gapTimer);
-  clearInterval(call.listenTimer);
-  await wait(900);
 });

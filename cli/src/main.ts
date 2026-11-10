@@ -82,11 +82,9 @@ Bots (chat bots, each one long-running agent conversation on this box; the otto-
   otto bot add <name> --channel telegram [--cwd DIR] [--model M] [--permission-mode MODE]
                                            the token from @BotFather is read from stdin or a prompt; then pair
   otto bot pair <name> [--reset]           the link (and code) that makes your account the bot's owner
-  otto bot voice <name> [--provider openai-realtime|android] [--auth api-key|codex] [--model M] [--voice V] [--barge-in S] [--key] | --off
+  otto bot voice <name> [--provider openai-realtime|android] [--auth api-key|codex] [--model M] [--voice V] [--key] | --off
                                           make the bot your assistant: the Otto app's voice calls reach it
-                                          (api-key asks for an OpenAI key on stdin; codex uses the Codex sign-in;
-                                          --barge-in on (default): clear words or a stop word stop the voice;
-                                          off: nothing does; 0: any sound, as OpenAI decides)
+                                          (api-key asks for an OpenAI key on stdin; codex uses the Codex sign-in)
   otto bot list
   otto bot logs <name> [--lines N] [--follow]
   otto bot rm <name>

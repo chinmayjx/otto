@@ -89,12 +89,8 @@ late; three failed runs in a row bring one phone notification.
 One bot can have the `otto_voice` channel; that bot is your assistant. On the phone, long-press the handle (or swipe it
 in and pick Assistant): a call starts, with a pill over every app (tap to mute, × to end; a long press on the handle
 hangs up too). Muting mid-sentence counts what you said so far as said; a call left muted for 10 minutes is hung up
-(the next call carries on from the saved transcript). With OpenAI's voice, a horn or a cough doesn't cut it off: what
-you say while it talks is transcribed (the phone tells the box when you're speaking, from its microphone's level; OpenAI's own detection is off then, since it would cut the voice off at any sound; silence is never transcribed), and it stops as soon as that's clear words (two
-real words or more, heard with confidence, not its own voice coming back), or a stop word ("stop",
-"wait", "no no", "hold on", "ruko", "bas", "ek minute"). Nothing else does (`--barge-in 0` instead lets any sound stop it, as OpenAI decides; `--barge-in off` lets nothing stop it, to see whether anything still does; `--barge-in on` is the default). What stopped it is answered once it's done; noise is dropped. The box's log has a line for
-each thing it heard over the voice and what it decided. What
-the assistant says when no call is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
+(the next call carries on from the saved transcript). With OpenAI's voice, OpenAI's own settings tune it, passed as they are from the voice channel's config: `turnDetection` (e.g. `server_vad` with a higher `threshold` so noise doesn't count as speech), `noiseReduction` and `transcription` (model, languages, keywords). What the assistant says when no call
+is on comes as a phone notification. The Otto app's main screen shows which bot it is, and lets you pick another.
 
 ```sh
 otto bot voice mybot                              # OpenAI's realtime voice: asks for an API key on stdin
