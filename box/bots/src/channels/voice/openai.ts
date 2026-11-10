@@ -16,9 +16,10 @@
 // voice's tools off for it.
 //
 // Talking over the voice: OpenAI stops it at the first sound its turn detection takes for speech, a car horn
-// included. So the box decides instead (bargeIn > 0; 0 leaves it to OpenAI). While the voice talks, turn detection
-// is plain voice detection that neither answers nor stops it (OVER): what it takes for speech is committed and
-// transcribed, and silence never is. An item heard cleanly stops the voice at once: a stop word ("wait", "stop",
+// included, and on a WebRTC call it does so even with interrupt_response off. So the box decides instead (bargeIn
+// > 0; 0 leaves it to OpenAI). While the voice talks, OpenAI's turn detection is off and the phone says when the
+// user speaks (its microphone's level after echo cancellation, speech()): what it hears then is committed and
+// transcribed (at the end, or every LONG_MS of it), and silence is cleared away unheard. An item heard cleanly stops the voice at once: a stop word ("wait", "stop",
 // "no no", "ruko"), or two real words or more (not filler, in Latin or Devanagari letters, transcribed with
 // confidence, not a known noise phrase, not the voice's own words coming back). Nothing else does. What stopped the
 // voice is answered once it's done; other items are taken out of the conversation so they're never answered. Every
@@ -30,9 +31,11 @@ import { codexAccessToken, mintRealtimeKey } from './codex-auth.js';
 
 const API = 'https://api.openai.com/v1/realtime';
 
-/** Turn detection while the voice talks: speech is committed after a short pause, for the box to decide on. */
-const OVER = { type: 'server_vad', threshold: 0.6, prefix_padding_ms: 300, silence_duration_ms: 300,
-  interrupt_response: false, create_response: false };
+/** While the voice talks and the phone hears the user, what they've said is committed this often, so long talking
+ * can stop the voice before they pause. */
+const LONG_MS = 2500;
+/** While the voice talks and the phone hears no one, what the microphone sent is cleared this often. */
+const QUIET_MS = 2000;
 /** After the voice, how long turn detection gets to notice the user still talking before an answer is asked for. */
 const SETTLE_MS = 800;
 /** Said on their own (repeated or not), these stop the voice at once. */
@@ -142,7 +145,9 @@ export class OpenAICall extends Call {
   private readonly barge: number;
   private readonly boxStops: boolean; // the box stops the voice on a stop word or clear words (bargeIn not "off")
   private readonly turns: Record<string, unknown>; // the turn detection the call starts with
-  private deaf = false; // while the voice talks: turn detection that neither answers nor stops it (OVER)
+  private deaf = false; // while the voice talks: OpenAI's turn detection off, the phone says when the user speaks
+  private phoneHears = false; // the phone hears the user speaking (while deaf)
+  private listenTimer: NodeJS.Timeout | null = null; // commits long speech, or clears silence (while deaf)
   private pieces = new Map<string, number>(); // pieces committed while the voice talks, by item: when
   private unsure: string[] = []; // pieces with words but not clean, kept only if the user is found to be talking
   private cut = false; // the box stopped the voice (so a cleared buffer is ours)
@@ -333,6 +338,7 @@ export class OpenAICall extends Call {
         this.free();
         break;
       case 'error':
+        if (e.error?.code === 'input_audio_buffer_commit_empty') break; // the phone heard speech, but nothing came yet
         this.log(`OpenAI: ${e.error?.code ?? ''} ${redact(String(e.error?.message ?? '')).slice(0, 200)}`);
         if (this.answering && e.error?.code === 'conversation_already_has_active_response') {
           // An answer was asked for just as another began: it's asked for again once that one is done.
@@ -491,15 +497,35 @@ export class OpenAICall extends Call {
     this.later(300);
   }
 
-  /** While the voice talks, turn detection is plain voice detection that neither answers nor stops the voice: it
-   * commits only what it takes for speech, and the box decides on each item. After, the call's own is back. */
+  /** While the voice talks, OpenAI's turn detection is off (it would stop the voice at any sound) and the phone
+   * says when the user speaks; after, the call's own is back. */
   private deafen(on: boolean) {
     if (on === this.deaf) return;
     this.deaf = on;
     if (!on) this.settleUntil = Date.now() + SETTLE_MS;
-    this.send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: on ? OVER : this.turns } } } });
+    this.send({ type: 'session.update', session: { type: 'realtime', audio: { input: { turn_detection: on ? null : this.turns } } } });
+    this.listen();
   }
 
+  /** The phone hears the user start or stop speaking. While the voice talks, what they said is committed when they
+   * stop (and every LONG_MS while they go on), for heardOver to decide on. */
+  speech(on: boolean) {
+    if (on === this.phoneHears) return;
+    this.phoneHears = on;
+    this.log(`phone: speech ${on ? 'start' : 'stop'}${this.deaf ? '' : ' (voice not talking)'}`);
+    if (this.deaf && !on && !this.mutedSince) this.send({ type: 'input_audio_buffer.commit' });
+    this.listen();
+  }
+
+  /** While the voice talks: long speech is committed as it goes, silence cleared away. */
+  private listen() {
+    if (this.listenTimer) clearInterval(this.listenTimer);
+    this.listenTimer = null;
+    if (!this.deaf || this.stopping) return;
+    const [ms, type] = this.phoneHears ? [LONG_MS, 'input_audio_buffer.commit'] : [QUIET_MS, 'input_audio_buffer.clear'];
+    this.listenTimer = setInterval(() => { if (!this.mutedSince) this.send({ type }); }, ms);
+    this.listenTimer.unref(); // the call's end clears it; a test or a closing process needn't wait for it
+  }
 
   say(text: string) {
     const words = speakable(text);
@@ -537,6 +563,7 @@ export class OpenAICall extends Call {
 
   protected async end(): Promise<string[]> {
     if (this.gapTimer) clearTimeout(this.gapTimer);
+    if (this.listenTimer) clearInterval(this.listenTimer);
     const ws = this.ws;
     this.ws = null;
     if (this.callId) await this.hangUp();

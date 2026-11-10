@@ -258,9 +258,14 @@ test('realtime: talking over the voice: noise dropped; clean words or a stop wor
   heard('u0', 'Hello there');
   assert.equal(count('response.create'), 1);
   voiceTalks();
-  assert.equal(turns().type, 'server_vad', 'plain voice detection while it talks');
-  assert.equal(turns().interrupt_response, false);
+  assert.equal(turns(), null, "OpenAI's turn detection off while it talks");
   assert.equal(count('input_audio_buffer.commit'), 0, 'nothing committed but speech');
+  // The phone says when the user speaks: their speech is committed when they stop; silence is cleared away.
+  call.speech(true);
+  call.speech(false);
+  assert.equal(count('input_audio_buffer.commit'), 1, 'committed at the end of speech');
+  await wait(2100);
+  assert.ok(count('input_audio_buffer.clear') >= 1, 'silence cleared');
 
   // A horn heard as words: a stray piece, dropped once nothing follows; the voice goes on.
   heard('h', 'Thank you.');
@@ -296,5 +301,6 @@ test('realtime: talking over the voice: noise dropped; clean words or a stop wor
   await wait(900);
   assert.equal(count('response.create'), 2, 'nothing answered');
   clearTimeout(call.gapTimer);
+  clearInterval(call.listenTimer);
   await wait(900);
 });

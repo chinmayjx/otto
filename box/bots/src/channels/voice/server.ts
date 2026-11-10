@@ -9,7 +9,7 @@
 //                                              offer; replies {id, mode, sdp}. android: replies {id, mode}
 //   GET  /voice/sessions/<id>/events?after=N   long poll (up to 25 s): {state, events: [{n, type, …}]} (call.ts)
 //   POST /voice/sessions/<id>/heard            android: body {text}, a sentence the phone heard
-//   POST /voice/sessions/<id>/report           android: body {speaking?, hearing?}
+//   POST /voice/sessions/<id>/report           android: body {speaking?, hearing?}; realtime: {speech} (the phone hears the user)
 //   POST /voice/sessions/<id>/interrupt        the voice stops talking (a tap on the pill)
 //   POST /voice/sessions/<id>/mute             body {on}: the phone muted or unmuted its microphone
 //   POST /voice/sessions/<id>/stop             ends it
@@ -27,6 +27,7 @@ import http from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { transcriber, type Transcriber } from '../../transcribe.js';
 import { AndroidCall } from './android.js';
+import { OpenAICall } from './openai.js';
 import type { Voice } from './index.js';
 
 const POLL_MS = 25_000;
@@ -114,6 +115,10 @@ export function serveVoice(port: number, d: ServerDeps): http.Server {
         }
         if (m[2] === 'mute' && req.method === 'POST') {
           call.mute(!!(await body(req)).on);
+          return send(res, 200, 'ok');
+        }
+        if (m[2] === 'report' && req.method === 'POST' && call instanceof OpenAICall) {
+          call.speech(!!(await body(req)).speech);
           return send(res, 200, 'ok');
         }
         if (req.method === 'POST' && call instanceof AndroidCall) {
