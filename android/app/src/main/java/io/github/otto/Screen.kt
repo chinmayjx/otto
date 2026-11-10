@@ -106,6 +106,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private val bar = LinearLayout(ctx)
     private val tabBlock = LinearLayout(ctx)
     private val more: ImageView // the browser's options (⋮)
+    private val home: ImageView // an open viewer's section, at home (the Artifacts list, the file's folder)
     private val filesButtons = LinearLayout(ctx) // Files: up a folder, home, hidden files
     private val filesUp: ImageView
     private val filesHome: ImageView
@@ -142,6 +143,9 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private val under = ArrayDeque<Entry>() // the viewers it was opened from, inside Otto (the last on top)
     private var rootViewer = false // the bottom viewer came from outside Otto (a link): Back there hides the screen
     private var browserOver: String? = null // the browser was opened from a viewer (still in under), at this page
+    /** A viewer left for another section, kept as it was: picking its section again brings it back. */
+    private class Parked(val view: View, val section: Int, val target: Target?, val hint: ArtifactItem?, val bar: ViewerBarState?, val shown: Entry?, val under: List<Entry>, val rootViewer: Boolean)
+    private var parked: Parked? = null
     private var tabState = JSONObject() // BrowserService's TABS
     private var menu: Dialog? = null // a dialog, not a PopupWindow: a popup can't show text selection's toolbar
     private var tabList: LinearLayout? = null // the open tab menu's list, refreshed as the tabs change
@@ -273,6 +277,12 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             }
         }
         bar.addView(tabBlock, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
+        home = icon(R.drawable.ccm_home, BrowserService.TEXT)
+        home.scaleType = ImageView.ScaleType.CENTER
+        home.background = pressable(dp(20))
+        home.contentDescription = "Home"
+        home.setOnClickListener { up() }
+        bar.addView(home, LinearLayout.LayoutParams(dp(36), dp(40)).apply { marginStart = dp(2) })
         more = icon(R.drawable.ccm_more, BrowserService.TEXT)
         more.scaleType = ImageView.ScaleType.CENTER
         more.background = pressable(dp(20))
@@ -642,6 +652,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     /** Shows a viewer (the native one, whatever it shows: the web UI's viewer isn't the app's), leaving the stack as it is. */
     private fun display(e: Entry) {
         removeViewer()
+        dropParked()
         shown = e
         viewerTarget = e.target
         viewerHint = e.hint
@@ -673,6 +684,52 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         syncBar()
         placeSurface()
         if (isOpen) focusTab()
+    }
+
+    private fun viewerSection() = when (viewerTarget) {
+        is Target.File -> FILES
+        is Target.Clip -> CLIPBOARD
+        else -> ARTIFACTS
+    }
+
+    /** The viewer on screen, put aside (hidden, as it is) while another section is shown. */
+    private fun park() {
+        val v = viewer ?: return
+        dropParked()
+        parked = Parked(v, viewerSection(), viewerTarget, viewerHint, viewerBar, shown, under.toList(), rootViewer)
+        v.visibility = View.GONE
+        viewer = null
+        viewerTarget = null
+        viewerBar = null
+        shown = null
+        under.clear()
+        rootViewer = false
+        browserOver = null
+    }
+
+    /** The parked viewer back on screen, in its section. */
+    private fun unpark() {
+        val p = parked ?: return
+        parked = null
+        removeViewer()
+        viewer = p.view
+        viewerTarget = p.target
+        viewerHint = p.hint
+        viewerBar = p.bar
+        shown = p.shown
+        under.clear()
+        under.addAll(p.under)
+        rootViewer = p.rootViewer
+        p.view.visibility = View.VISIBLE
+        bar.bringToFront()
+        select(p.section)
+    }
+
+    private fun dropParked() {
+        val p = parked ?: return
+        parked = null
+        body.removeView(p.view)
+        if (p.view is WebView) p.view.destroy() else (p.view as? ComposeView)?.disposeComposition()
     }
 
     /** The viewer out, and what it was opened from forgotten: Otto is back at a section. */
@@ -753,11 +810,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
      */
     private fun syncBar() {
         val v = viewer != null
-        val section = if (v) when (viewerTarget) {
-            is Target.File -> FILES
-            is Target.Clip -> CLIPBOARD
-            else -> ARTIFACTS
-        } else tab
+        val section = if (v) viewerSection() else tab
         titleText.text = NAMES[section]
         titleIcon.setImageResource(ICONS[section])
         titleIcon.contentDescription = NAMES[section]
@@ -766,6 +819,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabBlock.background = if (v) pressable(dp(9)) else rounded(BrowserService.FIELD, dp(9))
         tabChevron.visibility = if (v) View.GONE else View.VISIBLE
         filesButtons.visibility = if (!v && tab == FILES) View.VISIBLE else View.GONE
+        home.visibility = if (v) View.VISIBLE else View.GONE
         more.visibility = if ((v && viewerBar != null) || (!v && tab == BROWSER)) View.VISIBLE else View.GONE
         if (v) showViewerTab() else if (tab == TERMINAL) showTerminals() else if (tab == BROWSER) showTabs()
     }
@@ -1177,8 +1231,18 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             val sub = if (i == BROWSER && all != null) "${all.length()} " + (if (all.length() == 1) "tab" else "tabs") else null
             list.addView(menuItem(ICONS[i], NAMES[i], sub, i == tab && viewer == null, {
                 menu?.dismiss()
-                closeViewer(refresh = false) // a section, at its home: from an artifact, Artifacts is the list
-                select(i)
+                val p = parked
+                when {
+                    viewer == null && p != null && p.section == i -> unpark() // the viewer left there, as it was
+                    viewer != null && viewerSection() != i -> { // the viewer stays in its section, for coming back
+                        park()
+                        select(i)
+                    }
+                    else -> {
+                        closeViewer(refresh = false) // its own section, at home
+                        select(i)
+                    }
+                }
             }, null))
         }
         showMenu(list, dp(220), false)
