@@ -370,14 +370,20 @@ class Collector(ctx: Context, val docked: Boolean) : LinearLayout(ctx) {
 
     /** The note's placeholder and Copy's state, after the text, the chips or the freeze changed. */
     private fun changed() {
-        note.hint = if (frozen && pieces.isEmpty()) "Drag to select" else "Add a note"
+        // Only what changed is set: setting the hint or a background asks for a layout, of the whole screen when
+        // the collector is docked in it, and this runs at every key.
+        val hint = if (frozen && pieces.isEmpty()) "Drag to select" else "Add a note"
+        if (note.hint?.toString() != hint) note.hint = hint
         val on = ready() || busy
+        if (on == copyOn) return
+        copyOn = on
         copy.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(if (on) BrowserService.ACCENT else OFF_FILL)
         }
         copy.setColorFilter(if (on) BrowserService.ON_ACCENT else OFF_TEXT)
     }
+    private var copyOn: Boolean? = null
 
     /** New chips (and, if one is given, that one scrolled into view). */
     fun piecesChanged(list: List<Piece>, show: Int = -1) {
