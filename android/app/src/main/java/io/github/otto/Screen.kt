@@ -2,6 +2,8 @@ package io.github.otto
 
 import android.text.style.ForegroundColorSpan
 import android.text.Spanned
+import android.text.style.DynamicDrawableSpan
+import android.text.style.ImageSpan
 import android.text.SpannableStringBuilder
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
@@ -836,9 +838,14 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         // The second line: the version, and Public (in the accent) when it's shared.
         val line = SpannableStringBuilder(b?.label?.let { "$it ▾" } ?: "")
         if (b?.public == true) {
-            if (line.isNotEmpty()) line.append("  ·  ")
+            if (line.isNotEmpty()) line.append("     ") // a gap, not a dot: after the ▾, a dot read as noise
+            val globe = ctx.getDrawable(R.drawable.ccm_tab_browser)!!.mutate()
+            val size = (tabHost.textSize * 0.95f).toInt()
+            globe.setBounds(0, 0, size, size)
+            globe.setTint(BrowserService.ACCENT)
             val at = line.length
-            line.append("Public")
+            line.append("\u00a0 Public") // the globe takes the no-break space
+            line.setSpan(ImageSpan(globe, DynamicDrawableSpan.ALIGN_CENTER), at, at + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             line.setSpan(ForegroundColorSpan(BrowserService.ACCENT), at, line.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
         tabHost.text = line
