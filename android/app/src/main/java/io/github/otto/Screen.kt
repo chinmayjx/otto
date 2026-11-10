@@ -302,8 +302,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabBlock.addView(tabCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(17)).apply { marginStart = dp(8) })
         tabChevron = icon(R.drawable.ccm_chevron_down, BrowserService.MUTED)
         tabBlock.addView(tabChevron, LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(6) })
-        // The browser's address opens for editing on a tap (as the finger lifts), so a pull down on it reloads.
-        onPress(tabBlock, tapOnly = { viewer == null && tab == BROWSER }) {
+        // The browser's address and a viewer's tab open on a tap (as the finger lifts), so a pull down on them reloads.
+        onPress(tabBlock, tapOnly = { viewer != null || tab == BROWSER }) {
             when {
                 viewer != null -> viewerBar?.onLabel?.invoke()
                 tab == TERMINAL -> terminalMenu()
@@ -1174,15 +1174,11 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         }
     }
 
-    /** A pull can start on the top bar, or (the viewer covers the bar) on the viewer's header band. */
+    /** A pull can start on the top bar (a viewer's too: it's in the bar). */
     private fun startsPull(e: MotionEvent): Boolean {
         if (position < 0.5f) return false
         val r = Rect()
         bar.getGlobalVisibleRect(r)
-        viewer?.let {
-            it.getGlobalVisibleRect(r)
-            r.bottom = r.top + dp(TOP_BAND_DP)
-        }
         return r.contains(e.x.toInt(), e.y.toInt())
     }
 
@@ -1888,7 +1884,6 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         private const val BAR_DP = 48
         private const val TITLE_PAD = 6
         private const val BAR_START = 10
-        private const val TOP_BAND_DP = 56
         private const val PULL_DP = 110
 
         private fun tabName(t: JSONObject): String {
