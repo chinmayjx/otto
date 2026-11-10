@@ -494,15 +494,22 @@ private fun artifactActions(ctx: Context, scope: CoroutineScope, ops: ScreenOps,
     val pub = publicArtifactsBase(ctx)
     fun failed() = toast(ctx, "That didn't work. Is Tailscale on?")
     val list = mutableListOf<ViewerAction>()
-    list += ViewerAction(R.drawable.ccm_share, if (v.public) "Share" else "Share (makes a public link)") {
-        scope.launch {
-            try {
-                if (!v.public) ArtifactsApi.setPublic(ctx, v.artifactId, true)
-                ops.share("$pub/p/${v.artifactId}", v.title)
-            } catch (_: Exception) {
-                failed()
-            }
+    fun share() = scope.launch {
+        try {
+            if (!v.public) ArtifactsApi.setPublic(ctx, v.artifactId, true)
+            ops.share("$pub/p/${v.artifactId}", v.title)
+        } catch (_: Exception) {
+            failed()
         }
+    }
+    // Making it public is asked first: an artifact can hold anything, keys and passwords too.
+    list += ViewerAction(R.drawable.ccm_share, "Share") {
+        if (v.public) share()
+        else sheets.ask(
+            "Share \"${v.title}\"?",
+            "This makes a public link: anyone who has it can open the artifact. Check it holds no passwords, keys or private details.",
+            "Make public",
+        ) { share() }
     }
     if (v.public) list += ViewerAction(R.drawable.ccm_lock, "Stop sharing") {
         scope.launch {
@@ -522,7 +529,7 @@ private fun artifactActions(ctx: Context, scope: CoroutineScope, ops: ScreenOps,
         ops.closeViewer()
         ops.openInBrowser("${artifactsBase(ctx)}/a/${v.artifactId}" + if (v.pinned) "/v${v.version}" else "")
     }
-    list += ViewerAction(R.drawable.ccm_trash, if (n > 1) "Delete (all $n versions)" else "Delete") {
+    list += ViewerAction(R.drawable.ccm_trash, "Delete") {
         sheets.ask("Delete \"${v.title}\"?", if (n > 1) "All $n versions go, for good." else "It goes for good.", "Delete") {
             scope.launch {
                 try {
