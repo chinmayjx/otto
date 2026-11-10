@@ -8,13 +8,13 @@ type Out = (s: string) => void;
 interface Args { _: string[]; [k: string]: any }
 
 /** Who is sending, for the channel's log: a scheduled run, else this session, else just the CLI. */
-function sender(config: Config): string {
+export function sender(config: Config): string {
   if (process.env.OTTO_SENDER) return process.env.OTTO_SENDER;
   const s = session(config);
   return s.id === 'default' ? 'otto send' : `session ${s.title || s.id}`;
 }
 
-function readStdin(): string {
+export function readStdin(): string {
   if (process.stdin.isTTY) return '';
   try { return fs.readFileSync(0, 'utf8'); } catch { return ''; }
 }
