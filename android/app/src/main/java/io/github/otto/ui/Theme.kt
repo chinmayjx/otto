@@ -135,6 +135,8 @@ class ViewerBarState(
     val onClip: () -> Unit,
     /** More of the viewer's actions, listed in ⋮ after its own (share, copy link, delete…). */
     val actions: List<ViewerAction> = emptyList(),
+    /** Shared: anyone with its public link can open it. */
+    val public: Boolean = false,
 )
 
 /** One of the viewer's actions in the bar's ⋮: icon a drawable. */

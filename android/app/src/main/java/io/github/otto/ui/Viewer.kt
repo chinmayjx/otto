@@ -123,9 +123,9 @@ fun Viewer(target: Target, hint: ArtifactItem?) {
 @Composable
 private fun ViewerBar(title: String, label: String?, progress: Float?, onLabel: () -> Unit, onDownload: (() -> Unit)?, onMore: (() -> Unit)?,
                       clipping: Boolean? = null, onClip: () -> Unit = {}, @Suppress("UNUSED_PARAMETER") home: String = "",
-                      actions: List<ViewerAction> = emptyList()) {
+                      actions: List<ViewerAction> = emptyList(), public: Boolean = false) {
     val ops = LocalOps.current
-    SideEffect { ops.viewerBar(ViewerBarState(title, label, onLabel, onDownload, onMore, clipping, onClip, actions)) }
+    SideEffect { ops.viewerBar(ViewerBarState(title, label, onLabel, onDownload, onMore, clipping, onClip, actions, public)) }
     Box(Modifier.fillMaxWidth().height(2.dp)) {
         if (progress != null) {
             if (progress < 0f) LinearProgressIndicator(Modifier.fillMaxSize()) else LinearProgressIndicator({ progress }, Modifier.fillMaxSize())
@@ -183,7 +183,8 @@ private fun ArtifactViewer(start: Target, hint: ArtifactItem?, sheets: Sheets) {
             onLabel = { if (cur != null) sheets.show { VersionsSheet(cur, sheets) { target = it } } },
             onDownload = cur?.let { { ops.download("${ArtifactsApi.files(ctx, it)}/download", it.filename) } },
             onMore = null,
-            actions = cur?.let { artifactActions(ctx, scope, ops, sheets, it) } ?: emptyList(),
+            actions = cur?.let { artifactActions(ctx, scope, ops, sheets, it) { p -> v = it.copy(public = p) } } ?: emptyList(),
+            public = cur?.public == true,
             clipping = if (cur != null) clipping else null,
             onClip = {
                 clipping = !clipping
@@ -489,14 +490,17 @@ private fun VersionsSheet(v: ArtifactVersion, sheets: Sheets, go: (Target) -> Un
 
 /** An artifact's own actions, for the bar's ⋮: share (making the public link), stop sharing, copy link, open with,
  * open in the browser, delete. */
-private fun artifactActions(ctx: Context, scope: CoroutineScope, ops: ScreenOps, sheets: Sheets, v: ArtifactVersion): List<ViewerAction> {
+private fun artifactActions(ctx: Context, scope: CoroutineScope, ops: ScreenOps, sheets: Sheets, v: ArtifactVersion, onPublic: (Boolean) -> Unit): List<ViewerAction> {
     val n = v.versions.size
     val pub = publicArtifactsBase(ctx)
     fun failed() = toast(ctx, "That didn't work. Is Tailscale on?")
     val list = mutableListOf<ViewerAction>()
     fun share() = scope.launch {
         try {
-            if (!v.public) ArtifactsApi.setPublic(ctx, v.artifactId, true)
+            if (!v.public) {
+                ArtifactsApi.setPublic(ctx, v.artifactId, true)
+                onPublic(true)
+            }
             ops.share("$pub/p/${v.artifactId}", v.title)
         } catch (_: Exception) {
             failed()
@@ -515,6 +519,7 @@ private fun artifactActions(ctx: Context, scope: CoroutineScope, ops: ScreenOps,
         scope.launch {
             try {
                 ArtifactsApi.setPublic(ctx, v.artifactId, false)
+                onPublic(false)
                 toast(ctx, "No longer shared")
             } catch (_: Exception) {
                 failed()

@@ -119,6 +119,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
     private val tabHost: TextView
     private val tabMark: TextView
     private val tabCount: TextView
+    private val publicMark: TextView // an open artifact that's shared: a mark at the tab's right end
     private val surface = SurfaceView(ctx)
     private val compose = ComposeHost() // the native sections' lifecycle: the screen's
     private val ops = Ops()
@@ -267,6 +268,17 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         tabCount.setPadding(dp(4), 0, dp(4), 0)
         tabCount.minWidth = dp(18)
         tabBlock.addView(tabCount, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(17)).apply { marginStart = dp(8) })
+        publicMark = label("Public", 11)
+        publicMark.setTextColor(BrowserService.ACCENT)
+        publicMark.background = GradientDrawable().apply {
+            cornerRadius = dp(5).toFloat()
+            setStroke(max(1, dp(1)), BrowserService.ACCENT)
+        }
+        publicMark.setPadding(dp(5), 0, dp(5), 0)
+        publicMark.gravity = Gravity.CENTER
+        publicMark.contentDescription = "Shared publicly"
+        publicMark.visibility = View.GONE
+        tabBlock.addView(publicMark, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(17)).apply { marginStart = dp(8) })
         tabChevron = icon(R.drawable.ccm_chevron_down, BrowserService.MUTED)
         tabBlock.addView(tabChevron, LinearLayout.LayoutParams(dp(12), dp(12)).apply { marginStart = dp(6) })
         onPress(tabBlock) {
@@ -818,6 +830,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         // A viewer's tab is just its title and version, on the bar itself; Browser's and Terminal's are blocks.
         tabBlock.background = if (v) pressable(dp(9)) else rounded(BrowserService.FIELD, dp(9))
         tabChevron.visibility = if (v) View.GONE else View.VISIBLE
+        publicMark.visibility = if (v && viewerBar?.public == true) View.VISIBLE else View.GONE
         filesButtons.visibility = if (!v && tab == FILES) View.VISIBLE else View.GONE
         home.visibility = if (v) View.VISIBLE else View.GONE
         more.visibility = if ((v && viewerBar != null) || (!v && tab == BROWSER)) View.VISIBLE else View.GONE
