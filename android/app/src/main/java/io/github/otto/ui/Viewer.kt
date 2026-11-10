@@ -500,6 +500,7 @@ private fun artifactActions(ctx: Context, scope: CoroutineScope, ops: ScreenOps,
             if (!v.public) {
                 ArtifactsApi.setPublic(ctx, v.artifactId, true)
                 onPublic(true)
+                ops.artifactsChanged() // the list's Public filter and marks
             }
             ops.share("$pub/p/${v.artifactId}", v.title)
         } catch (_: Exception) {
@@ -520,6 +521,7 @@ private fun artifactActions(ctx: Context, scope: CoroutineScope, ops: ScreenOps,
             try {
                 ArtifactsApi.setPublic(ctx, v.artifactId, false)
                 onPublic(false)
+                ops.artifactsChanged() // the list's Public filter and marks
                 toast(ctx, "No longer shared")
             } catch (_: Exception) {
                 failed()

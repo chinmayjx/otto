@@ -75,6 +75,7 @@ class ArtifactsModel(private val ctx: Context) {
     var error by mutableStateOf<String?>(null)
         private set
     var query by mutableStateOf("")
+    var onlyPublic by mutableStateOf(false) // the filter: just the shared ones
     private val scope = MainScope()
     private var job: Job? = null
 
@@ -104,8 +105,9 @@ class ArtifactsModel(private val ctx: Context) {
 
     fun shown(): List<ArtifactItem> {
         val q = query.trim().lowercase()
-        if (q.isEmpty()) return items
-        return items.filter { it.title.lowercase().contains(q) || it.label.lowercase().contains(q) || it.kind.lowercase().contains(q) }
+        val list = if (onlyPublic) items.filter { it.public } else items
+        if (q.isEmpty()) return list
+        return list.filter { it.title.lowercase().contains(q) || it.label.lowercase().contains(q) || it.kind.lowercase().contains(q) }
     }
 
     fun destroy() = scope.cancel()
@@ -123,7 +125,18 @@ fun ArtifactsScreen(model: ArtifactsModel) {
     val grid = rememberLazyGridState()
     Surface(Modifier.fillMaxSize(), color = cs.surface) {
         Column(Modifier.fillMaxSize()) {
-            SearchField(model.query, "Search artifacts", { model.query = it }, Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp))
+            Row(Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                SearchField(model.query, "Search artifacts", { model.query = it }, Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
+                // Public: only the artifacts anyone with the link can open.
+                val on = model.onlyPublic
+                Surface(shape = RoundedCornerShape(28.dp), color = if (on) cs.primary else cs.surfaceContainerHigh,
+                    modifier = Modifier.height(40.dp).clip(RoundedCornerShape(28.dp)).clickable { model.onlyPublic = !on }) {
+                    Box(Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+                        Text("Public", style = MaterialTheme.typography.labelLarge, color = if (on) cs.onPrimary else cs.onSurfaceVariant)
+                    }
+                }
+            }
             Box(Modifier.fillMaxWidth().height(2.dp)) {
                 if (model.busy && !model.pulled) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
             }
@@ -140,6 +153,7 @@ fun ArtifactsScreen(model: ArtifactsModel) {
                     if (shown.isEmpty()) {
                         item(span = { GridItemSpan(maxLineSpan) }) {
                             Empty(when {
+                                model.onlyPublic && model.query.isBlank() && model.items.isNotEmpty() -> "Nothing is shared publicly."
                                 model.items.isNotEmpty() -> "Nothing matches."
                                 model.error != null -> model.error!!
                                 model.fetched -> "No artifacts yet."
@@ -177,7 +191,7 @@ private fun ArtifactCard(a: ArtifactItem, onClick: () -> Unit) {
                 Text(a.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2,
                     overflow = TextOverflow.Ellipsis, minLines = 2)
                 Spacer(Modifier.height(2.dp))
-                Text("${a.label} · v${a.versions} · ${ago(a.updated)}", style = MaterialTheme.typography.labelSmall,
+                Text("${a.label} · v${a.versions} · ${ago(a.updated)}" + if (a.public) " · Public" else "", style = MaterialTheme.typography.labelSmall,
                     color = cs.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
