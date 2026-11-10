@@ -39,32 +39,47 @@ export function serveWatch(req: http.IncomingMessage, res: http.ServerResponse, 
 
 const PAGE = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Voice watch</title><style>
-:root{--bg:#111;--fg:#ddd;--dim:#777;--user:#7fd1ff;--voice:#b9f29a;--vad:#e0b36a;--bad:#ff7a8a}
-@media (prefers-color-scheme:light){:root:not([data-theme=dark]){--bg:#fafafa;--fg:#222;--dim:#888;--user:#0b6ea8;--voice:#2f7d14;--vad:#9a6400;--bad:#c2233b}}
-body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,Menlo,monospace}
-header{position:sticky;top:0;background:var(--bg);padding:8px 12px;border-bottom:1px solid #8884;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-#log{padding:6px 12px 40px}.l{white-space:pre-wrap;word-break:break-word;padding:1px 0}
-.t{color:var(--dim)}.user{color:var(--user)}.voice{color:var(--voice)}.vad{color:var(--vad)}.log{color:var(--dim)}
-.partial{opacity:.6;font-style:italic}.bad{color:var(--bad)}label{color:var(--dim)}
-</style></head><body><header><b>Voice watch</b><span id="st" class="t">connecting…</span>
-<label><input type="checkbox" id="logs" checked> log lines</label><label><input type="checkbox" id="vad" checked> detection</label>
-<button id="clr">clear</button></header><div id="log"></div><script>
-const box=document.getElementById('log'),st=document.getElementById('st');let partial={};
+:root{--bg:#111;--fg:#e4e4e4;--dim:#7a7a7a;--line:#8883;--voice:#b9f29a;--vad:#e0b36a;--bad:#ff7a8a}
+@media (prefers-color-scheme:light){:root{--bg:#fafafa;--fg:#1d1d1d;--dim:#888;--voice:#2f7d14;--vad:#9a6400;--bad:#c2233b}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif;height:100vh;display:flex;flex-direction:column}
+header{padding:8px 12px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center}
+#st{color:var(--dim);font-size:12px}button{font:inherit;font-size:12px}
+main{flex:1;display:grid;grid-template-columns:1fr 1fr;min-height:0}
+@media (max-width:760px){main{grid-template-columns:1fr;grid-template-rows:45% 55%}}
+section{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line)}
+h2{margin:0;padding:6px 12px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line)}
+.scroll{flex:1;overflow-y:auto;padding:10px 12px}
+#words{font-size:17px;line-height:1.6}#words .w.bad{color:var(--bad)}#words .w.partial{opacity:.55}
+#logs{font:12px/1.45 ui-monospace,Menlo,monospace}.l{white-space:pre-wrap;word-break:break-word}
+.t{color:var(--dim)}.voice{color:var(--voice)}.vad{color:var(--vad)}.log{color:var(--dim)}.user{color:var(--fg)}.bad{color:var(--bad)}
+</style></head><body><header><b>Voice watch</b><span id="st">connecting…</span><button id="clr">clear</button></header>
+<main><section><h2>Heard (as OpenAI writes it down; red: low confidence)</h2><div class="scroll" id="wbox"><div id="words"></div></div></section>
+<section><h2>Log</h2><div class="scroll" id="lbox"><div id="logs"></div></div></section></main><script>
+const words=document.getElementById('words'),logs=document.getElementById('logs'),wbox=document.getElementById('wbox'),lbox=document.getElementById('lbox');
+let partial=null;
 const fmt=t=>new Date(t).toLocaleTimeString([], {hour12:false})+'.'+String(t%1000).padStart(3,'0');
-function show(l){
-  if(l.kind==='log'&&!logs.checked)return; if(l.kind==='vad'&&!vad.checked)return;
-  const kind=l.kind.replace('-partial','');const key=l.call+kind;
-  let el=l.kind.endsWith('-partial')?partial[key]:null;
-  if(!el){el=document.createElement('div');el.className='l';box.appendChild(el)}
-  if(l.kind.endsWith('-partial'))partial[key]=el;else{if(partial[key]&&partial[key]!==el)partial[key].remove();delete partial[key]}
-  const who={user:'you  ',voice:'otto ',vad:'     ',log:'     '}[kind]||kind;
-  const lp=l.lp===undefined?'':' (lp '+l.lp.toFixed(2)+')';
-  el.innerHTML='';const t=document.createElement('span');t.className='t';t.textContent=fmt(l.t)+' '+l.call.slice(0,4)+' ';
-  const s=document.createElement('span');s.className=kind+(l.kind.endsWith('-partial')?' partial':'')+(l.lp!==undefined&&l.lp<-0.5?' bad':'');
-  s.textContent=who+l.text+lp;el.append(t,s);
-  if(innerHeight+scrollY>=document.body.scrollHeight-80)scrollTo(0,document.body.scrollHeight);
+const stick=b=>b.scrollTop+b.clientHeight>=b.scrollHeight-60;
+function word(l){
+  const keep=stick(wbox);
+  if(!partial){partial=document.createElement('span');words.appendChild(partial);words.appendChild(document.createTextNode(' '))}
+  partial.className='w'+(l.kind==='user-partial'?' partial':'')+(l.lp!==undefined&&l.lp<-0.5?' bad':'');
+  partial.textContent=l.text;partial.title=fmt(l.t)+(l.lp===undefined?'':' lp '+l.lp.toFixed(2));
+  if(l.kind==='user')partial=null;
+  if(keep)wbox.scrollTop=wbox.scrollHeight;
 }
-clr.onclick=()=>{box.innerHTML='';partial={}};
-const es=new EventSource('/voice/watch/events');es.onopen=()=>st.textContent='live';es.onerror=()=>st.textContent='reconnecting…';
-es.onmessage=e=>show(JSON.parse(e.data));
+function line(l){
+  if(l.kind==='voice-partial')return;
+  const keep=stick(lbox);
+  const el=document.createElement('div');el.className='l';
+  const t=document.createElement('span');t.className='t';t.textContent=fmt(l.t)+' ';
+  const s=document.createElement('span');const lp=l.lp===undefined?'':' (lp '+l.lp.toFixed(2)+')';
+  s.className=l.kind+(l.lp!==undefined&&l.lp<-0.5?' bad':'');
+  s.textContent=({user:'heard: ',voice:'otto: ',vad:'',log:''}[l.kind]??'')+l.text+lp;
+  el.append(t,s);logs.appendChild(el);
+  if(keep)lbox.scrollTop=lbox.scrollHeight;
+}
+function show(l){ if(l.kind==='user'||l.kind==='user-partial')word(l); if(l.kind!=='user-partial')line(l) }
+document.getElementById('clr').onclick=()=>{words.innerHTML='';logs.innerHTML='';partial=null};
+const st=document.getElementById('st');const es=new EventSource('/voice/watch/events');
+es.onopen=()=>st.textContent='live';es.onerror=()=>st.textContent='reconnecting…';es.onmessage=e=>show(JSON.parse(e.data));
 </script></body></html>`;
