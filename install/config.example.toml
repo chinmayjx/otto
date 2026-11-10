@@ -37,3 +37,7 @@ port = 9336
 [schedules]
 # Schedules' times (otto schedule) are in this time zone; the box itself may run on UTC.
 timezone = "Asia/Kolkata"
+
+[sessions]
+# devbox-hub's local API, which holds Claude Code's Remote Control chats (otto sessions list|send).
+# hub = "http://127.0.0.1:8780"
