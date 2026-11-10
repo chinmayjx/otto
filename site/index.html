@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Otto: your phone and a Linux box, wired together for coding agents</title>
+    <meta name="description" content="Otto gives the coding agents on your Linux box what a phone otherwise lacks: a second screen, a browser they drive, control of the phone, and a hub for what they make." />
+    <meta name="color-scheme" content="dark light" />
+    <meta property="og:title" content="Otto" />
+    <meta property="og:description" content="Your phone and a Linux box, wired together for any coding agent." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;1,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <a class="mark" href="./">Otto</a>
+      <nav>
+        <a href="#how">How it works</a>
+        <a href="https://github.com/chinmayjx/otto">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-text">
+          <p class="eyebrow">Open source · early</p>
+          <h1>Your agent gets a phone.</h1>
+          <p class="sub">Otto wires your phone and a Linux box together for any coding agent. The agent keeps its real shell and files on the box, and gets what a phone otherwise lacks: a second screen, a browser it drives, control of the phone, and a place for what it makes.</p>
+          <p class="aside">Doc Ock had four arms. Your agent gets a phone, a browser and a desktop.</p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/chinmayjx/otto">View on GitHub</a>
+            <a class="button" href="#how">How it works</a>
+          </div>
+        </div>
+        <figure class="phone hero-phone">
+          <img src="media/browser.jpg" alt="The phone's browser, opened on a Wikipedia page by the agent" />
+        </figure>
+      </section>
+
+      <section class="features" aria-label="What Otto adds">
+        <article>
+          <figure class="phone"><img src="media/second-screen.jpg" alt="The second screen over a chat: the box's files, terminal and desktop, and the agent's artifacts" loading="lazy" /></figure>
+          <h2>A second screen</h2>
+          <p>An overlay on your phone, one tap on an edge handle away, over whatever chat you're in. The box's files, terminal and desktop, and everything the agent made.</p>
+        </article>
+        <article>
+          <figure class="phone"><img src="media/browser.jpg" alt="The phone's browser, opened and driven by the agent" loading="lazy" /></figure>
+          <h2>A browser it drives</h2>
+          <p>A real browser on your phone, signed in to your accounts. The agent reads pages, clicks and types; you watch, and take over for a login or a captcha.</p>
+        </article>
+        <article>
+          <figure class="phone"><img src="media/artifact.jpg" alt="A report the agent published, opened over the chat" loading="lazy" /></figure>
+          <h2>A hub for what it makes</h2>
+          <p>Reports, decks and pages the agent publishes open over your chat in one tap, with previews and real downloads. The hub stays up while the box sleeps.</p>
+        </article>
+        <article>
+          <figure class="phone"><img src="media/desktop.jpg" alt="The box's desktop, seen from the phone" loading="lazy" /></figure>
+          <h2>The phone itself</h2>
+          <p>Screenshots, the UI tree, taps and typing, installing the app it just built and reading its logs. And the box's own desktop when it needs one.</p>
+        </article>
+      </section>
+
+      <section class="split">
+        <div>
+          <h2>Keep the chat you already use</h2>
+          <p>You talk to the agent through its own frontend: Claude's remote sessions, the ChatGPT app for Codex, Happy, a terminal. Otto never sits between you and the agent, and never holds your provider's credentials. Links the agent writes are plain https on your tailnet: they open in any browser, and the Otto app only opens them more nicely.</p>
+        </div>
+        <div>
+          <h2>One command</h2>
+          <p>Agents, people and scripts use the same <code>otto</code> CLI, plus a small MCP server that returns screenshots inline.</p>
+<pre><code><span class="c"># the phone's browser</span>
+otto browser open https://example.com
+otto browser snapshot
+otto browser click e12
+
+<span class="c"># the phone</span>
+otto phone screenshot
+otto phone install app-debug.apk
+
+<span class="c"># show you something</span>
+otto artifact publish report.html
+otto show https://…</code></pre>
+        </div>
+      </section>
+
+      <section class="how" id="how">
+        <h2>How it fits together</h2>
+        <p class="lede">Everything stays on your <a href="https://tailscale.com">Tailscale</a> network. The phone dials out to the box, and the box serves the phone's tools on localhost.</p>
+        <svg class="diagram" viewBox="0 0 900 300" role="img" aria-label="The phone dials out over the tailnet to the box, where the relay, the otto CLI and the agent run; the box publishes to an always-on hub.">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor" /></marker>
+          </defs>
+          <g class="node">
+            <rect x="10" y="40" width="230" height="200" rx="14" />
+            <text class="title" x="34" y="78">Phone</text>
+            <text x="34" y="112">Otto app</text>
+            <text x="34" y="140">second screen</text>
+            <text x="34" y="168">browser · device</text>
+            <text class="dim" x="34" y="212">your chat app beside it</text>
+          </g>
+          <g class="node accent">
+            <rect x="320" y="40" width="300" height="200" rx="14" />
+            <text class="title" x="344" y="78">Box <tspan class="dim">Linux, may sleep</tspan></text>
+            <text x="344" y="112">relay ← otto CLI ← agent</text>
+            <text x="344" y="140">files · terminal · desktop</text>
+            <text x="344" y="168">adapters: Claude, Codex, …</text>
+            <text class="dim" x="344" y="212">the agent's real shell and files</text>
+          </g>
+          <g class="node">
+            <rect x="700" y="40" width="190" height="200" rx="14" />
+            <text class="title" x="724" y="78">Hub</text>
+            <text class="dim" x="724" y="100">always on</text>
+            <text x="724" y="140">artifact hub</text>
+            <text x="724" y="168">box start / stop</text>
+          </g>
+          <g class="edge">
+            <path d="M244 140H314" marker-end="url(#arrow)" />
+            <text class="dim" x="252" y="128">tailnet</text>
+            <path d="M624 140H694" marker-end="url(#arrow)" />
+          </g>
+        </svg>
+        <svg class="diagram tall" viewBox="0 0 360 640" role="img" aria-label="The phone dials out over the tailnet to the box, where the relay, the otto CLI and the agent run; the box publishes to an always-on hub.">
+          <g class="node">
+            <rect x="2" y="2" width="356" height="150" rx="14" />
+            <text class="title" x="24" y="38">Phone</text>
+            <text x="24" y="72">Otto app: second screen</text>
+            <text x="24" y="98">browser · device</text>
+            <text class="dim" x="24" y="128">your chat app beside it</text>
+          </g>
+          <g class="edge"><path d="M180 156V214" marker-end="url(#arrow)" /><text class="dim" x="194" y="190">tailnet</text></g>
+          <g class="node accent">
+            <rect x="2" y="220" width="356" height="176" rx="14" />
+            <text class="title" x="24" y="256">Box <tspan class="dim">Linux, may sleep</tspan></text>
+            <text x="24" y="290">relay ← otto CLI ← agent</text>
+            <text x="24" y="316">files · terminal · desktop</text>
+            <text x="24" y="342">adapters: Claude, Codex, …</text>
+            <text class="dim" x="24" y="372">the agent's real shell and files</text>
+          </g>
+          <g class="edge"><path d="M180 400V458" marker-end="url(#arrow)" /></g>
+          <g class="node">
+            <rect x="2" y="464" width="356" height="130" rx="14" />
+            <text class="title" x="24" y="500">Hub <tspan class="dim">always on</tspan></text>
+            <text x="24" y="534">artifact hub</text>
+            <text x="24" y="560">box start / stop</text>
+          </g>
+        </svg>
+      </section>
+
+      <section class="principles">
+        <h2>What it holds to</h2>
+        <ol>
+          <li><strong>The agent runs on the box.</strong> Otto only adds what the box can't do: the phone, its browser, artifacts, a desktop.</li>
+          <li><strong>Any agent.</strong> Nothing in the core knows about one provider. What each agent needs lives in a small adapter.</li>
+          <li><strong>Tailscale only.</strong> No public URL in the core. Every service gets HTTPS on its tailnet name.</li>
+          <li><strong>Devices dial out.</strong> The phone opens the connections; it listens on no ports.</li>
+          <li><strong>Standard protocols.</strong> One tunnel, and inside it plain CDP and HTTP, never a home-made format.</li>
+        </ol>
+      </section>
+
+      <section class="more">
+        <h2>And around it</h2>
+        <ul>
+          <li><strong>Voice.</strong> Call your agent from the Otto app and talk it through a task.</li>
+          <li><strong>Bots.</strong> A long-running agent conversation you reach from Telegram.</li>
+          <li><strong>Schedules.</strong> A prompt run at a set time, as a fresh session on the box.</li>
+          <li><strong>Clips.</strong> Collect parts of the screen on your phone, add a note, hand them to the agent.</li>
+        </ul>
+      </section>
+
+      <section class="status">
+        <h2>Status</h2>
+        <p>Early. The pieces run every day on the author's own phone and box, and are moving into the repo one at a time. Setup is by hand for now; a one-command <code>otto setup</code> comes later. Follow along on <a href="https://github.com/chinmayjx/otto">GitHub</a>.</p>
+      </section>
+    </main>
+
+    <footer>
+      <p>Made by <a href="https://chinmayjain.me">Chinmay Jain</a> · MIT licensed</p>
+    </footer>
+  </body>
+</html>
