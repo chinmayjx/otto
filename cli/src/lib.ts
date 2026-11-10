@@ -14,7 +14,6 @@ export interface Config {
   display: string; // the box's desktop
   sessionCommand: string | null; // an adapter's command that prints this agent's session id (and title)
   shots: string; // where screenshots are saved
-  sessionsHub: string; // devbox-hub's local API, which holds the Claude Remote Control chats ([sessions] hub)
 }
 
 const configFile = () => process.env.OTTO_CONFIG || path.join(home, '.config/otto/config.toml');
@@ -35,7 +34,6 @@ export function loadConfig(): Config {
     display: t.desktop?.display ?? ':1',
     sessionCommand: process.env.OTTO_SESSION_COMMAND || t.session?.command || null,
     shots: process.env.OTTO_SHOTS || path.join(os.tmpdir(), 'otto-shots'),
-    sessionsHub: String(t.sessions?.hub ?? 'http://127.0.0.1:8780').replace(/\/$/, ''),
   };
 }
 

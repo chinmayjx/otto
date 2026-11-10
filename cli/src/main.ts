@@ -5,7 +5,6 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { bot } from './bots.js';
 import { channel, schedule, send } from './schedules.js';
-import { sessions } from './sessions.js';
 import { loadConfig, session, relay, browser, phone, saveShot, desktopShot, pairing, pairingLink, OttoError } from './lib.js';
 
 const HELP = `otto: the phone, its browser and the box's desktop, for agents and people
@@ -78,14 +77,6 @@ Schedules (a prompt run at a time, as a fresh session on this box; times in [sch
   otto schedule run <name>                 run it now
   otto schedule runs [<name>] [--limit N]  recent runs: when, status, transcript
   otto schedule runs <name> <run>          what that run did
-
-Sessions (the user's agent chats on this box: Claude Code Remote Control, via devbox-hub, and recent Codex threads):
-  otto sessions list [--search T] [--agent claude|codex] [--limit N] [--json]
-                                           newest first: id, agent, live/idle/busy, last active, title, folder
-  otto sessions send <id|title> <text>     a message into that session as the user (text from stdin when not
-                                           given), headed with who sent it and how to answer (otto send otto_voice);
-                                           a stopped Claude chat is brought back first, a closed Codex thread
-                                           resumes headless
 
 Bots (chat bots, each one long-running agent conversation on this box; the otto-bots service runs them):
   otto bot add <name> --channel telegram [--cwd DIR] [--model M] [--permission-mode MODE]
@@ -274,9 +265,6 @@ async function main(argv: string[]) {
 
     case 'schedule': case 'schedules':
       return schedule(config, cmd, a, out);
-
-    case 'sessions': case 'session':
-      return sessions(config, cmd, a, out);
 
     case 'artifact': {
       // The artifact hub's own CLI, until it moves into hub/artifacts.
