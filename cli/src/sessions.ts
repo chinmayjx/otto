@@ -81,7 +81,10 @@ export function resolve(list: AgentSession[], query: string): AgentSession {
   for (const t of tries) {
     const found = list.filter(t);
     if (found.length === 1) return found[0];
-    if (found.length > 1) throw new OttoError(`"${query}" could be any of these; use the id:\n${table(found.slice(0, 10))}`);
+    if (found.length > 1) {
+      const more = found.length > 10 ? `\n(and ${found.length - 10} more)` : '';
+      throw new OttoError(`"${query}" could be any of these; use the id:\n${table(found.slice(0, 10))}${more}`);
+    }
   }
   throw new OttoError(`no session matches "${query}" (otto sessions list --all)`);
 }

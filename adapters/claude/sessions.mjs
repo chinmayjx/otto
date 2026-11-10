@@ -114,6 +114,8 @@ function readHead(file) {
         let text = null;
         if (e.type === 'queue-operation' && e.operation === 'enqueue') text = e.content;
         else if (e.type === 'user' && typeof e.message?.content === 'string') text = e.message.content;
+        // A message Otto passed on starts with who sent it (otto sessions send): the title is what follows.
+        if (typeof text === 'string') text = text.replace(/^\[From [^\]\n]* via Otto\.[^\]\n]*\]\s*/, '');
         if (typeof text === 'string' && !/^\s*</.test(text) && !/^This session is being continued/.test(text)) title = titleOf(text) || null;
       }
       if (title && cwd && origin) break;
