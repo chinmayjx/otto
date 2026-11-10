@@ -85,8 +85,8 @@ Bots (chat bots, each one long-running agent conversation on this box; the otto-
   otto bot voice <name> [--provider openai-realtime|android] [--auth api-key|codex] [--model M] [--voice V] [--barge-in S] [--key] | --off
                                           make the bot your assistant: the Otto app's voice calls reach it
                                           (api-key asks for an OpenAI key on stdin; codex uses the Codex sign-in;
-                                          --barge-in 0: any sound stops the voice; otherwise (default) clear
-                                          words or a stop word do)
+                                          --barge-in on (default): clear words or a stop word stop the voice;
+                                          off: nothing does; 0: any sound, as OpenAI decides)
   otto bot list
   otto bot logs <name> [--lines N] [--follow]
   otto bot rm <name>

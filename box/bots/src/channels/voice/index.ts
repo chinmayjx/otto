@@ -93,7 +93,7 @@ export class Voice implements Channel {
         voice: this.config.voice as string | undefined, instructions: this.config.instructions as string | undefined,
         turnDetection: this.config.turnDetection as Record<string, unknown> | undefined,
         noiseReduction: this.config.noiseReduction as Record<string, unknown> | null | undefined,
-        bargeIn: this.config.bargeIn === undefined ? undefined : Number(this.config.bargeIn),
+        bargeIn: this.config.bargeIn === undefined ? undefined : this.config.bargeIn === 'off' ? 'off' : Number(this.config.bargeIn),
       });
     this.call = call;
     try {

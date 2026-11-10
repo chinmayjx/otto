@@ -169,7 +169,7 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
         return [n, kinds.map(k => {
           if (k !== VOICE) return k;
           const v = c.channels[k];
-          const via = (v.auth === 'codex' ? ', codex' : '') + (v.provider === 'android' ? '' : `, ${Number(v.bargeIn ?? 5) ? 'stops on clear words' : 'stops on any sound'}`);
+          const via = (v.auth === 'codex' ? ', codex' : '') + (v.provider === 'android' ? '' : `, ${v.bargeIn === 'off' ? 'never stopped by talking' : Number(v.bargeIn ?? 5) ? 'stops on clear words' : 'stops on any sound'}`);
           return `voice (${v.provider ?? 'openai-realtime'}${via}): assistant`;
         }).join(', ') || '(no channels)',
           s?.handle ?? '', s ? 'running' : 'stopped', paired ? 'paired' : 'unpaired',
@@ -218,9 +218,12 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       if (a.model) v.model = a.model;
       if (a.voice) v.voice = a.voice;
       if (a['barge-in'] !== undefined) {
-        const s = Number(a['barge-in']);
-        if (!Number.isFinite(s) || s < 0 || s > 30) throw new OttoError('--barge-in takes seconds, 0 to 30 (0: any sound stops the voice)');
-        v.bargeIn = s;
+        const b = String(a['barge-in']);
+        const s = Number(b);
+        if (b === 'off') v.bargeIn = 'off';
+        else if (b === 'on') v.bargeIn = 5;
+        else if (!Number.isFinite(s) || s < 0 || s > 30) throw new OttoError('--barge-in takes on, off or 0 (on: clear words or a stop word stop the voice; off: nothing does; 0: any sound, as OpenAI decides)');
+        else v.bargeIn = s;
       }
       if (a.auth) v.auth = a.auth;
       if (a.key) v.auth = 'api-key'; // an explicit key means use the key, even after --auth codex was set before
@@ -249,8 +252,8 @@ export async function bot(cmd: string | undefined, a: { _: string[]; [k: string]
       const how = provider === 'android' ? 'the phone\'s own speech'
         : v.auth === 'codex' ? `OpenAI's realtime voice via the Codex sign-in (${v.model ?? 'gpt-realtime-2.1'})`
         : `OpenAI's realtime voice (${v.model ?? 'gpt-realtime-2.1'})`;
-      const barge = provider === 'android' ? '' : Number(v.bargeIn ?? 5)
-        ? ' Clear words or a stop word ("wait") stop it; noise doesn\'t.' : ' Any sound stops it mid-sentence.';
+      const barge = provider === 'android' ? '' : v.bargeIn === 'off' ? ' Talking over it doesn\'t stop it (--barge-in on to undo).'
+        : Number(v.bargeIn ?? 5) ? ' Clear words or a stop word ("wait") stop it; noise doesn\'t.' : ' Any sound stops it mid-sentence.';
       return out(`${name} is your assistant, with ${how}.${barge} `
         + `On the phone: long-press the handle › Assistant.${running ? '' : `\n${NOT_RUNNING} try it.`}`);
     }

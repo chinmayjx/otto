@@ -122,7 +122,7 @@ export interface OpenAIOptions {
   turnDetection?: Record<string, unknown>;
   noiseReduction?: Record<string, unknown> | null;
   /** Seconds of the user's speech that stop the voice mid-sentence; 0 lets OpenAI stop it at any sound. */
-  bargeIn?: number;
+  bargeIn?: number | 'off';
 }
 
 export class OpenAICall extends Call {
@@ -140,6 +140,7 @@ export class OpenAICall extends Call {
   private usage = { audioIn: 0, audioOut: 0, textIn: 0, textOut: 0 };
   /** Talking over the voice (bargeIn > 0): the box answers turns and decides when the voice stops. */
   private readonly barge: number;
+  private readonly boxStops: boolean; // the box stops the voice on a stop word or clear words (bargeIn not "off")
   private readonly turns: Record<string, unknown>; // the turn detection the call starts with
   private deaf = false; // while the voice talks: turn detection that neither answers nor stops it (OVER)
   private pieces = new Map<string, number>(); // pieces committed while the voice talks, by item: when
@@ -157,7 +158,10 @@ export class OpenAICall extends Call {
   constructor(host: CallHost, private o: OpenAIOptions) {
     super(host);
     this.model = o.model || 'gpt-realtime-2.1';
-    this.barge = Math.max(0, Number(o.bargeIn ?? 5)) || 0;
+    // "off": the box still answers turns and OpenAI still doesn't stop the voice, but the box doesn't either (to see
+    // what stops it when nothing should).
+    this.boxStops = o.bargeIn !== 'off';
+    this.barge = o.bargeIn === 'off' ? 5 : Math.max(0, Number(o.bargeIn ?? 5)) || 0;
     // Semantic turn detection waits for a finished thought rather than any pause; it can be changed in the
     // channel's config (turnDetection). With bargeIn, OpenAI neither answers nor stops the voice by itself: the box
     // does both.
@@ -263,6 +267,7 @@ export class OpenAICall extends Call {
     switch (e.type) {
       case 'input_audio_buffer.speech_started':
         this.userSpeaking = true;
+        if (this.deaf) this.log(`OpenAI heard speech start while the voice ${this.voiceSpeaking ? 'talks' : 'is about to'}`);
         break;
       case 'input_audio_buffer.speech_stopped':
         this.userSpeaking = false;
@@ -421,7 +426,7 @@ export class OpenAICall extends Call {
       this.transcript.fill(id, text);
       this.answered.add(id); // stopping is the answer
       for (const u of this.unsure.splice(0)) this.drop(u);
-      if (this.talking) this.interrupt('stop word: stopped');
+      if (this.talking) this.boxStops ? this.interrupt('stop word: stopped') : this.log('stop word: box stopping is off');
       return;
     }
     const c = clean(text, logprob, this.said);
@@ -444,7 +449,7 @@ export class OpenAICall extends Call {
     if (this.talking && !this.midTurn) {
       note('clean: stopped');
       this.midTurn = true;
-      this.interrupt('clean speech: stopped');
+      if (this.boxStops) this.interrupt('clean speech: stopped'); else this.log('clean speech: box stopping is off');
     } else {
       note(this.talking ? 'kept, stopping already' : 'kept, answered next');
       this.free();
