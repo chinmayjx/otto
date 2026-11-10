@@ -29,6 +29,7 @@ export function serveWatch(req: http.IncomingMessage, res: http.ServerResponse, 
     return true;
   }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+  res.write(': watching\n\n'); // headers out now, through any proxy
   for (const l of recent) res.write(`data: ${JSON.stringify(l)}\n\n`);
   clients.add(res);
   const ping = setInterval(() => res.write(': ping\n\n'), 15_000);
