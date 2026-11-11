@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -184,6 +185,9 @@ fun PdfPages(doc: PdfDoc?, sizes: List<Pair<Float, Float>>, modifier: Modifier =
             }
             Geo(contentW, m, pw, g, ph, tops)
         }
+        // The geometry as of now, for what outlives this composition (the gesture handler, the page number): it's
+        // made once, so it would otherwise keep 1x's geometry and never pan sideways.
+        val now by rememberUpdatedState(geo)
 
         val cache = remember(baseW, doc) { object : LruCache<Int, ImageBitmap>(48 shl 20) {
             override fun sizeOf(key: Int, value: ImageBitmap) = value.width * value.height * 4
@@ -192,10 +196,10 @@ fun PdfPages(doc: PdfDoc?, sizes: List<Pair<Float, Float>>, modifier: Modifier =
 
         fun scrollY(): Int {
             val i = lazy.firstVisibleItemIndex
-            return if (i < geo.tops.size) geo.tops[i] + lazy.firstVisibleItemScrollOffset else 0
+            return if (i < now.tops.size) now.tops[i] + lazy.firstVisibleItemScrollOffset else 0
         }
 
-        fun maxPanX() = max(0, geo.contentW - vw).toFloat()
+        fun maxPanX() = max(0, now.contentW - vw).toFloat()
 
         // Zoom to z, keeping the content under c (viewport pixels, before) under c2 (after). All in one frame: the
         // new layout, the new scroll and the end of the transform.
@@ -257,7 +261,7 @@ fun PdfPages(doc: PdfDoc?, sizes: List<Pair<Float, Float>>, modifier: Modifier =
         val page by remember { derivedStateOf {
             val line = scrollY() + vh / 4
             var n = sizes.size
-            for (i in sizes.indices) if (geo.tops[i] + geo.ph[i] + geo.g > line) { n = i + 1; break }
+            for (i in sizes.indices) if (now.tops[i] + now.ph[i] + now.g > line) { n = i + 1; break }
             n
         } }
 
