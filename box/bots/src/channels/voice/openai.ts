@@ -1,5 +1,5 @@
 // A voice call through OpenAI's realtime API: a voice model on a WebRTC call with the phone, which handles small talk
-// itself and hands everything else to Otto (the bot's agent) with its ask_brain tool.
+// itself and hands everything else to Otto (the bot's agent) with its ask_otto tool.
 //
 // The phone makes a WebRTC offer and the box creates the call with it (POST /v1/realtime/calls, with a key and
 // the session: prompt, voice, tool, transcription), so the key never leaves the box. The key is an OpenAI API key,
@@ -10,10 +10,10 @@
 // A call isn't a blank slate: as the box joins, the voice gets what was said on earlier calls (the bot's saved voice
 // transcript, history.ts) as the conversation so far, between two notes that it's earlier and already dealt with.
 //
-// list_sessions and send_to_session (sessions.ts) let the voice find one of the user's Claude Code sessions on the box
-// and say something to it directly; they answer when done, and the voice says what happened.
+// list_chats and message_chat (sessions.ts) let the voice find the chat the user names (one of their Claude Code
+// sessions on the box) and pass their words to it directly; they answer when done, and the voice says what happened.
 //
-// ask_brain is fire and forget: the box hands Otto everything said since the last hand-off, and answers the tool at
+// ask_otto is fire and forget: the box hands Otto everything said since the last hand-off, and answers the tool at
 // once ("sent"), so the voice says it's on it and stays free. Otto's replies come back on the channel whenever they're
 // ready; each is spoken word for word at the next gap (the user not talking, the voice not mid-answer), with the
 // voice's tools off for it.
@@ -25,26 +25,26 @@ import { tap, watching } from './watch.js';
 
 const API = 'https://api.openai.com/v1/realtime';
 
-export const PROMPT = `You are the voice of Otto, the user's personal assistant. You are only Otto's ears and mouth. Otto's brain is a separate agent on the user's computer: it has their files, phone, apps, accounts, notes, calendar, and every earlier conversation with the user. You have none of that; of earlier calls you have only what was said on them, at the start of this conversation, already dealt with: use it for follow-ups ("where were we?"), never answer it again.
+export const PROMPT = `You are the voice of Otto, the user's personal assistant. You are only Otto's ears and mouth. Otto itself is a separate agent on the user's computer: it has their files, phone, apps, accounts, notes, calendar, and every earlier conversation with the user. You have none of that; of earlier calls you have only what was said on them, at the start of this conversation, already dealt with: use it for follow-ups ("where were we?"), never answer it again.
 
 - Small talk and general knowledge (greetings, facts, definitions, quick maths): answer yourself, briefly.
-- Anything about the user, their things or their earlier conversations, or anything that needs doing (looking something up on their computer or phone, sending, scheduling, changing anything): call ask_brain with what the user wants. Never guess, never say you can't access something, never make up an answer: the brain can.
-- Every request for information or action goes to ask_brain, even one that repeats an earlier question: things may have changed. Never wrap up the conversation instead of answering.
-- ask_brain returns at once; the answer comes later. After calling it, say once, in a few words, that you're on it. Then be quiet until Otto's message arrives: don't fill the silence, don't say you're still checking. If the user asks how it's going, say once that it's still working. They can talk about other things meanwhile.
+- Anything about the user, their things or their earlier conversations, or anything that needs doing (looking something up on their computer or phone, sending, scheduling, changing anything): call ask_otto with what the user wants. Never guess, never say you can't access something, never make up an answer: Otto can.
+- Every request for information or action goes to ask_otto, even one that repeats an earlier question: things may have changed. Never wrap up the conversation instead of answering.
+- ask_otto returns at once; the answer comes later. After calling it, say once, in a few words, that you're on it. Then be quiet until Otto's message arrives: don't fill the silence, don't say you're still checking. If the user asks how it's going, say once that it's still working. They can talk about other things meanwhile.
 - Background noise, a cough, or a fragment like "so" or "um" is not a question: don't answer it, wait for the user to finish.
-- The user's Claude Code sessions on their computer: when the user asks to tell a specific session (chat) something, find it with list_sessions and pass the message on with send_to_session. If the match isn't obvious, say the session's name and check with the user before sending. The session replies to the user through Otto on its own. For anything else about those sessions, use ask_brain.
+- The user's chats are their Claude Code sessions on their computer, each with a name (like "cc-mobile"). When the user names a chat to tell something ("tell the cc-mobile chat …"), find it with list_chats and pass their words on with message_chat, as they said them, in the first person, with no greeting and no summary. If the match isn't obvious, say the chat's name and check with the user before sending. The chat replies to the user through Otto on its own. Everything else, about chats or not, goes to ask_otto.
 - When you're asked to say a message from Otto, say it.
-- To the user, you and the brain are one: Otto. Never mention a brain; say "let me check", not "I've asked the brain".
+- To the user, you and Otto are one. Say "let me check", not "I've asked Otto".
 
 Speak naturally and briefly, like a person on a phone call, in the user's language.`;
 
 const TOOL = {
-  type: 'function', name: 'ask_brain',
-  description: "Hand a request to Otto's brain, which has the user's computer, files, phone, accounts and memory. Returns at once; "
+  type: 'function', name: 'ask_otto',
+  description: "Hand a request to Otto, the user's assistant, which has the user's computer, files, phone, accounts and memory. Returns at once; "
     + 'the answer comes later as a message from Otto.',
   parameters: {
     type: 'object',
-    properties: { request: { type: 'string', description: 'What the user wants, in their words, with anything the brain needs to know' } },
+    properties: { request: { type: 'string', description: 'What the user wants, in their words, with anything Otto needs to know' } },
     required: ['request'],
   },
 };
@@ -281,7 +281,7 @@ export class OpenAICall extends Call {
     this.update();
   }
 
-  /** The voice's tool calls in one answer. ask_brain: hand Otto everything said since last time, with what the voice
+  /** The voice's tool calls in one answer. ask_otto: hand Otto everything said since last time, with what the voice
    * asks, and tell the voice at once that it's sent. The session tools answer when they're done. */
   private async tools(calls: any[]) {
     if (!calls.length) return;
@@ -292,7 +292,7 @@ export class OpenAICall extends Call {
       try { args = JSON.parse(c.arguments || '{}'); } catch {}
       if (isSessionTool(c.name)) { void this.sessionTool(c.call_id, c.name, args); continue; }
       const request = String(args.request ?? '');
-      const ok = c.name === 'ask_brain';
+      const ok = c.name === 'ask_otto';
       if (ok && request) asks.push(request);
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id,
         output: ok ? "Sent to Otto. The answer comes later as a message; tell the user you're on it." : `There is no tool ${c.name}.` } });
@@ -311,7 +311,7 @@ export class OpenAICall extends Call {
     ].filter(Boolean).join('\n'), false, b.delivered);
   }
 
-  /** list_sessions or send_to_session, run; its result goes to the voice when it's free to answer. */
+  /** list_chats or message_chat, run; its result goes to the voice when it's free to answer. */
   private async sessionTool(callId: string, name: string, args: any) {
     const t = Date.now();
     const output = await sessionTool(name, args);

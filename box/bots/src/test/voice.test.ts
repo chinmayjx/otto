@@ -167,7 +167,7 @@ test("acknowledging depends on the voice: a realtime voice already did, the phon
   const call: any = new OpenAICall({ toAgent: t => handed.push(t), log: () => {} }, { apiKey: 'k' });
   call.ws = { readyState: 1, send: () => {} };
   call.up = true;
-  call.event({ type: 'response.done', response: { output: [{ type: 'function_call', name: 'ask_brain', call_id: 'c1', arguments: '{"request":"book a table"}' }] } });
+  call.event({ type: 'response.done', response: { output: [{ type: 'function_call', name: 'ask_otto', call_id: 'c1', arguments: '{"request":"book a table"}' }] } });
   await new Promise(r => setTimeout(r, 20));
   assert.match(handed[0], /The voice passes on: book a table\n\(The voice has told the user you're on it: send only the answer/);
   assert.deepEqual((await call.poll(0, 0)).events.filter((e: any) => e.type !== 'state'), [], 'no mute: the user can talk and interrupt');
