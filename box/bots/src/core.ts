@@ -32,7 +32,13 @@ export interface BotOptions {
   typingEvery?: number;
   /** Notes each message on a channel in that channel's own log (channel-log.ts). */
   channelLog?: (kind: string, e: { dir: 'in' | 'out'; by: string; text?: string; file?: string }) => void;
+  /** How long a channel that can't start waits before it tries again: the first wait, doubling up to the longest. */
+  retry?: { first: number; max: number };
 }
+
+/** A channel that can't start (the network isn't up yet, Telegram's API is down) tries again on its own, after 5 s,
+ * then 10, 20, and every 30 s from then on: soon enough after a reboot, and quiet during a long outage. */
+const RETRY = { first: 5_000, max: 30_000 };
 
 const COMMANDS = [
   { command: 'new', description: 'Start a new conversation' },
@@ -49,6 +55,9 @@ interface Link {
   /** The chat the owner last wrote from (a private chat's id is the owner's own, so that's the default). */
   chat: Id | null;
   pairCode: string | null;
+  /** Whether the channel is receiving; until then it tries again on its own. */
+  up: boolean;
+  retry: NodeJS.Timeout | null;
 }
 
 const wrap = (kind: string, text: string) => `<message channel="${kind}">\n${text}\n</message>`;
@@ -96,6 +105,7 @@ export class Bot {
   private last: string; // the channel of the latest message
   private records: { text: string; delivered?: () => void }[] = []; // for the record, in front of the next message
   private typing: NodeJS.Timeout | null = null;
+  private stopped = false;
 
   constructor(o: BotOptions) {
     this.opts = o;
@@ -103,7 +113,7 @@ export class Bot {
     this.config = o.config;
     for (const channel of o.channels) {
       const owner = o.config.channels[channel.kind]?.owner;
-      this.links.set(channel.kind, { channel, chat: channel.owned ? owner ?? null : 'user', pairCode: null });
+      this.links.set(channel.kind, { channel, chat: channel.owned ? owner ?? null : 'user', pairCode: null, up: false, retry: null });
     }
     this.last = o.channels[0].kind;
     this.dir = o.stateDir;
@@ -141,25 +151,54 @@ export class Bot {
   /** The channels' kinds. */
   get kinds(): string[] { return [...this.links.keys()]; }
 
+  /** Starts the tools' socket, then each channel on its own: one that can't start doesn't hold up the others or the
+   * agent, and keeps trying in the background. Resolves once every channel has started or failed once; only the
+   * socket failing fails it. */
   async start(): Promise<void> {
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    this.stopped = false;
     await this.listen();
-    for (const [kind, l] of this.links) {
+    await Promise.all([...this.links].map(([kind, l]) => this.open(kind, l)));
+    this.writeStatus();
+    const on = [...this.links.values()].filter(l => l.up).map(l => `${l.channel.label}${l.channel.handle ? ` ${l.channel.handle}` : ''}`);
+    this.log(`${on.join(', ') || 'no channel yet'}: up; folder ${this.cwd}; session ${this.config.session || '(new)'}`);
+  }
+
+  /** Starts one channel; if it can't, tries again later, doubling the wait. A failure is logged once, when a streak
+   * of them begins, and the recovery once it's over. */
+  private async open(kind: string, l: Link, failures = 0): Promise<void> {
+    l.retry = null;
+    try {
       await l.channel.start(m => this.onMessage(kind, m).catch(e => this.log(`message: ${e.stack ?? e}`)));
-      if (!l.channel.owned) continue;
+    } catch (e: any) {
+      if (this.stopped) return;
+      const { first, max } = this.opts.retry ?? RETRY;
+      const wait = Math.min(first * 2 ** failures, max);
+      if (!failures) this.log(`${kind}: can't start: ${e.message}; trying again on its own (every ${Math.round(max / 1000)} s at most) while the rest runs`);
+      l.retry = setTimeout(() => void this.open(kind, l, failures + 1), wait);
+      return;
+    }
+    if (this.stopped) return l.channel.stop();
+    l.up = true;
+    if (failures) this.log(`${kind}: up after ${failures + 1} tries${l.channel.handle ? ` (${l.channel.handle})` : ''}`);
+    if (l.channel.owned) {
       await l.channel.setCommands(COMMANDS).catch(e => this.log(`commands: ${e.message}`));
       if (!this.config.channels[kind]?.owner) {
         l.pairCode = randomBytes(4).toString('hex');
         this.log(`${kind} unowned: send "/start ${l.pairCode}" to ${l.channel.handle ?? 'the bot'} to claim it`);
       }
     }
-    this.writeStatus();
-    const on = [...this.links.values()].map(l => `${l.channel.label}${l.channel.handle ? ` ${l.channel.handle}` : ''}`).join(', ');
-    this.log(`${on}: up; folder ${this.cwd}; session ${this.config.session || '(new)'}`);
+    if (failures) this.writeStatus(); // the first round writes it once, after every channel has had a go
   }
 
   stop(): void {
-    for (const l of this.links.values()) l.channel.stop();
+    this.stopped = true;
+    for (const l of this.links.values()) {
+      if (l.retry) clearTimeout(l.retry);
+      l.retry = null;
+      l.up = false;
+      l.channel.stop();
+    }
     this.agent.stop();
     this.finish();
     this.server?.close();

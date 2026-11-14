@@ -17,13 +17,22 @@ class FakeChannel implements Channel {
   constructor(public kind = 'fake', public owned = true) {}
   label = 'Fake';
   formatting = 'Markdown shows as is.';
-  handle = '@fake_bot';
+  handle: string | null = null;
   sent: { chat: Id; text?: string; file?: string }[] = [];
   typings = 0;
   commands: Command[] = [];
   deliver!: (m: Incoming) => void;
-  async start(on: (m: Incoming) => void) { this.deliver = on; }
-  stop() {}
+  /** How many starts fail before one works, as Telegram's getMe does while its API is down. */
+  failures = 0;
+  starts = 0;
+  stops = 0;
+  async start(on: (m: Incoming) => void) {
+    this.starts++;
+    if (this.failures-- > 0) throw new Error('getMe: Bad Gateway');
+    this.handle = '@fake_bot';
+    this.deliver = on;
+  }
+  stop() { this.stops++; }
   pairLink(code: string) { return `https://fake/${code}`; }
   async send(chat: Id, text: string) { this.sent.push({ chat, text }); }
   async sendFile(chat: Id, file: string) { this.sent.push({ chat, file }); }
@@ -56,7 +65,7 @@ function setup({ owner, voice, ...config }: Partial<BotConfig> & { owner?: Id; v
       for (const [k, v] of Object.entries(patch.channels ?? {})) channels[k] = { ...channels[k], ...v };
       return (file = { ...file, ...patch, channels });
     },
-    log: m => logs.push(m), typingEvery: 20,
+    log: m => logs.push(m), typingEvery: 20, retry: { first: 10, max: 20 },
   });
   const msg = (text: string, from: Id = 42, attachments: Incoming['attachments'] = []) => bot.onMessage('fake', { chat: 7, from, text, attachments });
   const said = (text: string, record = false) => bot.onMessage('speaker', { chat: 'user', from: 'user', text, attachments: [], record });
@@ -290,4 +299,40 @@ test("a record's delivery is known once the agent gets it; remember() takes one 
   assert.deepEqual(marks, ['earlier', 'aside', 'hi']);
   assert.equal(t.agent().writes[0], `${w('Said on an earlier voice call', 'otto_voice')}\n\n${w('aside', 'speaker')}\n\n${w('hi', 'speaker')}`);
   t.bot.stop();
+});
+
+test("a channel that can't start tries again on its own; the bot and its other channels stay up", async ctx => {
+  const t = setup({ owner: 42, voice: true });
+  ctx.after(() => t.bot.stop());
+  t.channel.failures = 3;
+  await t.bot.start();
+  assert.equal(t.speaker.stops, 0);
+  assert.deepEqual(status(t.dir).channels.map((c: any) => c.handle), [null, '@fake_bot'], 'the channel that failed has no name yet');
+  assert.equal(t.logs.filter(l => /can't start/.test(l)).length, 1);
+  assert.match(t.logs.find(l => /can't start/.test(l))!, /^fake: can't start: getMe: Bad Gateway; trying again on its own/);
+  assert.match(t.logs.at(-1)!, /^Fake @fake_bot: up/, 'up with the channel that started');
+
+  // The voice works meanwhile: a message from it reaches the agent, and the reply comes back.
+  await t.said('what time is it');
+  assert.equal((await tool(t.dir, { kind: 'message', channel: 'speaker', text: 'noon' })).status, 200);
+  assert.deepEqual(t.speaker.texts(), ['noon']);
+
+  for (let i = 0; i < 50 && t.channel.starts < 4; i++) await new Promise(r => setTimeout(r, 10));
+  assert.equal(t.channel.starts, 4, 'tried again until it started');
+  assert.equal(t.logs.filter(l => /can't start/.test(l)).length, 1, 'logged once for the streak');
+  assert.ok(t.logs.includes('fake: up after 4 tries (@fake_bot)'));
+  assert.equal(status(t.dir).channels[0].handle, '@fake_bot');
+  assert.equal(t.speaker.stops, 0, 'the other channel never stopped');
+  assert.equal(t.agent().writes.length, 1, 'nor the agent');
+  t.bot.stop();
+});
+
+test("stopping a bot stops a channel's retries", async () => {
+  const t = setup({ owner: 42 });
+  t.channel.failures = 100;
+  await t.bot.start();
+  t.bot.stop();
+  const starts = t.channel.starts;
+  await new Promise(r => setTimeout(r, 60));
+  assert.equal(t.channel.starts, starts);
 });

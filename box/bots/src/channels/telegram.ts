@@ -62,12 +62,13 @@ export class Telegram implements Channel {
     this.log = log;
   }
 
-  private call(method: string, body: unknown) {
-    return telegram(this.token, method, body, this.abort.signal);
+  private call(method: string, body: unknown, signal = this.abort.signal) {
+    return telegram(this.token, method, body, signal);
   }
 
+  // A getMe that hangs (the network half up after a boot) fails after a while, so the bot tries the channel again.
   async start(onMessage: (m: Incoming) => void): Promise<void> {
-    const me = await this.call('getMe', {});
+    const me = await this.call('getMe', {}, AbortSignal.any([this.abort.signal, AbortSignal.timeout(20_000)]));
     this.handle = `@${me.username}`;
     void this.poll(onMessage);
   }

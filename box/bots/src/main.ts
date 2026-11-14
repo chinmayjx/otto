@@ -108,7 +108,9 @@ function run(name: string, config: BotConfig) {
     bot.remember(VOICE, ['Said on an earlier voice call (for the record; it needs no reply):', ...left.lines].join('\n'),
       () => history.delivered(left.ids));
   }
-  // A bot that can't start (the network isn't up yet, Telegram is down) tries again in a while.
+  // Each channel starts on its own and a channel that can't (the network isn't up yet, Telegram is down) keeps trying
+  // by itself (core.ts), so the rest, a live voice call among them, is never stopped for it. Only the bot's own
+  // tools socket failing fails the start: then the whole bot tries again in a while.
   bot.start().catch(e => {
     log(`can't start: ${e.message}; trying again in 30s`);
     bot.stop();
