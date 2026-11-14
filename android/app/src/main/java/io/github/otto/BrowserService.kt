@@ -20,6 +20,7 @@ import android.util.Base64
 import android.util.Log
 import android.view.ContextThemeWrapper
 import android.view.Display
+import android.view.Gravity
 import android.view.KeyEvent
 import android.view.SurfaceControlViewHost
 import android.view.View
@@ -92,6 +93,7 @@ class BrowserService : Service() {
         var progress = 100
         var desktop = false // showing the desktop site
         var wide: ScriptHandler? = null // while desktop: the script that widens the page's viewport
+        var pan = 0f // while desktop: how far its laptop screen is panned sideways, in px (DesktopStage)
     }
 
     class Group(val id: String, var title: String, val owner: String?) // owner: "agent", or null
@@ -102,6 +104,7 @@ class BrowserService : Service() {
     private var host: SurfaceControlViewHost? = null
     private lateinit var ui: Context
     private lateinit var pages: FrameLayout
+    private lateinit var stage: DesktopStage // the tabs' WebViews, and desktop mode's laptop screen
     private lateinit var progress: View // the current tab's loading progress: a thin line along the top
     private lateinit var history: BrowserHistory
     val tabs = ArrayList<Tab>()
@@ -225,12 +228,23 @@ class BrowserService : Service() {
             }
         }
         pages.setBackgroundColor(BG)
+        stage = DesktopStage(ctx, { tabs }, { current })
+        pages.addView(stage, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        pages.addView(stage.strip, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        // The stage lays the tabs out for the area's size and the keyboard (posted: not in the middle of a layout).
+        pages.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or, ob ->
+            if (r - l != or - ol || b - t != ob - ot) main.post { stage.arrange() }
+        }
+        pages.setOnApplyWindowInsetsListener { v, insets ->
+            main.post { stage.arrange() }
+            v.onApplyWindowInsets(insets)
+        }
         progress = View(ctx).apply {
             setBackgroundColor(ACCENT)
             pivotX = 0f
             visibility = View.GONE
         }
-        pages.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (2.5f * resources.displayMetrics.density).roundToInt()))
+        stage.addView(progress, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (2.5f * resources.displayMetrics.density).roundToInt()))
         if (!restore()) select(newTab(null, HOME))
         headless()
     }
@@ -314,11 +328,12 @@ class BrowserService : Service() {
         tab.web = web
         tab.desktop = false
         tab.wide = null
+        tab.pan = 0f
         tab.progress = 100
         setUp(tab, web)
         // Under the others: tabs are stacked, all drawn, as a page that isn't drawn stalls whoever drives it
         // (agents' screenshots and clicks wait for frames).
-        pages.addView(web, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        stage.addView(web, 0, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         applyDesktop(tab, wantsDesktop(tab.url))
         val back = tab.state?.let { web.restoreState(it) } != null
         tab.state = null
@@ -337,7 +352,7 @@ class BrowserService : Service() {
     /** Let a tab's WebView go (its DevTools target goes with it). */
     private fun drop(tab: Tab) {
         val web = tab.web ?: return
-        pages.removeView(web)
+        stage.removeView(web)
         web.destroy()
         tab.web = null
         tab.wide = null
@@ -457,7 +472,7 @@ class BrowserService : Service() {
             desktopAgent = mobile.replaceFirst(Regex("\\([^)]*\\)"), "(X11; Linux x86_64)").replace(" Mobile ", " ")
         }
         s.userAgentString = mobileAgent
-        s.builtInZoomControls = true // pinch to zoom (desktop sites need it)
+        s.builtInZoomControls = true // pinch to zoom (off in desktop mode, see applyDesktop)
         s.displayZoomControls = false
         // Popups ("Sign in with Google" and the like) open as tabs and can report back to their opener.
         s.setSupportMultipleWindows(true)
@@ -495,7 +510,10 @@ class BrowserService : Service() {
         web.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(v: WebView, percent: Int) {
                 tab.progress = percent
-                if (tab === current) showProgress()
+                if (tab === current) {
+                    showProgress()
+                    if (percent >= 100) stage.pictureSoon()
+                }
             }
 
             override fun onReceivedTitle(v: WebView, title: String?) {
@@ -528,6 +546,7 @@ class BrowserService : Service() {
         tab.web?.bringToFront()
         progress.bringToFront()
         showProgress()
+        stage.arrange() // the strip follows the tab in view
         trim()
         publish()
     }
@@ -718,7 +737,10 @@ class BrowserService : Service() {
         publish()
     }
 
-    /** Show tab's pages as on a computer (or not): the user agent, and a wide viewport sites can't narrow. */
+    /**
+     * Show tab's pages as on a computer (or not): the user agent, and a laptop screen's viewport sites can't narrow,
+     * which the stage shows fitted to the height and panned sideways (DesktopStage).
+     */
     private fun applyDesktop(tab: Tab, on: Boolean) {
         if (tab.desktop == on) return
         val web = tab.web ?: return
@@ -727,6 +749,9 @@ class BrowserService : Service() {
         s.userAgentString = if (on) desktopAgent else mobileAgent
         s.useWideViewPort = on
         s.loadWithOverviewMode = on
+        // No pinch or double-tap zoom on the laptop screen: its zoom is the stage's (fit the height, or zoomed out to
+        // the whole screen), and a page zoomed in would scroll sideways itself, against the stage's panning.
+        s.builtInZoomControls = !on
         if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
             val ua = WebSettingsCompat.getUserAgentMetadata(s)
             WebSettingsCompat.setUserAgentMetadata(s, UserAgentMetadata.Builder(ua)
@@ -734,11 +759,11 @@ class BrowserService : Service() {
                 .setModel(if (on) "" else ua.model).build())
         }
         if (on && tab.wide == null && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-            // Pages ask for width=device-width; lay them out at a laptop's width instead. Chrome's desktop mode uses
-            // 980px, which still squeezes dashboards built for 1280px and up. Pages with no viewport tag get one,
-            // or WebView's own 980px default would apply.
+            // Pages ask for width=device-width; lay them out at the laptop screen's width instead. Chrome's desktop
+            // mode uses 980px, which still squeezes dashboards built for 1280px and up. Pages with no viewport tag
+            // get one, or WebView's own 980px default would apply.
             tab.wide = WebViewCompat.addDocumentStartJavaScript(web,
-                "(() => { const W = 'width=$DESKTOP_WIDTH';" +
+                "(() => { const W = 'width=${DesktopStage.SCREEN_W}';" +
                     " const fix = m => m.name === 'viewport' && m.setAttribute('content', W);" +
                     " new MutationObserver(rs => { for (const r of rs) for (const n of r.addedNodes) if (n.tagName === 'META') fix(n); })" +
                     ".observe(document, { childList: true, subtree: true });" +
@@ -750,6 +775,7 @@ class BrowserService : Service() {
             tab.wide?.remove()
             tab.wide = null
         }
+        stage.arrange()
     }
 
     companion object {
@@ -793,8 +819,6 @@ class BrowserService : Service() {
         private const val HOME = "https://www.google.com"
         private const val MAX_LIVE = 5 // live WebViews, besides those of woken groups
         private const val KEEP_MS = 30L * 24 * 3600 * 1000 // a tab unused this long is dropped
-        /** Width desktop-mode pages are laid out at, in CSS px. */
-        private const val DESKTOP_WIDTH = 1280
 
         var instance: BrowserService? = null // for BrowserLink, in this process
             private set
