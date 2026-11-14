@@ -160,7 +160,10 @@ class BrowserService : Service() {
                 Tunnel.MSG_TUNNEL -> BrowserLink.attach(m.replyTo)
                 Tunnel.MSG_SYNC -> BrowserLink.sync()
                 Tunnel.MSG_LINE -> b.getString("line")?.let { BrowserLink.handle(it) }
-                MSG_RESIZE -> host?.relayout(b.getInt("width"), b.getInt("height"))
+                MSG_RESIZE -> {
+                    if (::stage.isInitialized) stage.hostKeyboard = b.getBoolean("keyboard")
+                    host?.relayout(b.getInt("width"), b.getInt("height"))
+                }
                 MSG_LOAD -> go(b.getString("url"))
                 MSG_SELECT -> byId(b.getString("id"))?.let { select(it) }
                 MSG_CLOSE -> byId(b.getString("id"))?.let { close(it) }

@@ -60,6 +60,7 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
     private var lastW = 0
     private var shrunkAt = 0L // when the area last got shorter without the keyboard showing in the insets (yet)
     private var keyboard = false
+    var hostKeyboard = false // the keyboard as the screen showing the browser sees it (no insets reach this process)
     private var whole = false // zoomed out: the whole screen, fitted to the width
     private var lift = 0f // keyboard up: how far the screen is moved up, to keep the field typed into above it
     private var viewW = 0 // the part of the phone the screen shows in
@@ -81,7 +82,7 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
         if (w == 0 || h == 0) return
         // The keyboard: the insets say so, though they may come a moment after the area shrinks for it; until then
         // a shorter area of the same width is taken as the keyboard, so the zoom doesn't jump meanwhile.
-        val ime = root.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
+        val ime = hostKeyboard || root.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true
         val now = SystemClock.uptimeMillis()
         val shrunk = w == lastW && fullH > 0 && h < fullH - dp(120)
         if (shrunk && !ime && shrunkAt == 0L) {

@@ -1788,6 +1788,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         val b = m.data
         b.putInt("width", surface.width)
         b.putInt("height", surface.height)
+        // The browser's own views get no keyboard insets (they're in another process), so say whether it's up.
+        b.putBoolean("keyboard", surface.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == true)
         if (!attached) {
             b.putBinder("hostToken", surface.hostToken)
             b.putInt("displayId", surface.display.displayId)
