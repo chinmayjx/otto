@@ -42,6 +42,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -492,6 +493,15 @@ class BrowserService : Service() {
             override fun onPageStarted(v: WebView, url: String?, icon: Bitmap?) {
                 if (url != null && !url.startsWith("about:")) tab.url = url
                 publish()
+            }
+
+            // In desktop mode the zoom is fixed: the laptop screen fills the WebView's width. WebView still zooms in on
+            // a small field that's tapped, and with pinch off there'd be no way back, so any other zoom is undone (this
+            // also refits the zoom if a resize leaves it off).
+            override fun onScaleChanged(v: WebView, oldScale: Float, newScale: Float) {
+                if (!tab.desktop || v.width == 0 || newScale <= 0f) return
+                val fit = v.width.toFloat() / DesktopStage.SCREEN_W
+                if (abs(newScale / fit - 1f) > 0.01f) v.post { if (tab.desktop) v.zoomBy(fit / newScale) }
             }
 
             override fun onRenderProcessGone(v: WebView, detail: RenderProcessGoneDetail): Boolean {
