@@ -25,9 +25,18 @@ export interface Incoming {
   attachments: Attachment[];
   /** For the record only: no turn of its own; it goes in front of the agent's next message, from any channel. */
   record?: boolean;
+  /** Only for a turn in progress: what's happening on the channel meanwhile (a call's latest lines), written into the
+   * turn as context that needs no reply of its own. With the agent idle it's dropped, undelivered, and the channel
+   * keeps it for its next message: a turn per aside would cost more than it's worth. */
+  steer?: boolean;
   /** Runs once the message has been written to the agent (or dropped by /new). */
   delivered?: () => void;
 }
+
+/** What a channel throws for a reply it didn't send because the conversation there has moved on since the agent
+ * wrote it (a voice call it hasn't heard all of). The message tells the agent what's new; the reply rule counts the
+ * channel as answered, since the agent may rightly send nothing more. */
+export class Stale extends Error {}
 
 export interface Command { command: string; description: string }
 
@@ -48,8 +57,9 @@ export interface Channel {
   readonly handle: string | null;
   /** A link that pairs whoever opens it, when the channel has such links (Telegram's t.me/<bot>?start=<code>). */
   pairLink(code: string): string | null;
-  /** Text in the agent's Markdown; long text goes in parts. */
-  send(chat: Id, text: string): Promise<void>;
+  /** Text in the agent's Markdown; long text goes in parts. `reply` when it's the agent's own reply in the
+   * conversation (send_message), rather than a notice from the bot or a message from elsewhere on the box. */
+  send(chat: Id, text: string, o?: { reply?: boolean }): Promise<void>;
   /** A file from the box, with an optional caption in Markdown. */
   sendFile(chat: Id, file: string, caption?: string): Promise<void>;
   /** Shows that the bot is working, for a few seconds. */

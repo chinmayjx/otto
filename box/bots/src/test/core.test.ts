@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import type { Channel, Command, Id, Incoming } from '../channel.js';
+import { type Channel, type Command, type Id, type Incoming, Stale } from '../channel.js';
 import type { BotConfig } from '../config.js';
 import { Bot } from '../core.js';
 import type { Agent, AgentEvents, AgentOptions, Provider } from '../provider.js';
@@ -34,7 +34,12 @@ class FakeChannel implements Channel {
   }
   stop() { this.stops++; }
   pairLink(code: string) { return `https://fake/${code}`; }
-  async send(chat: Id, text: string) { this.sent.push({ chat, text }); }
+  /** Throws the next send as one the conversation has moved past. */
+  stale: string | null = null;
+  async send(chat: Id, text: string, o?: { reply?: boolean }) {
+    if (this.stale && o?.reply) { const m = this.stale; this.stale = null; throw new Stale(m); }
+    this.sent.push({ chat, text });
+  }
   async sendFile(chat: Id, file: string) { this.sent.push({ chat, file }); }
   async typing() { this.typings++; }
   async setCommands(c: Command[]) { this.commands = c; }
@@ -335,4 +340,42 @@ test("stopping a bot stops a channel's retries", async () => {
   const starts = t.channel.starts;
   await new Promise(r => setTimeout(r, 60));
   assert.equal(t.channel.starts, starts);
+});
+
+test("a channel's context steers a running turn and asks no reply; with the agent idle it's left with the channel", async () => {
+  const t = setup({ owner: 42, voice: true });
+  await t.bot.start();
+  const marks: string[] = [];
+  const steer = (text: string) => t.bot.onMessage('speaker', { chat: 'user', from: 'user', text, attachments: [], steer: true, delivered: () => marks.push(text) });
+  await steer('On the call just now:\nUser: idle');
+  assert.equal(t.agent()?.writes.length ?? 0, 0, 'no turn for it');
+  assert.deepEqual(marks, [], 'not delivered: the channel keeps it');
+
+  await t.msg('plan my day');
+  await steer('On the call just now:\nUser: and lunch');
+  assert.deepEqual(t.agent().writes, [w('plan my day'), w('On the call just now:\nUser: and lunch', 'speaker')]);
+  assert.deepEqual(marks, ['On the call just now:\nUser: and lunch']);
+  await tool(t.dir, { kind: 'message', channel: 'fake', text: 'planned' });
+  t.agent().events.result({ error: false, text: '' });
+  assert.equal(t.agent().writes.length, 2, 'the speaker is owed nothing');
+
+  // The agent took the context only after the turn ended, as a turn of its own: it needs no reply either.
+  t.agent().events.activity();
+  t.agent().events.result({ error: false, text: '' });
+  assert.equal(t.agent().writes.length, 2, 'no reminder');
+  assert.deepEqual(t.speaker.texts(), []);
+  t.bot.stop();
+});
+
+test("a reply the channel holds back comes back to the agent's tool, and counts as answered", async () => {
+  const t = setup({ owner: 42, voice: true });
+  await t.bot.start();
+  await t.said('what time is it');
+  t.speaker.stale = 'Not said: newer on the call.';
+  assert.deepEqual(await tool(t.dir, { kind: 'message', channel: 'speaker', text: 'noon' }), { status: 409, text: 'Not said: newer on the call.' });
+  assert.deepEqual(t.speaker.texts(), []);
+  t.agent().events.result({ error: false, text: '' });
+  assert.equal(t.agent().writes.length, 1, 'no reminder: sending nothing more is a fine answer');
+  assert.deepEqual(t.speaker.texts(), []);
+  t.bot.stop();
 });

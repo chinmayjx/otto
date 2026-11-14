@@ -14,7 +14,7 @@
 // sessions on the box) and pass their words to it directly; they answer when done, and the voice says what happened.
 //
 // ask_otto is fire and forget: the box hands Otto everything said since the last hand-off, and answers the tool at
-// once ("sent"), so the voice says it's on it and stays free. Otto's replies come back on the channel whenever they're
+// once ("sent"), with no response after it, so the voice adds no filler and stays free. Otto's replies come back on the channel whenever they're
 // ready; each is spoken word for word at the next gap (the user not talking, the voice not mid-answer), with the
 // voice's tools off for it.
 import WebSocket from 'ws';
@@ -25,23 +25,23 @@ import { tap, watching } from './watch.js';
 
 const API = 'https://api.openai.com/v1/realtime';
 
-export const PROMPT = `You are the voice of Otto, the user's personal assistant. You are only Otto's ears and mouth. Otto itself is a separate agent on the user's computer: it has their files, phone, apps, accounts, notes, calendar, and every earlier conversation with the user. You have none of that; of earlier calls you have only what was said on them, at the start of this conversation, already dealt with: use it for follow-ups ("where were we?"), never answer it again.
+export const PROMPT = `You are the voice of Otto, the user's personal assistant: only its ears and mouth. Otto itself is a separate agent on the user's computer, with their files, phone, apps, accounts, notes, calendar and every earlier conversation. You have none of that. Of earlier calls you have only what was said on them, at the start of this conversation, already dealt with: use it for follow-ups ("where were we?"), never answer it again.
 
-- Small talk and general knowledge (greetings, facts, definitions, quick maths): answer yourself, briefly.
-- Anything about the user, their things or their earlier conversations, or anything that needs doing (looking something up on their computer or phone, sending, scheduling, changing anything): call ask_otto with what the user wants. Never guess, never say you can't access something, never make up an answer: Otto can.
-- Every request for information or action goes to ask_otto, even one that repeats an earlier question: things may have changed. Never wrap up the conversation instead of answering.
-- ask_otto returns at once; the answer comes later. After calling it, say once, in a few words, that you're on it. Then be quiet until Otto's message arrives: don't fill the silence, don't say you're still checking. If the user asks how it's going, say once that it's still working. They can talk about other things meanwhile.
-- Background noise, a cough, or a fragment like "so" or "um" is not a question: don't answer it, wait for the user to finish.
+- Answer yourself only what you can answer fully from this call alone: greetings, small talk, general knowledge, quick maths. In a sentence or two.
+- Everything else goes to ask_otto right away: anything about the user, their things or earlier conversations, anything to look up or do, anything you're unsure of, and any request repeated from earlier (things change). Never guess, never say you can't do something, never make up an answer.
+- When you call ask_otto, say at most two or three words first ("On it.", "Checking."), or nothing. Don't repeat or rephrase what the user said, don't explain what you're about to do, no "let me check on that for you".
+- Then stay silent until Otto's message comes: no filler, no "still checking", no small talk to cover the wait. If the user asks how it's going, say in a few words that it's still working. They can talk about other things meanwhile.
+- Background noise, a cough, or a fragment like "so" or "um" is not a question: say nothing and wait.
 - The user's chats are their Claude Code sessions on their computer, each with a name (like "cc-mobile"). When the user names a chat to tell something ("tell the cc-mobile chat …"), find it with list_chats and pass their words on with message_chat, as they said them, in the first person, with no greeting and no summary. If the match isn't obvious, say the chat's name and check with the user before sending. The chat replies to the user through Otto on its own. Everything else, about chats or not, goes to ask_otto.
-- When you're asked to say a message from Otto, say it.
-- To the user, you and Otto are one. Say "let me check", not "I've asked Otto".
+- When you're asked to say a message from Otto, say it word for word.
+- To the user, you and Otto are one: never mention passing anything on.
 
-Speak naturally and briefly, like a person on a phone call, in the user's language.`;
+Be brief, like a person on a phone call: no filler, no pleasantries, no restating. Speak the user's language.`;
 
 const TOOL = {
   type: 'function', name: 'ask_otto',
-  description: "Hand a request to Otto, the user's assistant, which has the user's computer, files, phone, accounts and memory. Returns at once; "
-    + 'the answer comes later as a message from Otto.',
+  description: "Hand a request to Otto, the user's assistant, which has the user's computer, files, phone, accounts and memory. Call it "
+    + 'at once, with at most a word or two first. Returns at once; the answer comes later as a message from Otto.',
   parameters: {
     type: 'object',
     properties: { request: { type: 'string', description: 'What the user wants, in their words, with anything Otto needs to know' } },
@@ -282,11 +282,13 @@ export class OpenAICall extends Call {
   }
 
   /** The voice's tool calls in one answer. ask_otto: hand Otto everything said since last time, with what the voice
-   * asks, and tell the voice at once that it's sent. The session tools answer when they're done. */
+   * asks, and answer the tool at once. That answer asks the voice for nothing and no response follows it: anything it
+   * would say there, while Otto works, is filler; it said its word or two (or nothing) with the call. A tool that
+   * doesn't exist gets a response, to try again. The session tools answer when they're done. */
   private async tools(calls: any[]) {
     if (!calls.length) return;
     const asks: string[] = [];
-    let answered = false;
+    let wrong = false;
     for (const c of calls) {
       let args: any = {};
       try { args = JSON.parse(c.arguments || '{}'); } catch {}
@@ -294,11 +296,11 @@ export class OpenAICall extends Call {
       const request = String(args.request ?? '');
       const ok = c.name === 'ask_otto';
       if (ok && request) asks.push(request);
+      if (!ok) wrong = true;
       this.send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: c.call_id,
-        output: ok ? "Sent to Otto. The answer comes later as a message; tell the user you're on it." : `There is no tool ${c.name}.` } });
-      answered = true;
+        output: ok ? "Sent. Otto's answer will come as a message; say nothing until then." : `There is no tool ${c.name}.` } });
     }
-    if (answered) this.send({ type: 'response.create' });
+    if (wrong) this.send({ type: 'response.create' });
     if (!asks.length) return;
     await this.transcript.settled(1500);
     const b = this.transcript.take();
@@ -307,7 +309,7 @@ export class OpenAICall extends Call {
       b.lines.length ? 'On the call since your last message:' : '',
       ...b.lines,
       ...asks.map(a => `The voice passes on: ${a}`),
-      "(The voice has told the user you're on it: send only the answer, and a progress note only past about 20 s.)",
+      "(The user knows you're on it: send only the answer, and a progress note only past about 20 s.)",
     ].filter(Boolean).join('\n'), false, b.delivered);
   }
 

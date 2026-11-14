@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import type { Channel, Id, Incoming } from './channel.js';
+import { type Channel, type Id, type Incoming, Stale } from './channel.js';
 import type { BotConfig } from './config.js';
 import { writePrivate } from './config.js';
 import type { Agent, Provider } from './provider.js';
@@ -106,6 +106,7 @@ export class Bot {
   private records: { text: string; delivered?: () => void }[] = []; // for the record, in front of the next message
   private typing: NodeJS.Timeout | null = null;
   private stopped = false;
+  private steered = false; // context went into a turn since the last message that asked for a reply
 
   constructor(o: BotOptions) {
     this.opts = o;
@@ -266,9 +267,19 @@ export class Bot {
         : `\n\n[The user sent a file, saved at ${saved}.]`;
     }
     if (!prompt.trim()) return;
+    if (m.steer && !this.busy) return; // left with the channel, for its next message
     l.chat = m.chat;
-    this.opts.channelLog?.(kind, { dir: 'in', by: m.record ? 'user (for the record)' : 'user', text: prompt });
+    this.opts.channelLog?.(kind, { dir: 'in', by: m.record ? 'user (for the record)' : m.steer ? 'user (into the turn)' : 'user', text: prompt });
     if (m.record) return this.remember(kind, prompt, m.delivered);
+    // Context for the turn in progress, which asks for no reply. The agent may take it only after the turn ends, as
+    // a turn of its own: that one needs no reply either (ended()).
+    this.steered = !!m.steer;
+    if (m.steer) {
+      const records = this.records.splice(0);
+      this.agent.write([...records.map(r => r.text), wrap(kind, prompt)].join('\n\n'));
+      for (const r of records) r.delivered?.();
+      return m.delivered?.();
+    }
     this.last = kind;
     if (!this.busy) this.begin(); // otherwise it steers the turn in progress
     this.asked.add(kind);
@@ -317,7 +328,12 @@ export class Bot {
       this.finish();
       return this.say(`⚠️ ${(r.text || `${this.agentLabel} failed`).slice(-1500)}`, asked);
     }
-    // A turn of its own (no message started it) only has to have said something somewhere.
+    // A turn of its own (no message started it) only has to have said something somewhere, unless it's the agent
+    // taking context written into a turn that had already ended (steered), which asks for nothing.
+    if (!this.asked.size && !this.answered.size && this.steered) {
+      this.steered = false;
+      return this.finish();
+    }
     const missing = this.asked.size ? asked.filter(k => !this.answered.has(k)) : this.answered.size ? [] : asked;
     if (!missing.length) return this.finish();
     if (!this.reminded) {
@@ -364,18 +380,20 @@ export class Bot {
   }
 
   // The tools' requests (tools.ts): {kind: "message", channel, text} or {kind: "file", channel, path, caption?}, sent
-  // to the owner's chat on that channel. The socket is this user's alone (0600, in a 0700 folder).
+  // to the owner's chat on that channel. The socket is this user's alone (0600, in a 0700 folder). A message the
+  // channel held back as stale (channel.ts) answers 409 with what the agent should know.
   private listen(): Promise<void> {
     fs.rmSync(this.socket, { force: true });
     const server = http.createServer((req, res) => {
       let body = '';
       req.on('data', d => { body += d; });
       req.on('end', async () => {
+        let l: Link | null = null;
         try {
           const m = JSON.parse(body);
-          const l = this.target(m.channel);
+          l = this.target(m.channel);
           if (l.chat === null) throw new Error('no chat yet');
-          if (m.kind === 'message') await l.channel.send(l.chat, String(m.text ?? ''));
+          if (m.kind === 'message') await l.channel.send(l.chat, String(m.text ?? ''), { reply: true });
           else if (m.kind === 'file') await l.channel.sendFile(l.chat, String(m.path ?? ''), m.caption);
           else throw new Error('unknown kind');
           this.opts.channelLog?.(l.channel.kind, { dir: 'out', by: `bot ${this.name}`,
@@ -383,6 +401,10 @@ export class Bot {
           this.answered.add(l.channel.kind);
           res.writeHead(200).end('sent');
         } catch (e: any) {
+          if (e instanceof Stale && l) {
+            this.answered.add(l.channel.kind);
+            return res.writeHead(409).end(e.message);
+          }
           res.writeHead(400).end(e.message);
         }
       });

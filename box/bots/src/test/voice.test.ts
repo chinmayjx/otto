@@ -2,7 +2,8 @@
 // and an android call end to end through the voice server.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Transcript } from '../channels/voice/transcript.js';
+import { Transcript, weight, worth } from '../channels/voice/transcript.js';
+import { Stale } from '../channel.js';
 import { speakable } from '../channels/voice/call.js';
 import { normalize } from '../config.js';
 import { Voice } from '../channels/voice/index.js';
@@ -165,11 +166,14 @@ test("acknowledging depends on the voice: a realtime voice already did, the phon
   const { OpenAICall } = await import('../channels/voice/openai.js');
   const handed: string[] = [];
   const call: any = new OpenAICall({ toAgent: t => handed.push(t), log: () => {} }, { apiKey: 'k' });
-  call.ws = { readyState: 1, send: () => {} };
+  const sent: any[] = [];
+  call.ws = { readyState: 1, send: (s: string) => sent.push(JSON.parse(s)) };
   call.up = true;
   call.event({ type: 'response.done', response: { output: [{ type: 'function_call', name: 'ask_otto', call_id: 'c1', arguments: '{"request":"book a table"}' }] } });
+  assert.deepEqual(sent.map(e => e.type), ['conversation.item.create'], "ask_otto's answer asks the voice for nothing more: no filler while Otto works");
+  assert.match(sent[0].item.output, /say nothing until then/);
   await new Promise(r => setTimeout(r, 20));
-  assert.match(handed[0], /The voice passes on: book a table\n\(The voice has told the user you're on it: send only the answer/);
+  assert.match(handed[0], /The voice passes on: book a table\n\(The user knows you're on it: send only the answer/);
   assert.deepEqual((await call.poll(0, 0)).events.filter((e: any) => e.type !== 'state'), [], 'no mute: the user can talk and interrupt');
   clearTimeout(call.gapTimer);
 });
@@ -220,4 +224,80 @@ test('realtime: muting mid-sentence takes what was said as the turn; muted for l
   const bye = events.findIndex(e => e.type === 'bye'), ended = events.findIndex(e => e.type === 'state' && e.state === 'ended');
   assert.ok(bye >= 0 && bye < ended);
   assert.equal(events[bye].message, 'Hung up after 10 minutes on mute.');
+});
+
+test('what counts as newer talk on a call: real words, not noise, from the user or the voice', () => {
+  const u = (text: string) => ({ role: 'user' as const, text }), v = (text: string) => ({ role: 'voice' as const, text });
+  for (const l of ['hmm', 'Uh, okay.', 'yes', 'yeah so', 'Thanks!']) assert.equal(weight([u(l)]), 0, l);
+  assert.equal(worth([v('On it.'), v('Checking.')]), false, 'an acknowledgement');
+  assert.equal(weight([u('um, so what is on at six')]), 'what is on at six'.length, 'fillers dropped');
+  assert.equal(worth([u('what time?')]), false, 'a short question alone is under the line');
+  assert.equal(worth([u('what time?'), v("It's three fifteen.")]), true, "with the answer the voice gave it, it is");
+  assert.equal(worth([v("It's about three in the afternoon.")]), true, 'the voice answering on its own counts');
+  assert.equal(worth([{ role: 'otto', text: 'Your meeting moved to four this afternoon.' }]), false, "Otto's own words, never");
+});
+
+/** A voice with an android call on, lines put straight in its transcript. */
+async function onCall() {
+  const h = History.in(fs.mkdtempSync(path.join(os.tmpdir(), 'otto-voice-')));
+  const got: Incoming[] = [], notes: string[] = [], logs: string[] = [];
+  const voice = new Voice({ provider: 'android' }, { notify: async t => { notes.push(t); }, log: m => logs.push(m), history: h });
+  await voice.start(m => got.push(m));
+  await voice.open({});
+  const call: any = voice.call;
+  const spoken = async () => (await call.poll(0, 0)).events.filter((e: any) => e.type === 'speak').map((e: any) => e.text);
+  return { voice, call, t: call.transcript as Transcript, got, notes, logs, h, spoken };
+}
+
+test("a reply that's behind the call isn't said: the agent gets the newer lines instead, at most twice in a row", async () => {
+  const c = await onCall();
+  c.t.add('user', 'hmm');
+  await c.voice.send('user', 'Your flight is at nine.', { reply: true });
+  assert.deepEqual(await c.spoken(), ['Your flight is at nine.'], 'noise holds nothing back');
+
+  c.t.add('user', 'what is the weather tomorrow');
+  c.t.add('voice', 'It looks sunny, about twenty five degrees.');
+  await assert.rejects(c.voice.send('user', 'Tomorrow is sunny.', { reply: true }), (e: any) => e instanceof Stale
+    && e.message === 'Not said: the call has moved on since you wrote this. Newer on the call:\nUser: hmm\nUser: what is the weather tomorrow\n'
+      + 'Voice: It looks sunny, about twenty five degrees.\nTake it into account and send your reply again, or send nothing if the call already covered it.');
+  assert.deepEqual(c.t.unseen(), [], 'the lines went to the agent: seen');
+  assert.ok(c.h.all.filter(e => e.role !== 'otto').every(e => e.delivered), 'and delivered on disk');
+  assert.ok(c.logs.some(l => /held back a reply for 3 newer lines on the call \(1 in a row\)/.test(l)));
+
+  c.t.add('user', 'and what about Saturday and Sunday');
+  await assert.rejects(c.voice.send('user', 'Sunny.', { reply: true }), Stale);
+  c.t.add('user', 'actually also check on Monday please');
+  await c.voice.send('user', 'Sunny all week.', { reply: true });
+  assert.equal((await c.spoken()).at(-1), 'Sunny all week.', 'the third in a row is said');
+
+  // Not the agent's own reply (`otto send` from a scheduled run): said whatever's new.
+  c.t.add('user', 'one more thing about the trip');
+  await c.voice.send('user', 'Reminder: pack.');
+  assert.equal((await c.spoken()).at(-1), 'Reminder: pack.');
+  await c.voice.hangUp('test');
+
+  // No call: a notification, never held back.
+  await c.voice.send('user', 'Done.', { reply: true });
+  assert.deepEqual(c.notes, ['Done.']);
+});
+
+test("a call's new lines go into the agent's turn as one block; a reply sent after them is said", async () => {
+  const c = await onCall();
+  c.t.add('user', 'uh');
+  c.t.add('user', 'and add milk to the list');
+  c.t.add('voice', 'Sure, milk too.');
+  await new Promise(r => setTimeout(r, 1100));
+  assert.equal(c.got.length, 1);
+  assert.equal(c.got[0].steer, true);
+  assert.equal(c.got[0].text, 'On the call just now:\nUser: uh\nUser: and add milk to the list\nVoice: Sure, milk too.');
+  assert.equal(c.t.unseen().length, 3, 'unseen until the core writes it (an idle agent drops it)');
+  c.got[0].delivered!();
+  assert.deepEqual(c.t.unseen(), []);
+  await c.voice.send('user', 'Added eggs and milk.', { reply: true });
+  assert.deepEqual(await c.spoken(), ['Added eggs and milk.'], 'not held back: the agent had seen it');
+
+  c.t.add('user', 'okay');
+  await new Promise(r => setTimeout(r, 1100));
+  assert.equal(c.got.length, 1, 'noise alone steers nothing');
+  await c.voice.hangUp('test');
 });

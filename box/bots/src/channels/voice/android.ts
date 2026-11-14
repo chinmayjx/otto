@@ -5,10 +5,7 @@
 // Only what's worth a turn goes, though: a bit that is only filler ("so", "um", "yeah so") waits and goes in front of
 // the next real sentence, so a cough or a trailing word doesn't make Otto answer again.
 import { Call, speakable } from './call.js';
-
-const FILLER = new Set(['so', 'um', 'umm', 'uh', 'uhm', 'erm', 'er', 'hmm', 'hm', 'mm', 'mhm', 'ah', 'oh', 'like', 'well', 'and',
-  'but', 'then', 'the', 'a', 'i', 'just', 'actually', 'anyway', 'basically']);
-const SOFT = new Set(['yeah', 'yes', 'okay', 'ok', 'right', 'no']); // answers on their own, fillers next to one
+import { FILLER, SOFT } from './transcript.js';
 
 /** Whether a sentence the phone heard is only filler: nothing for Otto to answer. */
 export function filler(text: string): boolean {
