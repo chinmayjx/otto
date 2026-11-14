@@ -266,6 +266,9 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
                     return true
                 }
                 g.page = true
+                // A scroll with the keyboard down: nothing is being typed, so the page lets go of its focus. WebView,
+                // unlike Chrome, brings the keyboard back when a touch on a focused editor (Monaco) ends, scroll or not.
+                if (!keyboard && e.eventTime - g.t0 < longPress) web.evaluateJavascript(BLUR, null)
             }
         }
         if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
@@ -401,6 +404,9 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
     companion object {
         /** The laptop screen desktop sites are laid out on, in CSS px: 16:9, the most common laptop viewport (a
          * 1920×1080 display at 125%). */
+        /** Takes the focus off whatever has it in the page (in a frame too, as far as this document can reach). */
+        private const val BLUR = "(() => { let d = document; for (let i = 0; i < 5; i++) { const a = d.activeElement;" +
+            " if (!a || a === d.body) return; if (a.contentDocument) { d = a.contentDocument; continue; } a.blur(); return; } })()"
         const val SCREEN_W = 1536
         const val SCREEN_H = 864
         private const val BUTTON_DP = 48 // the zoom button, at the strip's end
