@@ -782,7 +782,22 @@ class BrowserService : Service() {
                     ".observe(document, { childList: true, subtree: true });" +
                     " document.querySelectorAll('meta').forEach(fix);" +
                     " document.addEventListener('DOMContentLoaded', () => { if (!document.querySelector('meta[name=viewport]')) {" +
-                    " const m = document.createElement('meta'); m.name = 'viewport'; m.content = W; document.head.appendChild(m); } }); })();",
+                    " const m = document.createElement('meta'); m.name = 'viewport'; m.content = W; document.head.appendChild(m); } });" +
+                    // Code editors (Monaco) focus their text box when a finger that scrolled them lifts, and WebView,
+                    // unlike Chrome, brings the keyboard up for that. A field focused by script just after a scroll
+                    // isn't, so the keyboard doesn't start (a tap isn't a scroll, so it still focuses).
+                    " let from = null, moved = false, ended = -1e9;" +
+                    " const down = e => { from = [e.clientX, e.clientY]; moved = false; };" +
+                    " const move = e => { if (from && Math.hypot(e.clientX - from[0], e.clientY - from[1]) > 10) moved = true; };" +
+                    " const up = () => { if (moved) ended = performance.now(); };" +
+                    " addEventListener('pointerdown', e => e.pointerType === 'touch' && down(e), { capture: true, passive: true });" +
+                    " addEventListener('pointermove', e => e.pointerType === 'touch' && move(e), { capture: true, passive: true });" +
+                    " addEventListener('pointerup', e => e.pointerType === 'touch' && up(), { capture: true, passive: true });" +
+                    " addEventListener('touchend', up, { capture: true, passive: true });" +
+                    " const focus = HTMLElement.prototype.focus;" +
+                    " HTMLElement.prototype.focus = function (o) {" +
+                    " if (performance.now() - ended < 500 && (this.tagName === 'TEXTAREA' || this.tagName === 'INPUT' || this.isContentEditable)) return;" +
+                    " return focus.call(this, o); }; })();",
                 setOf("*"))
         } else if (!on) {
             tab.wide?.remove()
