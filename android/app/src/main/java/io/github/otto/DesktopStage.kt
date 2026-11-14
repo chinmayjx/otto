@@ -13,7 +13,6 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.WindowInsets
-import android.view.inputmethod.InputMethodManager
 import android.webkit.WebView
 import android.widget.FrameLayout
 import android.widget.OverScroller
@@ -129,10 +128,7 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
             } else if (t !== tab) place(t) // stacked under the current one: kept where its pan has it
             web.setOnScrollChangeListener { _, _, _, _, _ -> if (t === current()) pictureSoon() }
         }
-        if (keyboard && !was && now - scrollEnded < SCROLL_KEYBOARD_MS) {
-            desk()?.web?.let { context.getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(it.windowToken, 0) }
-            scrollEnded = 0L
-        } else if (keyboard && !was) follow()
+        if (keyboard && !was) follow()
         if (!keyboard) lift = 0f
         tab?.let { place(it) }
         if (showStrip) pictureSoon()
@@ -205,12 +201,7 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
         var x = x0
         var panning = false
         var page = false // decided: the page's
-        var scrolled = false // the page's, as a scroll (not a long-press and drag)
     }
-
-    // A scroll the page ended with the keyboard down. Code editors (Monaco) focus themselves when the finger lifts,
-    // and WebView, unlike Chrome, brings the keyboard up for that; one that comes up right after such a scroll goes.
-    private var scrollEnded = 0L
 
     private var g: Gesture? = null
     private var velocity: VelocityTracker? = null
@@ -275,11 +266,9 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
                     return true
                 }
                 g.page = true
-                g.scrolled = e.eventTime - g.t0 < longPress
             }
         }
         if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
-            if (g.scrolled && !keyboard) scrollEnded = e.eventTime
             this.g = null
             // A tap with the keyboard up may have moved the focus to another field.
             if (keyboard && e.actionMasked == MotionEvent.ACTION_UP) postDelayed(follow, FOLLOW_MS)
@@ -317,10 +306,6 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
         web.draw(c)
         picture = b
         pictureOf = web
-        if (BuildConfig.DEBUG) { // TEMP: is the part panned off the phone drawn? (non-blank samples, left third / right third)
-            fun inked(x0: Int, x1: Int): Int { var n = 0; for (x in x0 until x1 step 4) for (y in 0 until h step 4) if (b.getPixel(x, y) != BrowserService.FIELD) n++; return n }
-            android.util.Log.d("DesktopStage", "picture ${w}x$h pan=${desk()?.pan} view=$viewW screen=${screenW}x$screenH inked left=${inked(0, w / 3)} right=${inked(w * 2 / 3, w)}")
-        }
         strip.invalidate()
         // Pages change by themselves too (feeds, clocks, video): look again now and then while it's in view.
         postDelayed(takePicture, PICTURE_IDLE_MS)
@@ -416,7 +401,6 @@ class DesktopStage(ctx: Context, private val tabs: () -> List<BrowserService.Tab
     companion object {
         /** The laptop screen desktop sites are laid out on, in CSS px: 16:9, the most common laptop viewport (a
          * 1920×1080 display at 125%). */
-        const val SCROLL_KEYBOARD_MS = 800L // how soon after a scroll a keyboard coming up is taken as the scroll's
         const val SCREEN_W = 1536
         const val SCREEN_H = 864
         private const val BUTTON_DP = 48 // the zoom button, at the strip's end
