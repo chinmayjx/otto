@@ -43,15 +43,16 @@ import kotlin.math.roundToInt
  * small ripple, and a chip at the top says so, with a Stop button. Only the chip takes touches: the phone can be used
  * as usual under the rest. It stays while commands keep coming and fades out a few seconds after the last one.
  *
- * Stop puts it away and refuses the agent's input for ten minutes (reads, like the screen and its tree, still work);
- * after that, the next command brings it back. It's left out of what the agent sees: screenshots are taken without
+ * Stop puts it away and stops what the agent is doing: its next input command is refused, telling it the user
+ * stopped it, so the run in progress ends there. It doesn't lock the agent out: the command after that works, and a
+ * stop the agent doesn't run into within a minute is forgotten (reads, like the screen and its tree, always work). It's left out of what the agent sees: screenshots are taken without
  * it ([hidden]) and its windows are left out of the UI tree ([isOurs]).
  *
  * Its windows are accessibility overlays when Otto's accessibility service is on (above everything, the system's bars
  * and the keyboard too), app overlays otherwise.
  */
 object AgentOverlay {
-    private const val STOP_MS = 10 * 60 * 1000L
+    private const val STOP_MS = 60 * 1000L // how long a stop waits for the agent's next command
     private const val LINGER_MS = 8000L
     private const val FADE_MS = 300L
     private const val RIPPLE_MS = 900L
@@ -63,7 +64,7 @@ object AgentOverlay {
     private val ON_STOP = Color.parseColor("#1a0b0e")
 
     private val main = Handler(Looper.getMainLooper())
-    @Volatile private var stoppedUntil = 0L
+    @Volatile private var stoppedUntil = 0L // a stop not yet run into, until then
     private var wm: WindowManager? = null
     private var edge: Edge? = null
     private var chip: View? = null
@@ -75,7 +76,10 @@ object AgentOverlay {
      * Called on the command's thread.
      */
     fun driving(ctx: Context) {
-        if (System.currentTimeMillis() < stoppedUntil) throw Exception("The user stopped the agent from using the phone. Ask them before trying again.")
+        if (System.currentTimeMillis() < stoppedUntil) {
+            stoppedUntil = 0L
+            throw Exception("The user pressed Stop on what you were doing on the phone. Don't carry on with it; ask them what they want.")
+        }
         main.post {
             main.removeCallbacks(fade)
             show(ctx.applicationContext)
@@ -219,10 +223,10 @@ object AgentOverlay {
         chipLp = null
     }
 
-    /** Stop: the agent may not use the phone for a while. */
+    /** Stop: the agent's next input command is refused, which ends what it was doing; nothing after that is. */
     private fun stop() {
         stoppedUntil = System.currentTimeMillis() + STOP_MS
-        CommandLog.add("the user stopped the agent (input refused for ten minutes)")
+        CommandLog.add("the user stopped the agent (its next input refused)")
         hide()
     }
 
