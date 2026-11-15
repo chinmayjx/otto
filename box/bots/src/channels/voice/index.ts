@@ -13,7 +13,7 @@ import type { ChannelConfig } from '../../config.js';
 import { AndroidCall } from './android.js';
 import type { Call } from './call.js';
 import type { History } from './history.js';
-import { OpenAICall } from './openai.js';
+import { OpenAICall, waitingNote } from './openai.js';
 import { show, worth } from './transcript.js';
 
 export const PROVIDERS = ['openai-realtime', 'android'];
@@ -151,7 +151,7 @@ export class Voice implements Channel {
       if (call !== this.live()) return;
       const lines = call.transcript.unseen();
       if (!worth(lines)) return;
-      this.onMessage?.({ chat: 'user', from: 'user', text: ['On the call just now:', ...show(lines)].join('\n'), attachments: [],
+      this.onMessage?.({ chat: 'user', from: 'user', text: ['On the call just now:', ...show(lines), ...waitingNote(call.waiting())].join('\n'), attachments: [],
         steer: true, delivered: () => call.transcript.take(lines).delivered() });
     }, STEER_MS);
   }
@@ -178,7 +178,7 @@ export class Voice implements Channel {
     }
     if (call) {
       this.held = 0;
-      return call.say(text);
+      return call.say(text, { reply: o?.reply });
     }
     try {
       await this.deps.notify(text);

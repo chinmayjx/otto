@@ -27,13 +27,14 @@ const API = 'https://api.openai.com/v1/realtime';
 
 export const PROMPT = `You are the voice of Otto, the user's personal assistant: only its ears and mouth. Otto itself is a separate agent on the user's computer, with their files, phone, apps, accounts, notes, calendar and every earlier conversation. You have none of that. Of earlier calls you have only what was said on them, at the start of this conversation, already dealt with: use it for follow-ups ("where were we?"), never answer it again.
 
-- Answer yourself only what you can answer fully from this call alone: greetings, small talk, general knowledge, quick maths. In a sentence or two.
+- Answer yourself only what you can answer fully from this call alone: greetings, small talk, general knowledge, quick maths. In a sentence or two, starting with the answer itself: never a lead-in ("Let me think about…", "Okay, let's focus on that…", "Good question"), and never two replies in a row.
+- You can't do or see anything, and you don't speak for what Otto will or won't do. Every instruction to act (tap this, fill that, look at the screen, don't press back), and every complaint about what was done, goes to ask_otto in the user's own words. Never answer one yourself with a promise like "I won't touch anything" or "I'll wait".
 - Everything else goes to ask_otto right away: anything about the user, their things or earlier conversations, anything to look up or do, anything you're unsure of, and any request repeated from earlier (things change). Never guess, never say you can't do something, never make up an answer.
 - When you call ask_otto, say at most two or three words first ("On it.", "Checking."), or nothing. Don't repeat or rephrase what the user said, don't explain what you're about to do, no "let me check on that for you".
 - Then stay silent until Otto's message comes: no filler, no "still checking", no small talk to cover the wait. If the user asks how it's going, say in a few words that it's still working. They can talk about other things meanwhile.
 - Background noise, a cough, or a fragment like "so" or "um" is not a question: say nothing and wait.
 - The user's chats are their Claude Code sessions on their computer, each with a name (like "cc-mobile"). When the user names a chat to tell something ("tell the cc-mobile chat …"), find it with list_chats and pass their words on with message_chat, as they said them, in the first person, with no greeting and no summary. If the match isn't obvious, say the chat's name and check with the user before sending. The chat replies to the user through Otto on its own. Everything else, about chats or not, goes to ask_otto.
-- When you're asked to say a message from Otto, say it word for word.
+- When you're asked to say a message from Otto, say it word for word, and nothing before or after it.
 - To the user, you and Otto are one: never mention passing anything on.
 
 Be brief, like a person on a phone call: no filler, no pleasantries, no restating. Speak the user's language.`;
@@ -76,10 +77,10 @@ export class OpenAICall extends Call {
   /** The key this call was opened with: the API key, or a realtime key minted for the call. */
   private key = '';
   private model: string;
-  private queue: string[] = []; // Otto's words, waiting for a gap
+  private queue: { text: string; reply: boolean }[] = []; // Otto's words, waiting for a gap (reply: the agent's own answer)
   private responding = false; // the voice is making an answer
   private relaying = false; // the answer being made is one of Otto's messages
-  private asked: string | null = null; // Otto's message just sent to be said, until the voice starts on it
+  private asked: { text: string; reply: boolean } | null = null; // Otto's message just sent to be said, until the voice starts on it
   private gapTimer: NodeJS.Timeout | null = null;
   private usage = { audioIn: 0, audioOut: 0, textIn: 0, textOut: 0 };
 
@@ -309,7 +310,8 @@ export class OpenAICall extends Call {
       b.lines.length ? 'On the call since your last message:' : '',
       ...b.lines,
       ...asks.map(a => `The voice passes on: ${a}`),
-      "(The user knows you're on it: send only the answer, and a progress note only past about 20 s.)",
+      ...waitingNote(this.waiting()),
+      "(The user knows you're on it: send only the answer, and a progress note only past about 20 s. It's spoken aloud: keep it short, a few sentences, and don't repeat what you've already said.)",
     ].filter(Boolean).join('\n'), false, b.delivered);
   }
 
@@ -344,12 +346,22 @@ export class OpenAICall extends Call {
     this.log('interrupted');
   }
 
-  say(text: string) {
+  /** A new answer from the agent replaces its answers still waiting to be spoken: it wrote it with the call in view
+   * (hand-offs and steering say what's still waiting, waiting()), so the older ones are said again or outdated. */
+  say(text: string, o?: { reply?: boolean }) {
     const words = speakable(text);
     if (!words) return;
-    this.queue.push(words);
+    const reply = !!o?.reply;
+    if (reply) {
+      const before = this.queue.length;
+      this.queue = this.queue.filter(q => !q.reply);
+      if (this.queue.length < before) this.log(`dropped ${before - this.queue.length} unspoken answer(s) for a newer one`);
+    }
+    this.queue.push({ text: words, reply });
     this.later(0);
   }
+
+  waiting(): string[] { return this.queue.filter(q => q.reply).map(q => q.text); }
 
   /** Looks for a gap to speak Otto's next message in, after a moment. */
   private later(ms: number) {
@@ -360,10 +372,10 @@ export class OpenAICall extends Call {
   private speakNext() {
     if (!this.queue.length || !this.up || this.stopping) return;
     if (this.userSpeaking || this.responding || this.voiceSpeaking) return; // the events that end these look again
-    const text = this.queue.shift()!;
+    const next = this.queue.shift()!, text = next.text;
     this.responding = true;
     this.relaying = true;
-    this.asked = text;
+    this.asked = next;
     this.send({ type: 'conversation.item.create', item: { type: 'message', role: 'system',
       content: [{ type: 'input_text', text: `Message from Otto for the user: ${text}` }] } });
     this.send({ type: 'response.create', response: { tool_choice: 'none',
@@ -389,7 +401,7 @@ export class OpenAICall extends Call {
     const mins = (Date.now() - this.created) / 60_000;
     this.log(`tokens: audio ${u.audioIn} in, ${u.audioOut} out; text ${u.textIn} in, ${u.textOut} out`
       + (cost !== null ? `; about $${cost.toFixed(3)} (${(cost / Math.max(mins, 0.1)).toFixed(3)}/min)` : ''));
-    return this.queue.splice(0);
+    return this.queue.splice(0).map(q => q.text);
   }
 
   /** Ends the call at OpenAI. A minted key lasts about ten minutes, so a longer call hangs up with the Codex
@@ -403,6 +415,15 @@ export class OpenAICall extends Call {
       await send(await codexAccessToken());
     } catch { /* the websocket close below ends our side either way */ }
   }
+}
+
+/** For the agent: its words still waiting their turn to be spoken, so it doesn't take the user's silence about them for
+ * not having heard and send them again. Its next answer replaces them. Others' messages (`otto send` from elsewhere) aren't its. */
+export function waitingNote(texts: string[]): string[] {
+  if (!texts.length) return [];
+  const cut = (t: string) => t.length > 90 ? `${t.slice(0, 90)}…` : t;
+  return ['Your answer not spoken yet, waiting for a gap in the call (the user hasn\'t heard it: don\'t send it again; an answer you send now replaces it):',
+    ...texts.map(t => `- "${cut(t)}"`)];
 }
 
 function redact(s: string): string {

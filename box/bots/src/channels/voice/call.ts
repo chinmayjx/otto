@@ -57,7 +57,9 @@ export abstract class Call {
   /** Starts the call with what the phone sent; resolves to what the phone needs back. */
   abstract begin(body: any): Promise<Record<string, unknown>>;
   /** Something Otto says to the user: spoken as soon as there's a gap. */
-  abstract say(text: string): void;
+  abstract say(text: string, o?: { reply?: boolean }): void;
+  /** The agent's answers still waiting to be spoken. */
+  waiting(): string[] { return []; }
   /** Lets go of the call; `undelivered` is whatever Otto said that was never spoken. */
   protected abstract end(): Promise<string[]>;
   /** The user wants the voice to stop talking (a tap on the pill). */
