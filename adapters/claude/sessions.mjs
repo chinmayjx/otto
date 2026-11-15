@@ -11,6 +11,8 @@
 //   the session at once, and a Remote Control chat shows it on claude.ai.
 // - One that isn't running is continued in the background under the same id: `claude --bg --resume <id> <text>`, in
 //   its own folder. (With the session running, that would start a copy instead, so it's only for stopped ones.)
+//   Not a claude.ai chat, though (its prompts carry a clientPlatform): a background run of it doesn't show in the
+//   chat, so the user would never see it. Those are refused until the chat has a process on the box again.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -136,6 +138,11 @@ function customName(file) {
   return name;
 }
 
+/** Whether the transcript's prompts came from a Claude app (claude.ai on the web or a phone): a chat the user sees there. */
+function fromApp(file) {
+  try { return tail(file, 1 << 20).some(l => l.includes('"clientPlatform"')); } catch { return false; }
+}
+
 /** The title of session id's transcript, for adapters/claude/session.mjs. */
 export function title(id) {
   const t = transcripts().get(id);
@@ -145,7 +152,8 @@ export function title(id) {
 /**
  * Claude Code's sessions: the running ones, and those whose transcript changed since `since` (ms; 0 for all).
  * Headless runs that aren't running now are left out. Each: { agent, id, name, title, cwd, lastActive (ms),
- * state: busy | idle | not running, remote (a Remote Control chat), pid (while running) }.
+ * state: busy | idle | not running, remote (a chat in the Claude app), chat (its claude.ai session, while running),
+ * pid (while running) }.
  */
 export function list({ since = 0 } = {}) {
   const live = running(), files = transcripts(), out = [];
@@ -162,7 +170,8 @@ export function list({ since = 0 } = {}) {
       cwd: r?.cwd ?? h.cwd,
       lastActive: Math.max(t?.mtime ?? 0, r?.updatedAt ?? 0),
       state: r ? (r.status === 'busy' ? 'busy' : 'idle') : 'not running',
-      remote: !!r?.bridgeSessionId,
+      remote: r ? !!r.bridgeSessionId : !!t && fromApp(t.file),
+      ...(r?.bridgeSessionId ? { chat: r.bridgeSessionId } : {}),
       ...(r ? { pid: r.pid } : {}),
     });
   }
@@ -174,7 +183,9 @@ export function list({ since = 0 } = {}) {
  * { how: 'live' | 'resumed', detail }.
  */
 export async function send(id, text) {
-  const r = running().get(id);
+  const live = running();
+  // A claude.ai chat can be named by its own id (session_…, as in its link) as well as Claude Code's.
+  const r = live.get(id) ?? [...live.values()].find(x => x.bridgeSessionId && id.endsWith(x.bridgeSessionId.replace(/^session_/, '')));
   if (r) {
     await inbox(r, text);
     return { how: 'live', detail: `into the running session (pid ${r.pid}, ${r.status === 'busy' ? 'busy: it reads it next' : 'idle'})` };
@@ -183,6 +194,9 @@ export async function send(id, text) {
   const cwd = t && readHead(t.file).cwd;
   if (!cwd) throw new Error(`no transcript with a folder for Claude session ${id}`);
   if (!fs.existsSync(cwd)) throw new Error(`session ${id}'s folder ${cwd} is gone`);
+  if (fromApp(t.file)) throw new Error(`session ${id} is a chat in the Claude app with no process on this box right now. ` +
+    `Continuing it here would make a copy the user can't see in that chat, so nothing was sent. Ask the user to open ` +
+    `the chat (that brings it back), then send again.`);
   const said = await new Promise((resolve, reject) => {
     execFile(CLAUDE, ['--bg', '--resume', id, text], { cwd, timeout: 60_000 }, (err, stdout, stderr) => {
       if (err) reject(new Error(`claude --bg --resume failed: ${String(stderr).trim() || err.message}`));

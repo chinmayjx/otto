@@ -19,6 +19,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import io.github.otto.BuildConfig
 import io.github.otto.Events
 import io.github.otto.MainActivity
@@ -71,7 +72,7 @@ class Commands(private val ctx: Context) {
         "text" -> Reply(settled(text(a)))
         "paste" -> Reply(settled(paste(a)))
         "clear" -> Reply(settled(clear()))
-        "key" -> Reply(settled(key(a.getString("key"))))
+        "key" -> Reply(settled(key(a.getString("key"), a.optBoolean("navigate"))))
         "wait" -> Reply(waitFor(a))
         "current" -> Reply(current())
         "launch" -> Reply(settled(launch(a)))
@@ -276,8 +277,20 @@ class Commands(private val ctx: Context) {
         return done.get(5, java.util.concurrent.TimeUnit.SECONDS)
     }
 
-    private fun key(key: String): String {
+    private fun key(key: String, navigate: Boolean = false): String {
         val s = AgentAccessibility.require()
+        val keyboardUp = s.windowsTopFirst().any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        if (key == "keyboard") {
+            if (!keyboardUp) return "no keyboard is up"
+            if (!s.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)) throw Exception("Android refused back")
+            return "closed the keyboard"
+        }
+        // Back on a web page with nothing to close goes to the previous page, which can throw away a form or a
+        // session (a bank's eKYC went stale that way). Only do it when asked to leave the page.
+        if (key == "back" && !navigate && !keyboardUp && onWebPage(s))
+            throw Exception("Not pressing back: a web page is in front with no keyboard up, so back would leave the page " +
+                "(and can break a form or session). To close a menu or popup, tap outside it or its close button; to close " +
+                "the keyboard use `key keyboard`; to really go back a page, pass --navigate.")
         if (key == "enter") {
             val n = UiTree.focusedInput(s) ?: throw Exception("no text field has focus")
             if (!n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)) throw Exception("the field ignored Enter")
@@ -297,6 +310,20 @@ class Commands(private val ctx: Context) {
         }
         if (!s.performGlobalAction(action)) throw Exception("Android refused $key")
         return "pressed $key"
+    }
+
+    /** Whether the app in front is showing a web page (a browser, or an app's WebView). */
+    private fun onWebPage(s: AgentAccessibility): Boolean {
+        val w = s.windowsTopFirst().firstOrNull { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && !AgentOverlay.isOurs(it) } ?: return false
+        val root = w.root ?: return false
+        val queue = ArrayDeque(listOf(root))
+        var seen = 0
+        while (queue.isNotEmpty() && seen++ < 400) {
+            val n = queue.removeFirst()
+            if (n.className?.toString() == "android.webkit.WebView") return true
+            for (i in 0 until n.childCount) n.getChild(i)?.let { queue.add(it) }
+        }
+        return false
     }
 
     private fun waitFor(a: JSONObject): String {

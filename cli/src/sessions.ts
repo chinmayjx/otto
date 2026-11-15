@@ -21,6 +21,7 @@ export interface AgentSession {
   lastActive: number;
   state: 'busy' | 'idle' | 'not running';
   remote: boolean;
+  chat?: string; // a Claude app chat's own id (session_…), while it runs
   pid?: number;
 }
 
@@ -68,11 +69,14 @@ function table(list: AgentSession[]): string {
   return rows.map(r => r.map((c, i) => i < r.length - 1 ? c.padEnd(width[i]) : c).join('  ').trimEnd()).join('\n');
 }
 
-/** The session `query` means: an id or its prefix, else an exact name, else a title or name containing it. */
+/**
+ * The session `query` means: an id or its prefix (or a Claude app chat's id or link), else an exact name, else a
+ * title or name containing it. Of several, the one running wins when it's the only one running.
+ */
 export function resolve(list: AgentSession[], query: string): AgentSession {
   const q = query.trim().toLowerCase();
   const tries = [
-    (s: AgentSession) => s.id.toLowerCase() === q,
+    (s: AgentSession) => s.id.toLowerCase() === q || (!!s.chat && q.includes(s.chat.toLowerCase())),
     (s: AgentSession) => q.length >= 4 && s.id.toLowerCase().startsWith(q),
     (s: AgentSession) => s.name?.toLowerCase() === q,
     (s: AgentSession) => s.title?.toLowerCase() === q,
@@ -81,6 +85,8 @@ export function resolve(list: AgentSession[], query: string): AgentSession {
   for (const t of tries) {
     const found = list.filter(t);
     if (found.length === 1) return found[0];
+    const up = found.filter(s => s.state !== 'not running');
+    if (up.length === 1) return up[0];
     if (found.length > 1) {
       const more = found.length > 10 ? `\n(and ${found.length - 10} more)` : '';
       throw new OttoError(`"${query}" could be any of these; use the id:\n${table(found.slice(0, 10))}${more}`);

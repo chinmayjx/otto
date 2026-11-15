@@ -31,7 +31,9 @@ Phone:
   otto phone type <text> [--replace]       into the focused field
   otto phone paste <text>                  pasted at the cursor via the clipboard (for fields that misreport their text)
   otto phone clear                         empty the focused field
-  otto phone key back|home|recents|enter|notifications|quicksettings|dismiss|power|lock|splitscreen
+  otto phone key back|keyboard|home|recents|enter|notifications|quicksettings|dismiss|power|lock|splitscreen
+                                           keyboard closes only the keyboard; back on a web page is refused unless the
+                                           keyboard is up or --navigate is given (it would leave the page)
   otto phone wait --text T | --id I | --desc D [--gone] [--timeout MS]
   otto phone launch <package> [--activity A] [--url U] | --url U   (package + activity + url: that screen, with the link)
   otto phone current                       the app in front
@@ -106,7 +108,7 @@ interface Args { _: string[]; [k: string]: any }
 /** What agents used to Playwright's tools tend to type. */
 const ALIASES: Record<string, string> = { navigate: 'open', goto: 'open', go: 'open', fill: 'type', key: 'press', press_key: 'press', shot: 'screenshot', take_screenshot: 'screenshot', evaluate: 'eval', tab: 'tabs', navigate_back: 'back' };
 
-const BOOLEAN = new Set(['send', 'qr', 'new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json', 'reset', 'follow', 'off', 'key']);
+const BOOLEAN = new Set(['send', 'qr', 'new', 'full', 'submit', 'append', 'all', 'xml', 'replace', 'gone', 'third-party', 'labels', 'json', 'reset', 'follow', 'off', 'key', 'navigate']);
 
 function parseArgs(argv: string[]): Args {
   const a: Args = { _: [] };
@@ -183,7 +185,7 @@ async function main(argv: string[]) {
         case 'type': return text('text', { text: need(a._.join(' ') || undefined, 'the text'), replace: a.replace });
         case 'paste': return text('paste', { text: need(a._.join(' ') || undefined, 'the text') });
         case 'clear': return text('clear');
-        case 'key': return text('key', { key: need(a._[0], 'a key') });
+        case 'key': return text('key', { key: need(a._[0], 'a key'), navigate: a.navigate });
         case 'wait': return text('wait', { ...selector(a), gone: a.gone, timeout: num(a.timeout) ?? 10_000 });
         case 'launch': return text('launch', { package: a._[0], activity: a.activity, url: a.url });
         case 'current': return text('current');
