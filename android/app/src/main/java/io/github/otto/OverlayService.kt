@@ -1,6 +1,5 @@
 package io.github.otto
 
-import io.github.otto.device.AgentAccessibility
 import android.annotation.SuppressLint
 import android.animation.ValueAnimator
 import android.app.Service
@@ -47,6 +46,8 @@ class OverlayService : Service(), Screen.Host {
     private var right: FrameLayout? = null
     private var launching = false // ScreenActivity was asked for and isn't up yet
     private var holding = false // a finger is on the handle
+    var hidden = false // put away from the tray (Hide handle) until the notification or Otto's screen brings it back
+        private set
     private var morph: ValueAnimator? = null // the handle's pill on its way into the tray's edge, or back
 
     override fun onCreate() {
@@ -90,7 +91,8 @@ class OverlayService : Service(), Screen.Host {
                 return START_NOT_STICKY
             }
             ACTION_OPEN -> intent.getStringExtra("url")?.let { screen.openLink(it) }
-            ACTION_SHOW -> screen.open()
+            ACTION_SHOW -> if (hidden) showHandle() else screen.open()
+            ACTION_START -> showHandle()
             ACTION_RELINK -> {
                 Tunnel.relink()
             }
@@ -293,23 +295,31 @@ class OverlayService : Service(), Screen.Host {
         Tray(this, listOf(
             Tray.Item(R.drawable.ccm_lens, "Lens") { lens() },
             Tray.Item(R.drawable.ccm_wave, "Assistant") { VoiceService.start(this) },
-            Tray.Item(R.drawable.ccm_power, "Shut down") { shutDown() },
+            Tray.Item(R.drawable.ccm_power, "Hide handle") { hideHandle() },
         ), HANDLE) { morphPill(false) }.show(rightLp.y + (dp(HANDLE_H) - dp(Tray.SLAB_H)) / 2)
     }
 
     /**
-     * Shut down, from the tray: Otto stops altogether, for apps that won't run beside it (banking apps refuse to open
-     * with an accessibility service or an overlay on). A call hangs up, the accessibility service turns itself off,
-     * and the handle goes, with the browser and the box's link. Opening Otto and turning the handle on brings it
-     * back; the accessibility service is turned on again in Settings > Accessibility.
+     * Hide handle, from the tray: the handle leaves the screen, for apps that won't run with another app's overlay
+     * over them (some banking apps). Only the handle: Otto stays on, with its link to the box, the browser, a call and
+     * the accessibility service. Tapping Otto's notification, or opening Otto, brings it back.
      */
-    private fun shutDown() {
-        Events.add(this, "shut down from the handle")
-        if (VoiceService.running) VoiceService.hangUp(this)
-        DictationService.stop(this)
-        try { AgentAccessibility.instance?.disableSelf() } catch (e: Exception) { android.util.Log.w("OverlayService", "accessibility: $e") }
-        prefs.edit().putBoolean("on", false).apply()
-        stopSelf()
+    private fun hideHandle() {
+        val h = right ?: return
+        hidden = true
+        if (h.isAttachedToWindow) wm.removeView(h)
+        Events.add(this, "handle hidden")
+        Notifications.refresh(this)
+    }
+
+    /** The handle, back after Hide handle. */
+    fun showHandle() {
+        val h = right ?: return
+        if (!hidden) return
+        hidden = false
+        if (!h.isAttachedToWindow) wm.addView(h, rightLp)
+        Events.add(this, "handle shown again")
+        Notifications.refresh(this)
     }
 
     /** The handle's pill as the tray's edge (the tray's height, square) or back at rest (taller, rounded). */

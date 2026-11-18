@@ -29,7 +29,8 @@ object Notifications {
         return Notification.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_screen)
             .setContentTitle("Otto")
-            .setContentText("Tap the handle on the right edge (swipe it in for the lens and the assistant), or tap here")
+            .setContentText(if (OverlayService.instance?.hidden == true) "The handle is hidden: tap here to bring it back"
+                else "Tap the handle on the right edge (swipe it in for the lens and the assistant), or tap here")
             .setContentIntent(show)
             .addAction(Notification.Action.Builder(null, "Turn off", stop).build())
             .setOngoing(true)
@@ -58,6 +59,11 @@ object Notifications {
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setAutoCancel(true)
             .build())
+    }
+
+    /** Posts the notification again, its text up to date (the handle hidden or not). */
+    fun refresh(ctx: Context) {
+        ctx.getSystemService(NotificationManager::class.java).notify(ID, build(ctx))
     }
 
     fun startForeground(service: Service) {

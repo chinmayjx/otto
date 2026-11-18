@@ -149,6 +149,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         resumed = true
+        OverlayService.instance?.showHandle() // opening Otto brings back a hidden handle
         ticker.post(tick)
         fetchAssistant()
     }
