@@ -9,6 +9,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.Message
+import android.graphics.Bitmap
 import android.provider.MediaStore
 import android.util.Log
 import android.webkit.PermissionRequest
@@ -114,10 +116,15 @@ object AppWeb {
     /**
      * A WebView for a web page in the native viewer (an HTML artifact or file, framed): the same devices as the app's
      * UI (MIDI, the microphone), media that plays on its own, and links that leave the page going to the second
-     * screen's browser. No bridge to the app.
+     * screen's browser, Back coming back to it. No bridge to the app.
+     *
+     * The page sits in frames (ours, then the hub's sandboxed one), so its links are caught there: one the user taps
+     * that goes to another site than [home]'s (a plain link would load it inside the frame, where most sites refuse
+     * to be framed), and one that opens a new window (target=_blank, window.open). A target=_top link the hub's
+     * sandbox stops before it gets here.
      */
     @SuppressLint("SetJavaScriptEnabled")
-    fun frame(ctx: Context): WebView {
+    fun frame(ctx: Context, home: () -> String?): WebView {
         val web = WebView(ctx)
         // Its own size, not its content's: a WebView laid out to wrap its content gives the page no viewport height,
         // so pages sized to the screen (100%, 100dvh) collapse to nothing. (AndroidView adds views as they come.)
@@ -128,12 +135,16 @@ object AppWeb {
             javaScriptEnabled = true
             domStorageEnabled = true
             mediaPlaybackRequiresUserGesture = false
-            setSupportMultipleWindows(false) // a link to a new window opens in this one's place: then the browser
+            setSupportMultipleWindows(true) // new windows come to onCreateWindow, to go to the browser
         }
-        web.webChromeClient = devices(ctx)
+        web.webChromeClient = devices(ctx, popups = true)
         web.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean {
-                if (!req.isForMainFrame) return false // the framed page navigates inside itself
+                if (!req.isForMainFrame) {
+                    // Inside the frames: the page's own navigation stays, a tap on a link to another site leaves.
+                    val host = Uri.parse(home() ?: "").host
+                    if (!req.hasGesture() || req.url.host.isNullOrEmpty() || req.url.host == host) return false
+                }
                 Screen.current?.openFromViewer(req.url.toString()) // Back comes back to the page
                 return true
             }
@@ -141,8 +152,30 @@ object AppWeb {
         return web
     }
 
+    /** A new window the user asked for, from a framed page: its address goes to the browser, the window never shows. */
+    private fun popup(view: WebView, resultMsg: Message): Boolean {
+        val pop = WebView(view.context)
+        var done = false
+        fun go(url: String?) {
+            if (done || url.isNullOrEmpty() || url == "about:blank") return
+            done = true
+            Screen.current?.openFromViewer(url)
+            Handler(Looper.getMainLooper()).post { pop.destroy() }
+        }
+        pop.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(v: WebView, req: WebResourceRequest): Boolean { go(req.url.toString()); return true }
+            override fun onPageStarted(v: WebView, url: String?, favicon: Bitmap?) { go(url); v.stopLoading() }
+        }
+        (resultMsg.obj as WebView.WebViewTransport).webView = pop
+        resultMsg.sendToTarget()
+        return true
+    }
+
     /** Alerts and confirms, and the devices pages ask for: a MIDI keyboard, the microphone (with the app's permission). */
-    private fun devices(ctx: Context) = object : WebChromeClient() {
+    private fun devices(ctx: Context, popups: Boolean = false) = object : WebChromeClient() {
+        override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean =
+            popups && isUserGesture && popup(view, resultMsg)
+
         override fun onPermissionRequest(req: PermissionRequest) {
             val grant = ArrayList<String>()
             for (r in req.resources) {

@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableIntStateOf
@@ -737,6 +738,7 @@ private fun NoPreview(name: String, downloadUrl: String, size: Long, why: String
  */
 @Composable
 fun HtmlBody(url: String, sandbox: Boolean) {
+    val home by rememberUpdatedState(url)
     val frame = remember(url, sandbox) {
         val attrs = if (sandbox) "sandbox=\"allow-scripts allow-popups allow-forms allow-modals\""
         else "allow=\"midi; microphone; autoplay; fullscreen\""
@@ -745,7 +747,7 @@ fun HtmlBody(url: String, sandbox: Boolean) {
             "<iframe $attrs src=\"${android.text.Html.escapeHtml(url)}\"></iframe>"
     }
     AndroidView(
-        factory = { c -> AppWeb.frame(c) },
+        factory = { c -> AppWeb.frame(c) { home } },
         update = { w ->
             if (w.tag != frame) {
                 w.tag = frame
