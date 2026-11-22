@@ -173,6 +173,7 @@ private fun Head(s: BoxStatus, model: DevboxModel, sheets: Sheets) {
                 }
                 Text("${s.name} · ${s.type} · $sub", style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
             }
+            if (s.running || s.stopped) Spacer(Modifier.width(12.dp)) // room between the status and its button
             if (s.running) OutlinedButton(enabled = !model.acting, onClick = {
                 sheets.ask("Stop the devbox?", "Running agents and terminals stop; they're back on the next start.", "Stop") { model.act("stop") }
             }) { Text("Stop") }
