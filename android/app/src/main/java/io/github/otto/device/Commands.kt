@@ -64,6 +64,7 @@ class Commands(private val ctx: Context) {
 
     private fun dispatch(cmd: String, a: JSONObject, body: ByteArray?): Reply = when (cmd) {
         "info" -> Reply(info())
+        "termux" -> Reply(Termux.run(ctx, a.getString("command"), a.optString("cwd").ifEmpty { null }, a.optLong("timeout", 60_000).coerceIn(1_000, 600_000)))
         "screenshot" -> screenshot(a)
         "ui" -> Reply(ui(a))
         "tap" -> Reply(settled(tap(a, false)))

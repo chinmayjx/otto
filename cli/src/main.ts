@@ -34,6 +34,9 @@ Phone:
   otto phone key back|keyboard|home|recents|enter|notifications|quicksettings|dismiss|power|lock|splitscreen
                                            keyboard closes only the keyboard; back on a web page is refused unless the
                                            keyboard is up or --navigate is given (it would leave the page)
+  otto phone termux <command> [--cwd D] [--timeout MS]   run it in Termux (bash -c): its stdout, stderr and exit code
+                                           (needs Otto's "Run commands in Termux environment" permission, and
+                                           allow-external-apps=true in Termux's ~/.termux/termux.properties)
   otto phone wait --text T | --id I | --desc D [--gone] [--timeout MS]
   otto phone launch <package> [--activity A] [--url U] | --url U   (package + activity + url: that screen, with the link)
   otto phone current                       the app in front
@@ -186,6 +189,17 @@ async function main(argv: string[]) {
         case 'paste': return text('paste', { text: need(a._.join(' ') || undefined, 'the text') });
         case 'clear': return text('clear');
         case 'key': return text('key', { key: need(a._[0], 'a key'), navigate: a.navigate });
+        case 'termux': {
+          // A command in Termux (bash -c), its output back here; exits with its exit code.
+          const command = need(a._.join(' ') || undefined, 'a command');
+          const timeout = num(a.timeout) ?? 60_000;
+          const { result } = await phone(config, 'termux', { command, cwd: a.cwd, timeout }, timeout + 15_000);
+          if (result.stdout) process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : result.stdout + '\n');
+          if (result.stderr) process.stderr.write(result.stderr.endsWith('\n') ? result.stderr : result.stderr + '\n');
+          if (result.stdoutOriginalLength) process.stderr.write(`(Termux cut the output; it was ${result.stdoutOriginalLength} characters)\n`);
+          process.exitCode = typeof result.exitCode === 'number' ? result.exitCode : 1;
+          return;
+        }
         case 'wait': return text('wait', { ...selector(a), gone: a.gone, timeout: num(a.timeout) ?? 10_000 });
         case 'launch': return text('launch', { package: a._[0], activity: a.activity, url: a.url });
         case 'current': return text('current');

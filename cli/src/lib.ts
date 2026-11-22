@@ -163,8 +163,8 @@ export async function browser(config: Config, s: Session, cmd: string, args: Rec
   return relay(config, 'POST', `/browser/${encodeURIComponent(s.id)}/${cmd}${q}`, args);
 }
 
-export async function phone(config: Config, cmd: string, args: Record<string, unknown> = {}): Promise<{ result: any; body: Buffer | null }> {
-  const r = await relay(config, 'POST', `/phone/${cmd}`, args);
+export async function phone(config: Config, cmd: string, args: Record<string, unknown> = {}, timeoutMs?: number): Promise<{ result: any; body: Buffer | null }> {
+  const r = await relay(config, 'POST', `/phone/${cmd}${timeoutMs ? `?timeout=${timeoutMs}` : ''}`, args);
   if (r.headers.get('content-type')?.startsWith('application/json')) return { result: (await r.json()).result, body: null };
   return { result: JSON.parse(r.headers.get('x-otto-result') ?? 'null'), body: Buffer.from(await r.arrayBuffer()) };
 }
