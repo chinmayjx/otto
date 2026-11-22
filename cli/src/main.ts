@@ -196,7 +196,7 @@ async function main(argv: string[]) {
           const { result } = await phone(config, 'termux', { command, cwd: a.cwd, timeout }, timeout + 15_000);
           if (result.stdout) process.stdout.write(result.stdout.endsWith('\n') ? result.stdout : result.stdout + '\n');
           if (result.stderr) process.stderr.write(result.stderr.endsWith('\n') ? result.stderr : result.stderr + '\n');
-          if (result.stdoutOriginalLength) process.stderr.write(`(Termux cut the output; it was ${result.stdoutOriginalLength} characters)\n`);
+          if (Number(result.stdoutOriginalLength) > (result.stdout ?? '').length) process.stderr.write(`(Termux cut the output; it was ${result.stdoutOriginalLength} characters)\n`);
           process.exitCode = typeof result.exitCode === 'number' ? result.exitCode : 1;
           return;
         }
