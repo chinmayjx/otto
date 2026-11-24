@@ -32,6 +32,11 @@ import kotlin.concurrent.thread
  *   close <targetId>               close that tab
  *   closegroup <group>             close the group's tabs, dormant ones too
  *   focus <targetId>               show that tab
+ *   name <group> <title>           rename a group (the agent session working in it names it)
+ *   list <req>                     every tab, dormant ones too; answered "list <req> <json>": [{id, group, groupTitle,
+ *                                  title, url, target, current}]
+ *   waketab <req> <tabId>          bring one tab to life (any group's, or none); answered "made <req> <targetId> <group>"
+ *   closetab <tabId>               close that tab, live or dormant
  * and to it:
  *   browser up                     (when the tunnel asks: MSG_SYNC) then a "tab" line for each live tab
  *   active                         the user is looking at this app (the relay sends new tabs to it)
@@ -93,7 +98,7 @@ object BrowserLink {
             "newtab" -> {
                 val req = w[1]
                 val group = w[2]
-                val title = w.getOrElse(3) { "Agent" }
+                val title = w.getOrElse(3) { "" }.let { if (it == "-") "" else it } // "-": not named yet
                 svc.main.post {
                     val tab = svc.agentTab(group, title)
                     // After its identification (the same single thread, queued before this).
@@ -110,6 +115,19 @@ object BrowserLink {
             "idle" -> svc.main.post { svc.idle(w[1]) }
             "closegroup" -> svc.main.post { svc.closeGroup(w[1]) }
             "close" -> svc.main.post { svc.byTarget(w[1])?.let { svc.close(it) } }
+            "name" -> svc.main.post { svc.rename(w[1], line.split(" ", limit = 3).getOrElse(2) { "" }) }
+            "list" -> svc.main.post {
+                val json = svc.listAll().toString()
+                finder.execute { send("list ${w[1]} $json") } // after any tab still being identified
+            }
+            "waketab" -> {
+                val req = w[1]
+                svc.main.post {
+                    val tab = svc.wakeTab(w[2])
+                    finder.execute { send(if (tab?.targetId == null) "fail $req" else "made $req ${tab.targetId} ${tab.group ?: "-"}") }
+                }
+            }
+            "closetab" -> svc.main.post { svc.closeById(w[1]) }
             "focus" -> svc.main.post {
                 svc.byTarget(w[1])?.let {
                     svc.select(it)

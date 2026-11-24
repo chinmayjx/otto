@@ -159,8 +159,8 @@ export async function bots(config: Config, method: string, p: string, body?: unk
 }
 
 export async function browser(config: Config, s: Session, cmd: string, args: Record<string, unknown> = {}): Promise<Response> {
-  const q = s.title ? `?title=${encodeURIComponent(s.title)}` : '';
-  return relay(config, 'POST', `/browser/${encodeURIComponent(s.id)}/${cmd}${q}`, args);
+  // Not the session's title as its group's name: the session names its group for the user (otto browser name).
+  return relay(config, 'POST', `/browser/${encodeURIComponent(s.id)}/${cmd}`, args);
 }
 
 export async function phone(config: Config, cmd: string, args: Record<string, unknown> = {}, timeoutMs?: number): Promise<{ result: any; body: Buffer | null }> {

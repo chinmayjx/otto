@@ -70,7 +70,7 @@ TypeScript for the relay, CLI and MCP server: Playwright, which the browser comm
 One daemon on the box, replacing cc-mobile's `phone-browser-relay.js` and device-agent's `server.js`.
 
 - **Tunnel**: the phone keeps one control connection open (TCP over Tailscale, token in the first message) and opens a pipe per stream when the relay asks. Behind the tunnel the phone serves two things: the WebView's DevTools socket, and the device HTTP API. The protocol is below.
-- **Browser**: a persistent Playwright connection over the tunnelled DevTools socket. Each agent session gets its own tab group; `Target.getTargets` is filtered to the session's own tabs, as now.
+- **Browser**: a persistent Playwright connection over the tunnelled DevTools socket. Every session sees every tab (as a person at a shared browser would); the tabs a session opens go into a group of its own, which it names for the user to find.
 - **Device API**: served to the CLI on localhost as before (`POST /phone/<cmd>`, JSON args), each command forwarded as an HTTP request to the phone through a `device` pipe.
 - **Page push**: `show` opens a URL in the second screen.
 - **State**: session → group map, with old sessions dropped after 30 days of disuse.

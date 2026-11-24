@@ -10,8 +10,9 @@ import { loadConfig, session, relay, browser, phone, saveShot, desktopShot, pair
 
 const HELP = `otto: the phone, its browser and the box's desktop, for agents and people
 
-Browser (the phone's browser; your session's own tabs):
-  otto browser open <url> [--new]          open a page (--new: in a new tab)
+Browser (the phone's browser: any tab, yours open in a group of your own):
+  otto browser open <url> [--new] [--name N]  open a page (--new: in a new tab; --name: name your group)
+  otto browser name <2-3 words>            name your tab group, for the user to find it (rename as the task moves on)
   otto browser snapshot [--depth N]        the page as an accessibility tree, with [ref=eN] for each element
   otto browser click <ref> | --text T | --selector S
   otto browser type <ref> <text> [--submit] [--append]
@@ -20,7 +21,7 @@ Browser (the phone's browser; your session's own tabs):
   otto browser wait [--text T] [--ms N]
   otto browser eval <js>                   an expression, or a body with return
   otto browser screenshot [--full]         saves a PNG, prints its path
-  otto browser tabs [select N | close N | new]
+  otto browser tabs [select N | close N | new]  every tab, by group; select N works in that tab (any group's)
 
 Phone:
   otto phone screenshot [--scale 0.5]      saves a JPEG, prints its path and size
@@ -145,7 +146,8 @@ async function main(argv: string[]) {
       cmd = ALIASES[cmd] ?? cmd;
       const run = (c: string, args: Record<string, unknown> = {}) => browser(config, s, c, args);
       switch (cmd) {
-        case 'open': return out(await (await run('open', { url: need(a._[0], 'a URL'), new: a.new })).text());
+        case 'open': return out(await (await run('open', { url: need(a._[0], 'a URL'), new: a.new, name: a.name })).text());
+        case 'name': return out(await (await run('name', { name: need(a._.join(' ') || undefined, 'a name') })).text());
         case 'snapshot': return out(await (await run('snapshot', { depth: num(a.depth) })).text());
         case 'click': return out(await (await run('click', { ref: a._[0], text: a.text, selector: a.selector })).text());
         case 'type': return out(await (await run('type', { ref: need(a._[0], 'a ref'), text: need(a._.slice(1).join(' ') || undefined, 'the text'), submit: a.submit, append: a.append })).text());

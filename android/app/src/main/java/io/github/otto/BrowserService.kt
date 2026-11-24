@@ -298,6 +298,40 @@ class BrowserService : Service() {
 
     fun group(id: String?): Group? = id?.let { i -> groups.firstOrNull { it.id == i } }
 
+    /** What a group is called: its title, or (an agent's that wasn't named) the site of its first tab. */
+    private fun groupTitle(g: Group): String =
+        g.title.ifBlank { tabs.firstOrNull { it.group == g.id && it.url.startsWith("http") }?.let { site(it.url).removePrefix("www.") } ?: "Agent" }
+
+    /** An agent session names its group, for the user to find it by. */
+    fun rename(groupId: String, title: String) {
+        val g = group(groupId) ?: return
+        g.title = title.trim()
+        publish()
+    }
+
+    /** Every tab, dormant ones too, for an agent choosing one. */
+    fun listAll(): JSONArray {
+        val out = JSONArray()
+        for (t in tabs) out.put(JSONObject().put("id", t.id).put("group", t.group ?: "")
+            .put("groupTitle", group(t.group)?.let { groupTitle(it) } ?: "").put("title", t.title).put("url", t.url)
+            .put("target", t.targetId ?: "").put("current", t === current))
+        return out
+    }
+
+    /** Bring one tab to life (an agent is about to work in it); null if there's no such tab. */
+    fun wakeTab(id: String): Tab? {
+        val t = byId(id) ?: return null
+        t.used = System.currentTimeMillis()
+        if (t.web == null) live(t)
+        trim()
+        publish()
+        return t
+    }
+
+    fun closeById(id: String) {
+        byId(id)?.let { close(it) }
+    }
+
     /** Bring a group's tabs to life and keep them so until idle(); the tabs that are in it. */
     fun wake(groupId: String): List<Tab> {
         if (group(groupId) == null) return emptyList()
@@ -670,7 +704,7 @@ class BrowserService : Service() {
             val list = JSONArray()
             for (t in tabs) list.put(JSONObject().put("id", t.id).put("group", t.group ?: "").put("title", t.title).put("url", t.url))
             val gs = JSONArray()
-            for (g in groups) gs.put(JSONObject().put("id", g.id).put("title", g.title).put("owner", g.owner ?: ""))
+            for (g in groups) gs.put(JSONObject().put("id", g.id).put("title", groupTitle(g)).put("owner", g.owner ?: ""))
             val cur = current
             val state = JSONObject().put("tabs", list).put("groups", gs)
                 .put("current", cur?.id ?: "")

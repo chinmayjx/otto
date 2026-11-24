@@ -1,4 +1,6 @@
-// The phone's browser, for agent sessions: each session drives tabs of its own, in a tab group of its own.
+// The phone's browser, for agent sessions. Like a person at a shared browser: a session sees and drives any tab,
+// the user's and other sessions' too, and the tabs it opens go into a group of its own, which it names for the user
+// to find it by. Nothing stops two of them (or the user) working in one tab: whoever acts last wins, as in Chrome.
 //
 // The browser is reached through the phone's tunnel (tunnel.ts): its control lines go over the tunnel's control
 // connection, and each DevTools connection is a "devtools" pipe, joined on the phone to the browser's DevTools socket.
@@ -7,15 +9,17 @@
 // whose (Sessions), and the app tells it each live tab's target, tab id and group. A tab's id and group last;
 // its target is new whenever the tab comes back to life (the app restarted, or the tab had gone dormant).
 //
-// A session's DevTools endpoint shows only the tabs in its group: the relay sits in the WebSocket, drops events
-// and sessions of other tabs, and turns "new page" / "close page" into tab requests to the app. When a session
-// connects, the relay first wakes its group (its tabs come back at their pages, with new targets), or opens its
-// first tab in a new group; when it disconnects, the group may go dormant again.
+// A session's DevTools endpoint shows every live tab: the relay sits in the WebSocket and turns "new page" /
+// "close page" into tab requests to the app (a new page goes into the session's group). Dormant tabs aren't
+// targets; list() lists them and wakeTab() brings one to life. When a session connects, the relay first wakes its
+// group (its tabs come back at their pages, with new targets), or opens its first tab in a new group; when it
+// disconnects, the group may go dormant again.
 //
 // Control lines, app to relay: active | tab <target> <tab> <group|-> | gone <target> | made <req> <target> <group>
-//   | woke <req> <tabs> | fail <req>
-// Relay to app: newtab <req> <group|-> <title> | wake <req> <group> | idle <group> | close <target>
-//   | focus <target> | closegroup <group> | show <url>
+//   | woke <req> <tabs> | list <req> <json> | fail <req>
+// Relay to app: newtab <req> <group|-> <title|-> | wake <req> <group> | waketab <req> <tab> | idle <group>
+//   | close <target> | closetab <tab> | focus <target> | closegroup <group> | name <group> <title> | list <req>
+//   | show <url>
 import { WebSocket, type RawData } from 'ws';
 import crypto from 'node:crypto';
 import type { Sessions } from './sessions.js';
@@ -32,7 +36,7 @@ export class Browser {
   private users = new Map<string, number>(); // group -> connections working in it now
 
   constructor(private tunnel: Tunnel, private sessions: Sessions, private log = console.log) {
-    tunnel.on('line', (p: Phone, w: string[]) => this.control(p, w));
+    tunnel.on('line', (p: Phone, w: string[], line: string) => this.control(p, w, line));
     const drop = (p: Phone) => {
       for (const [req, a] of this.asks) if (a.phone === p) { this.asks.delete(req); a.reject(new Error('the phone browser went away')); }
     };
@@ -70,17 +74,62 @@ export class Browser {
     return g;
   }
 
-  /** Targets of a session's live tabs (for /json/list). */
-  targets(session: string): string[] {
-    const p = this.phone(), g = this.sessions.group(session);
-    if (!p || !g) return [];
-    return [...p.tabs].filter(([, t]) => t.group === g).map(([id]) => id);
+  /** Targets of the live tabs (for /json/list). */
+  targets(): string[] {
+    const p = this.phone();
+    return p ? [...p.tabs.keys()] : [];
+  }
+
+  /** Whether a live tab is in the session's own group. */
+  mine(session: string, targetId: string): boolean {
+    const g = this.phone()?.tabs.get(targetId)?.group;
+    return !!g && g === this.sessions.group(session);
+  }
+
+  /** Every tab in the browser, dormant ones too, in the app's order. */
+  list(): Promise<Tab[]> {
+    const p = this.phone();
+    if (!p) return Promise.reject(new Error(NO_PHONE));
+    return this.ask<Tab[]>(p, 'list <req>', 'list its tabs');
+  }
+
+  /** Brings a tab to life (any group's); its target. */
+  async wakeTab(tabId: string): Promise<string> {
+    const p = this.phone();
+    if (!p) throw new Error(NO_PHONE);
+    return (await this.ask<{ targetId: string }>(p, `waketab <req> ${tabId}`, 'wake the tab')).targetId;
+  }
+
+  closeTab(tabId: string) {
+    const p = this.phone();
+    if (p) this.tunnel.send(p, `closetab ${tabId}`);
+  }
+
+  /** Whether the session has named its group. */
+  named(session: string): boolean {
+    return !!this.sessions.get(session)?.title;
+  }
+
+  /** Names a session's group (the name is kept for its group to come, if it has none yet). */
+  name(session: string, title: string) {
+    title = oneLine(title);
+    const g = this.sessions.group(session), p = this.phone();
+    if (!g) return;
+    this.sessions.set(session, g, title);
+    if (p) this.tunnel.send(p, `name ${g} ${title}`);
   }
 
   // --- The browser's control lines (the tunnel keeps "active" and "browser" itself).
 
-  private control(p: Phone, w: string[]) {
+  private control(p: Phone, w: string[], line: string) {
     switch (w[0]) {
+      case 'list': {
+        const r = this.asks.get(w[1]);
+        this.asks.delete(w[1]);
+        if (!r) return;
+        try { r.resolve(JSON.parse(line.split(' ').slice(2).join(' '))); } catch (e: any) { r.reject(e); }
+        return;
+      }
       case 'tab': p.tabs.set(w[1], { tab: w[2], group: w[3] === '-' ? null : w[3] }); break;
       case 'gone': p.tabs.delete(w[1]); break;
       case 'made': case 'woke': case 'fail': {
@@ -105,7 +154,7 @@ export class Browser {
 
   /** A new tab for a session, in its group (a new group, titled for the session, if it has none or the app no longer has it). */
   private async newTab(p: Phone, session: string, title: string): Promise<string> {
-    const r = await this.ask<{ targetId: string; group: string }>(p, `newtab <req> ${this.sessions.group(session) ?? '-'} ${oneLine(title)}`, 'open a tab');
+    const r = await this.ask<{ targetId: string; group: string }>(p, `newtab <req> ${this.sessions.group(session) ?? '-'} ${oneLine(title) || '-'}`, 'open a tab');
     this.sessions.set(session, r.group, title);
     return r.targetId;
   }
@@ -124,8 +173,7 @@ export class Browser {
     const current = this.phone();
     if (!current) throw new Error(NO_PHONE);
     const p: Phone = current, sessions = this.sessions;
-    title = title || sessions.get(session)?.title || 'Agent';
-    const mine = (id: string) => { const g = p.tabs.get(id)?.group; return !!g && g === sessions.group(session); };
+    title = title || sessions.get(session)?.title || '';
     if (!(await this.wake(p, sessions.group(session)))) await this.newTab(p, session, title); // its tabs back to life, or its first tab
     sessions.touch(session);
     const group = sessions.group(session)!;
@@ -158,18 +206,8 @@ export class Browser {
     const reply = (id: number, result: any) => toClient({ id, result });
     const fail = (id: number, message: string) => toClient({ id, error: { code: -32000, message } });
 
-    // Is this target the session's? A tab that just opened may not be announced yet: wait for the app a moment.
-    async function owned(info: any): Promise<boolean> {
-      if (info.type === 'browser') return true;
-      if (info.type !== 'page') return false;
-      for (let i = 0; i < 60; i++) {
-        const t = p.tabs.get(info.targetId);
-        // Its group may be one being made for this session right now (the app's "made" reply still on its way).
-        if (t && (mine(info.targetId) || !t.group || sessions.claimed(t.group))) break;
-        await sleep(50);
-      }
-      return mine(info.targetId);
-    }
+    // Tabs (pages) are shown, any group's; the browser's other targets (workers and such) aren't.
+    const owned = async (info: any): Promise<boolean> => info.type === 'browser' || info.type === 'page';
 
     const fromUp = async (msg: any) => {
       if (DEBUG) this.log(`${session} <- ${msg.method ?? 'reply ' + msg.id} ${msg.method ? JSON.stringify(msg.params).slice(0, 160) : ''}`);
@@ -177,7 +215,7 @@ export class Browser {
         if (msg.id >= OURS) return;
         const method = methods.get(msg.id);
         methods.delete(msg.id);
-        if (method === 'Target.getTargets' && msg.result) msg.result.targetInfos = msg.result.targetInfos.filter((t: any) => t.type === 'browser' || mine(t.targetId));
+        if (method === 'Target.getTargets' && msg.result) msg.result.targetInfos = msg.result.targetInfos.filter((t: any) => t.type === 'browser' || t.type === 'page');
         return toClient(msg);
       }
       if (msg.sessionId && !allowed.has(msg.sessionId)) return;
@@ -230,16 +268,13 @@ export class Browser {
               return reply(msg.id, { targetId });
             } catch (e: any) { return fail(msg.id, e.message); }
           case 'Target.closeTarget':
-            if (!mine(prm.targetId)) return fail(msg.id, 'No such target');
+            if (!p.tabs.has(prm.targetId)) return fail(msg.id, 'No such target');
             this.tunnel.send(p, `close ${prm.targetId}`);
             return reply(msg.id, { success: true });
           case 'Target.activateTarget':
-            if (!mine(prm.targetId)) return fail(msg.id, 'No such target');
+            if (!p.tabs.has(prm.targetId)) return fail(msg.id, 'No such target');
             this.tunnel.send(p, `focus ${prm.targetId}`);
             return reply(msg.id, {});
-          case 'Target.attachToTarget':
-            if (!mine(prm.targetId)) return fail(msg.id, 'No such target');
-            break;
         }
       }
       methods.set(msg.id, msg.method);
@@ -262,4 +297,7 @@ export class Browser {
 }
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim() || 'Agent';
+const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/** A tab, as the app lists it (target: "" while dormant). */
+export interface Tab { id: string; group: string; groupTitle: string; title: string; url: string; target: string; current: boolean }

@@ -32,7 +32,7 @@ const SESSION = '[\\w.:@-]{1,200}';
 
 export function serve(port: number, browser: Browser, device: Device, sessions: Sessions, clips: Clips, log = console.log) {
   const titles = new Map<string, string>(); // titles named before a session's first tab
-  const driver = new Driver(id => `http://127.0.0.1:${port}/s/${encodeURIComponent(id)}`);
+  const driver = new Driver(id => `http://127.0.0.1:${port}/s/${encodeURIComponent(id)}`, browser);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1 << 30 });
 
   const server = http.createServer(async (req, res) => {
@@ -66,16 +66,19 @@ export function serve(port: number, browser: Browser, device: Device, sessions: 
         if (m[2] === '/version') {
           return send(200, { Browser: 'Chrome (phone)', 'Protocol-Version': '1.3', webSocketDebuggerUrl: `ws://127.0.0.1:${port}/s/${m[1]}/browser` });
         }
-        return send(200, browser.targets(decodeURIComponent(m[1])).map(id => ({ id, type: 'page' })));
+        return send(200, browser.targets().map(id => ({ id, type: 'page' })));
       }
       m = u.pathname.match(new RegExp(`^/browser/(${SESSION})/(\\w+)$`));
       if (m && req.method === 'POST') {
         if (!browser.phone()) return send(503, NO_PHONE);
         const id = decodeURIComponent(m[1]);
-        if (u.searchParams.get('title') && !sessions.get(id)) titles.set(id, u.searchParams.get('title')!);
         const raw = await body(req);
+        const args = raw.length ? JSON.parse(raw.toString('utf8')) : {};
+        // A name given before the session has a group is the new group's title.
+        const name = args.name || u.searchParams.get('title');
+        if (name && !sessions.get(id)) titles.set(id, name);
         try {
-          const r = await driver.run(id, m[2], raw.length ? JSON.parse(raw.toString('utf8')) : {});
+          const r = await driver.run(id, m[2], args);
           if (r.image) { res.writeHead(200, { 'content-type': 'image/png' }); return res.end(r.image); }
           return send(200, r.text ?? 'ok');
         } catch (e: any) {
