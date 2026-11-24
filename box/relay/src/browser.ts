@@ -254,7 +254,8 @@ export class Browser {
     const fromClient = async (msg: any) => {
       if (DEBUG) this.log(`${session} -> ${msg.id} ${msg.method} ${JSON.stringify(msg.params ?? {}).slice(0, 120)}`);
       const prm = msg.params ?? {};
-      if (msg.sessionId && !allowed.has(msg.sessionId)) return fail(msg.id, 'No such session');
+      // Answered on that session (Playwright drops, or worse asserts on, an answer it has no request for).
+      if (msg.sessionId && !allowed.has(msg.sessionId)) return toClient({ id: msg.id, sessionId: msg.sessionId, error: { code: -32001, message: 'Session with given id not found.' } });
       if (!msg.sessionId) {
         switch (msg.method) {
           case 'Browser.close': // the browser is the phone's; a session only lets go of it
