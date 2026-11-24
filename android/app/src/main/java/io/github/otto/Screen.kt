@@ -1616,10 +1616,15 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         if (isOpen) focusTab()
     }
 
-    private fun maxHeightScroll(maxHeight: Int) = object : ScrollView(ctx) {
+    /** A menu's list: no scroll bar (it ran down the rows, by their × buttons); its edges fade where there's more. */
+    private fun maxHeightScroll(maxHeight: Int) = (object : ScrollView(ctx) {
         override fun onMeasure(w: Int, h: Int) {
             super.onMeasure(w, MeasureSpec.makeMeasureSpec(maxHeight, MeasureSpec.AT_MOST))
         }
+    }).apply {
+        isVerticalScrollBarEnabled = false
+        isVerticalFadingEdgeEnabled = true
+        setFadingEdgeLength(dp(28))
     }
 
     private fun fillTabList() {
