@@ -143,7 +143,6 @@ export class Driver {
         return { image: await page!.screenshot({ fullPage: !!a.full, scale: 'css', type: 'png' }) };
       case 'name':
         if (!a.name) throw new Error('give the group a name');
-        await this.page(session, conn); // it has a group once it has a tab
         this.phone.name(session, a.name);
         return { text: `your tabs' group is now "${a.name.trim()}"` };
       case 'tabs': {

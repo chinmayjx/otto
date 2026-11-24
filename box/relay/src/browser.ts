@@ -34,6 +34,7 @@ type Waiting = { resolve: (v: any) => void; reject: (e: Error) => void; phone: P
 export class Browser {
   private asks = new Map<string, Waiting>();
   private users = new Map<string, number>(); // group -> connections working in it now
+  private pending = new Map<string, string>(); // session -> the name for its group, given before it had one
 
   constructor(private tunnel: Tunnel, private sessions: Sessions, private log = console.log) {
     tunnel.on('line', (p: Phone, w: string[], line: string) => this.control(p, w, line));
@@ -107,14 +108,14 @@ export class Browser {
 
   /** Whether the session has named its group. */
   named(session: string): boolean {
-    return !!this.sessions.get(session)?.title;
+    return !!(this.sessions.get(session)?.title || this.pending.get(session));
   }
 
   /** Names a session's group (the name is kept for its group to come, if it has none yet). */
   name(session: string, title: string) {
     title = oneLine(title);
     const g = this.sessions.group(session), p = this.phone();
-    if (!g) return;
+    if (!g) return void this.pending.set(session, title);
     this.sessions.set(session, g, title);
     if (p) this.tunnel.send(p, `name ${g} ${title}`);
   }
@@ -154,8 +155,10 @@ export class Browser {
 
   /** A new tab for a session, in its group (a new group, titled for the session, if it has none or the app no longer has it). */
   private async newTab(p: Phone, session: string, title: string): Promise<string> {
+    title = this.pending.get(session) || title;
     const r = await this.ask<{ targetId: string; group: string }>(p, `newtab <req> ${this.sessions.group(session) ?? '-'} ${oneLine(title) || '-'}`, 'open a tab');
     this.sessions.set(session, r.group, title);
+    this.pending.delete(session);
     return r.targetId;
   }
 
@@ -174,14 +177,22 @@ export class Browser {
     if (!current) throw new Error(NO_PHONE);
     const p: Phone = current, sessions = this.sessions;
     title = title || sessions.get(session)?.title || '';
-    if (!(await this.wake(p, sessions.group(session)))) await this.newTab(p, session, title); // its tabs back to life, or its first tab
+    // Its tabs back to life. No tab is made for it yet: only when it opens a page (a session may only look
+    // around, or work in someone else's tab), else it leaves an empty one behind.
+    let group: string | undefined;
+    const join = () => {
+      const g = sessions.group(session);
+      if (!g || g === group) return;
+      group = g;
+      this.users.set(g, (this.users.get(g) ?? 0) + 1);
+    };
+    if (await this.wake(p, sessions.group(session))) join();
     sessions.touch(session);
-    const group = sessions.group(session)!;
-    this.users.set(group, (this.users.get(group) ?? 0) + 1);
     let left = false;
     const leave = () => {
       if (left) return;
       left = true;
+      if (!group) return;
       const n = (this.users.get(group) ?? 1) - 1;
       if (n > 0) return void this.users.set(group, n);
       this.users.delete(group);
@@ -197,6 +208,7 @@ export class Browser {
     this.log(`session ${session}: connected (${p.app})`);
 
     const allowed = new Set<string>(); // DevTools sessions (attachments) of this session's targets
+    const targetOf = new Map<string, string>(); // DevTools session -> its target
     const seen = new Set<string>(); // targets shown to the client
     const attached = new Set<string>(); // targets the client has been attached to
     const methods = new Map<number, string>(); // client request id -> method
@@ -224,6 +236,7 @@ export class Browser {
         case 'Target.attachedToTarget':
           if (msg.sessionId || await owned(prm.targetInfo)) {
             allowed.add(prm.sessionId);
+            targetOf.set(prm.sessionId, prm.targetInfo.targetId);
             seen.add(prm.targetInfo.targetId);
             attached.add(prm.targetInfo.targetId);
             return toClient(msg);
@@ -256,6 +269,8 @@ export class Browser {
       const prm = msg.params ?? {};
       // Answered on that session (Playwright drops, or worse asserts on, an answer it has no request for).
       if (msg.sessionId && !allowed.has(msg.sessionId)) return toClient({ id: msg.id, sessionId: msg.sessionId, error: { code: -32001, message: 'Session with given id not found.' } });
+      // A page brought to the front (Playwright's bringToFront): show that tab on the phone.
+      if (msg.method === 'Page.bringToFront' && targetOf.has(msg.sessionId)) this.tunnel.send(p, `focus ${targetOf.get(msg.sessionId)}`);
       if (!msg.sessionId) {
         switch (msg.method) {
           case 'Browser.close': // the browser is the phone's; a session only lets go of it
@@ -264,7 +279,8 @@ export class Browser {
           case 'Target.createTarget':
             try {
               // Chrome reports the new page (attachedToTarget) before answering, and Playwright counts on it.
-              const targetId = await this.newTab(p, session, title);
+              const targetId = await this.newTab(p, session, sessions.get(session)?.title || title);
+              join();
               for (let i = 0; i < 100 && !attached.has(targetId); i++) await sleep(50);
               return reply(msg.id, { targetId });
             } catch (e: any) { return fail(msg.id, e.message); }

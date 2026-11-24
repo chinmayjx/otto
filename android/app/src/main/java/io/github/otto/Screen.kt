@@ -310,7 +310,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 else -> startEdit()
             }
         }
-        bar.addView(tabBlock, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
+        bar.addView(tabBlock, LinearLayout.LayoutParams(0, dp(FIELD_DP), 1f).apply { marginStart = dp(8) })
         // Browser: the tabs as their count in a box (a tap lists them), after the address.
         tabsCount = label("1", 12)
         tabsCount.setTextColor(BrowserService.TEXT)
@@ -353,22 +353,22 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         val findBox = LinearLayout(ctx)
         findBox.gravity = Gravity.CENTER_VERTICAL
         findBox.background = rounded(BrowserService.FIELD, dp(9))
-        findBox.addView(findField, LinearLayout.LayoutParams(0, dp(40), 1f))
+        findBox.addView(findField, LinearLayout.LayoutParams(0, dp(FIELD_DP), 1f))
         findCount = line(12f, BrowserService.MUTED)
         findCount.setPadding(0, 0, dp(10), 0)
         findBox.addView(findCount)
-        findRow.addView(findBox, LinearLayout.LayoutParams(0, dp(40), 1f))
+        findRow.addView(findBox, LinearLayout.LayoutParams(0, dp(FIELD_DP), 1f))
         fun findButton(res: Int, label: String, act: () -> Unit) = icon(res, BrowserService.TEXT).also {
             it.scaleType = ImageView.ScaleType.CENTER
             it.background = pressable(dp(20))
             it.contentDescription = label
             it.setOnClickListener { act() }
-            findRow.addView(it, LinearLayout.LayoutParams(dp(36), dp(40)).apply { marginStart = dp(2) })
+            findRow.addView(it, LinearLayout.LayoutParams(dp(36), dp(FIELD_DP)).apply { marginStart = dp(2) })
         }
         findButton(R.drawable.ccm_chevron_up, "Previous match") { send2(BrowserService.MSG_FIND, "q" to findField.text.toString(), "dir" to "prev") }
         findButton(R.drawable.ccm_chevron_next, "Next match") { send2(BrowserService.MSG_FIND, "q" to findField.text.toString(), "dir" to "next") }
         findButton(R.drawable.ccm_close, "Done") { endFind() }
-        bar.addView(findRow, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
+        bar.addView(findRow, LinearLayout.LayoutParams(0, dp(FIELD_DP), 1f).apply { marginStart = dp(8) })
         // Browser: the address, edited in place: the field where the address was, × to empty it.
         addressRow.gravity = Gravity.CENTER_VERTICAL
         addressRow.visibility = View.GONE
@@ -399,14 +399,14 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             send(BrowserService.MSG_LOAD, "url", q)
             true
         }
-        addressRow.addView(addressField, LinearLayout.LayoutParams(0, dp(40), 1f))
+        addressRow.addView(addressField, LinearLayout.LayoutParams(0, dp(FIELD_DP), 1f))
         val clear = icon(R.drawable.ccm_close, BrowserService.MUTED)
         clear.scaleType = ImageView.ScaleType.CENTER
         clear.background = pressable(dp(18))
         clear.contentDescription = "Clear"
         clear.setOnClickListener { addressField.setText("") }
-        addressRow.addView(clear, LinearLayout.LayoutParams(dp(36), dp(40)))
-        bar.addView(addressRow, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(8) })
+        addressRow.addView(clear, LinearLayout.LayoutParams(dp(36), dp(FIELD_DP)))
+        bar.addView(addressRow, LinearLayout.LayoutParams(0, dp(FIELD_DP), 1f).apply { marginStart = dp(8) })
         home = icon(R.drawable.ccm_home, BrowserService.TEXT)
         home.scaleType = ImageView.ScaleType.CENTER
         home.background = pressable(dp(20))
@@ -1884,6 +1884,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         private const val CLIPBOARD = 6
         private const val SCHEDULES = 7
         private const val BAR_DP = 48
+        private const val FIELD_DP = 36 // the address (and find) field in the bar: 6dp of bar above and below it
         private const val TITLE_PAD = 6
         private const val BAR_START = 10
         private const val PULL_DP = 110
