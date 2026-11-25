@@ -108,7 +108,15 @@ export class Driver {
       case 'open': {
         let p = page!;
         if (a.new) { p = await conn.browser.contexts()[0].newPage(); conn.page = p; }
-        await p.goto(a.url, { timeout: NAV_TIMEOUT, waitUntil: 'domcontentloaded' });
+        const before = p.url();
+        try {
+          await p.goto(a.url, { timeout: NAV_TIMEOUT, waitUntil: 'domcontentloaded' });
+        } catch (e: any) {
+          // The browser tries a blocked http:// page over https:// (BrowserService.upgrade), which ends the first
+          // navigation with an error: wait for the https one instead.
+          if (!/ERR_CLEARTEXT_NOT_PERMITTED|ERR_ABORTED/.test(e.message)) throw e;
+          await p.waitForURL(u => u.protocol === 'https:' && u.href !== before, { timeout: NAV_TIMEOUT, waitUntil: 'domcontentloaded' }).catch(() => { throw e; });
+        }
         return { text: await where(p) + this.nameHint(session) };
       }
       case 'snapshot':

@@ -29,6 +29,7 @@ import android.view.WindowInsets
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -95,6 +96,8 @@ class BrowserService : Service() {
         var desktop = false // showing the desktop site
         var wide: ScriptHandler? = null // while desktop: the script that widens the page's viewport
         var pan = 0f // while desktop: how far its laptop screen is panned sideways, in px (DesktopStage)
+        var upgraded: String? = null // the http:// address last tried over https:// instead, and when
+        var upgradedAt = 0L
     }
 
     class Group(val id: String, var title: String, val owner: String?) // owner: "agent", or null
@@ -521,6 +524,8 @@ class BrowserService : Service() {
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
                 if (!r.isForMainFrame || r.method != "GET") return false
                 val url = r.url.toString()
+                // Cleartext is blocked: an http:// page (often a redirect that drops to http) is tried over https.
+                if (isCleartext(r.url)) return upgrade(tab, v, url)
                 if (wantsDesktop(url) == tab.desktop) return false
                 applyDesktop(tab, !tab.desktop)
                 v.loadUrl(url)
@@ -539,6 +544,12 @@ class BrowserService : Service() {
                 if (!tab.desktop || v.width == 0 || newScale <= 0f) return
                 val fit = v.width.toFloat() / DesktopStage.SCREEN_W
                 if (abs(newScale / fit - 1f) > 0.01f) v.post { if (tab.desktop) v.zoomBy(fit / newScale) }
+            }
+
+            override fun onReceivedError(v: WebView, r: WebResourceRequest, e: WebResourceError) {
+                // An http:// load that didn't pass through shouldOverrideUrlLoading (typed, `otto show`, an agent's
+                // goto) fails on cleartext: try it over https, as Chrome would.
+                if (r.isForMainFrame && isCleartext(r.url) && e.description?.contains("CLEARTEXT") == true) upgrade(tab, v, r.url.toString())
             }
 
             override fun onRenderProcessGone(v: WebView, detail: RenderProcessGoneDetail): Boolean {
@@ -581,6 +592,22 @@ class BrowserService : Service() {
                 close(tab)
             }
         }
+    }
+
+    /** An http:// address the network policy blocks (all but the relay's own, "otto-relay"). */
+    private fun isCleartext(u: Uri) = u.scheme == "http" && u.host != "otto-relay"
+
+    /**
+     * Load an http:// address over https:// instead, as Chrome upgrades it. Not again for the same address within a
+     * few seconds: a site whose https sends back to the same http address would loop; that one shows the error.
+     */
+    private fun upgrade(tab: Tab, v: WebView, url: String): Boolean {
+        val now = System.currentTimeMillis()
+        if (url == tab.upgraded && now - tab.upgradedAt < 10_000) return false
+        tab.upgraded = url
+        tab.upgradedAt = now
+        v.loadUrl("https" + url.removePrefix("http"))
+        return true
     }
 
     /** A tab in an agent session's group (its pages stay out of the user's history). */
