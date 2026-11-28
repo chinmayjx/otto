@@ -2,6 +2,7 @@ package io.github.otto
 
 import android.annotation.SuppressLint
 import android.app.Service
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -522,6 +523,8 @@ class BrowserService : Service() {
         web.webViewClient = object : WebViewClient() {
             // Entering a site shown the other way (mobile or desktop): switch, then load it afresh.
             override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean {
+                // A link for an app, not a page (upi://, intent://, tel:): to that app, as Chrome does.
+                if (isAppLink(r.url)) return openApp(v, r.url.toString(), r.isForMainFrame || r.hasGesture())
                 if (!r.isForMainFrame || r.method != "GET") return false
                 val url = r.url.toString()
                 // Cleartext is blocked: an http:// page (often a redirect that drops to http) is tried over https.
@@ -592,6 +595,39 @@ class BrowserService : Service() {
                 close(tab)
             }
         }
+    }
+
+    /** A link the browser can't load itself: one for an app (upi:, intent:, tel:, mailto:, market: ...). */
+    private fun isAppLink(u: Uri) = u.scheme?.lowercase(Locale.ROOT) !in WEB_SCHEMES
+
+    /**
+     * Open an app link, as Chrome does: intent: links by their intent (only apps that accept links: BROWSABLE, no
+     * named component), others by their scheme. With no app for it, an intent: link's browser_fallback_url loads in
+     * the tab. The second screen slides away so the app shows. Not without a tap, unless the page itself is going
+     * there (a redirect): a frame can't open apps by itself.
+     */
+    private fun openApp(v: WebView, url: String, allowed: Boolean): Boolean {
+        if (!allowed) return true
+        val intent = try {
+            if (url.startsWith("intent:", true)) Intent.parseUri(url, Intent.URI_INTENT_SCHEME).apply { component = null; selector = null }
+            else Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        } catch (e: Exception) {
+            Log.d(TAG, "app link $url: $e")
+            return true
+        }
+        intent.addCategory(Intent.CATEGORY_BROWSABLE)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            startActivity(intent)
+            tell(MSG_HIDE)
+        } catch (e: ActivityNotFoundException) {
+            val fallback = intent.getStringExtra("browser_fallback_url")
+            if (fallback != null && Uri.parse(fallback).scheme in listOf("http", "https")) v.loadUrl(fallback)
+            else Log.d(TAG, "no app for $url")
+        } catch (e: Exception) {
+            Log.w(TAG, "app link $url: $e")
+        }
+        return true
     }
 
     /** An http:// address the network policy blocks (all but the relay's own, "otto-relay"). */
@@ -891,6 +927,10 @@ class BrowserService : Service() {
         const val MSG_FIND = 19
         /** The find's matches: "index" (0-based) of "count". */
         const val MSG_FOUND = 20
+        /** A page opened an app (a upi:, intent:, tel: link): slide the second screen away so the app shows. */
+        const val MSG_HIDE = 21
+
+        private val WEB_SCHEMES = setOf("http", "https", "about", "data", "blob", "javascript", "file", "content")
 
         /** Start command: keep it in the foreground (OverlayService, while the handle is on). */
         const val ACTION_KEEP = "keep"

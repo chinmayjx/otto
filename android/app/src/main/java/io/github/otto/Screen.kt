@@ -1845,6 +1845,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
                 select(BROWSER)
                 animateTo(1f)
             }
+            BrowserService.MSG_HIDE -> hide() // a page opened an app: let it show
             BrowserService.MSG_BACK_KEY -> if (isOpen) back()
         }
         return true
