@@ -817,6 +817,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         syncBar()
         placeSurface()
         if (isOpen) focusTab()
+        syncShown()
     }
 
     private fun viewerSection() = when (viewerTarget) {
@@ -913,6 +914,16 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
             viewerBar = bar
             if (viewer != null) syncBar()
         }
+    }
+
+    private var browserShown: Boolean? = null // what the browser was last told (MSG_VISIBLE)
+
+    /** Tell the browser whether it's in view (the second screen open on Browser): pages not in view pause. */
+    private fun syncShown() {
+        val on = position > 0f && tab == BROWSER
+        if (on == browserShown || service == null) return
+        browserShown = on
+        send(BrowserService.MSG_VISIBLE, "on", on.toString())
     }
 
     private fun select(which: Int) {
@@ -1216,6 +1227,7 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
         root.alpha = position
         surface.alpha = position
         host.moved(position)
+        syncShown()
         val open = position > 0.5f
         if (open != wasOpen) {
             wasOpen = open
@@ -1760,6 +1772,8 @@ class Screen(private val ctx: Context, private val host: Host) : ServiceConnecti
 
     override fun onServiceConnected(name: ComponentName, binder: IBinder) {
         service = Messenger(binder)
+        browserShown = null // a (new) browser process: tell it again whether it's in view
+        root.post { syncShown() }
         attached = false
         // Known to the browser at once, before there's a surface: "show" from an agent then brings the screen in.
         val hello = Message.obtain(null, BrowserService.MSG_CLIENT)

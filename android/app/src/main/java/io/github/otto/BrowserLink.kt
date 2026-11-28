@@ -74,6 +74,8 @@ object BrowserLink {
 
     /** The tunnel is connected to the box: say the browser is up, and list its live tabs (after any being found). */
     fun sync() {
+        // A fresh link: the relay knows of no one working anywhere yet (it may have restarted, or missed an idle).
+        BrowserService.instance?.let { svc -> svc.main.post { svc.forgetWoken() } }
         finder.execute {
             synchronized(lock) {
                 send("browser up")
@@ -84,6 +86,8 @@ object BrowserLink {
 
     fun stop() {
         tunnel = null
+        // No link, so no one can be working here: don't keep their tabs running.
+        BrowserService.instance?.let { svc -> svc.main.post { svc.forgetWoken() } }
     }
 
     fun handle(line: String) {

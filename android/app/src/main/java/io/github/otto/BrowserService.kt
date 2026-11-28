@@ -115,6 +115,8 @@ class BrowserService : Service() {
     val tabs = ArrayList<Tab>()
     val groups = ArrayList<Group>()
     private val woken = HashSet<String>() // groups kept live (someone's working in them)
+    private val held = HashMap<String, Long>() // tab id -> until when: a tab an agent picked (any group's) keeps running
+    private var shown = false // the second screen is showing the browser (Screen: MSG_VISIBLE)
     private var nextId = 1
     private var current: Tab? = null
     private lateinit var desktopSites: SharedPreferences // sites shown as on a computer: host -> true
@@ -178,6 +180,10 @@ class BrowserService : Service() {
                 MSG_FORWARD -> current?.web?.let { if (it.canGoForward()) it.goForward() }
                 MSG_FIND -> current?.web?.let { find(it, b.getString("q") ?: "", b.getString("dir") ?: "next") }
                 MSG_ACTIVE -> BrowserLink.send("active")
+                MSG_VISIBLE -> {
+                    shown = b.getString("on") == "true"
+                    pace()
+                }
                 MSG_HIDE_KEYBOARD -> hideKeyboard()
                 MSG_SUGGEST -> {
                     val reply = Message.obtain(null, MSG_SUGGESTIONS)
@@ -302,6 +308,34 @@ class BrowserService : Service() {
 
     fun group(id: String?): Group? = id?.let { i -> groups.firstOrNull { it.id == i } }
 
+    /**
+     * Which pages run: the one on screen while the browser is in view, the tabs of groups an agent session is
+     * working in, and tabs an agent picked lately. The rest are paused (no drawing, animations or timers), so a busy
+     * page left in a tab doesn't burn the battery while the second screen is closed. JavaScript timers are paused
+     * for the whole process when nothing runs.
+     */
+    fun pace() {
+        val now = System.currentTimeMillis()
+        held.entries.removeAll { it.value <= now }
+        var any = false
+        for (t in tabs) {
+            val web = t.web ?: continue
+            val run = (shown && t === current) || (t.group != null && t.group in woken) || t.id in held
+            if (run) web.onResume() else web.onPause()
+            any = any || run
+        }
+        val web = tabs.firstNotNullOfOrNull { it.web } ?: return
+        if (any) web.resumeTimers() else web.pauseTimers()
+    }
+
+    /** The link to the box dropped or came back: no one is working in any group until a session says so again. */
+    fun forgetWoken() {
+        woken.clear()
+        held.clear()
+        trim()
+        pace()
+    }
+
     /** What a group is called: its title, or (an agent's that wasn't named) the site of its first tab. */
     private fun groupTitle(g: Group): String =
         g.title.ifBlank { tabs.firstOrNull { it.group == g.id && it.url.startsWith("http") }?.let { site(it.url).removePrefix("www.") } ?: "Agent" }
@@ -326,8 +360,11 @@ class BrowserService : Service() {
     fun wakeTab(id: String): Tab? {
         val t = byId(id) ?: return null
         t.used = System.currentTimeMillis()
+        held[t.id] = t.used + HOLD_MS
+        main.postDelayed({ pace() }, HOLD_MS + 1000)
         if (t.web == null) live(t)
         trim()
+        pace()
         publish()
         return t
     }
@@ -346,6 +383,7 @@ class BrowserService : Service() {
             t.used = now
             if (t.web == null) live(t)
         }
+        pace()
         publish()
         return inGroup
     }
@@ -354,6 +392,7 @@ class BrowserService : Service() {
     fun idle(groupId: String) {
         woken.remove(groupId)
         trim()
+        pace()
     }
 
     /** Close every tab of a group, and the group. */
@@ -361,6 +400,7 @@ class BrowserService : Service() {
         for (t in tabs.filter { it.group == groupId }) close(t)
         groups.removeAll { it.id == groupId }
         woken.remove(groupId)
+        pace()
         publish()
     }
 
@@ -381,6 +421,7 @@ class BrowserService : Service() {
         tab.state = null
         if (!back && tab.url.isNotEmpty()) web.loadUrl(tab.url)
         BrowserLink.identify(tab)
+        pace()
     }
 
     /** Put a tab to sleep: keep its history, let its WebView go. */
@@ -658,6 +699,7 @@ class BrowserService : Service() {
         showProgress()
         stage.arrange() // the strip follows the tab in view
         trim()
+        pace()
         publish()
     }
 
@@ -929,6 +971,9 @@ class BrowserService : Service() {
         const val MSG_FOUND = 20
         /** A page opened an app (a upi:, intent:, tel: link): slide the second screen away so the app shows. */
         const val MSG_HIDE = 21
+        /** From Screen: whether the browser is in view ("on": "true" / "false"). Pages not in view pause (pace). */
+        const val MSG_VISIBLE = 22
+        private const val HOLD_MS = 15 * 60_000L // how long a tab an agent picked keeps running
 
         private val WEB_SCHEMES = setOf("http", "https", "about", "data", "blob", "javascript", "file", "content")
 
